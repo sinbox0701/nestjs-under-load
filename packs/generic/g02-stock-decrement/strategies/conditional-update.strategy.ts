@@ -10,6 +10,7 @@ import type { G02Strategy, OrderCommand, OrderResult, StrategyContext } from '..
  * 이 코드가 하는 일
  * - `UPDATE g02_product SET stock = stock - ? WHERE id = ? AND stock >= ?` 한 문장으로 판정과 차감을 같이 한다.
  *   `em.nativeUpdate`는 Unit of Work를 거치지 않고 SQL을 바로 보낸다(manifest bypassesOrm: true).
+ * - 읽기가 없으므로 경합 창 주입 지점(after-read)은 UPDATE 문장 바로 앞에 둔다(다른 strategy와 같은 조건). 잠금을 쥐기 전이라 지연만 늘고 겹침은 생기지 않는다.
  * - 반환된 **영향 행 수**로 결과를 정한다. 1이면 성공, 0이면 품절(상품이 아예 없으면 404).
  * - 같은 트랜잭션에서 원장 INSERT 후 커밋.
  *
@@ -30,6 +31,7 @@ export class ConditionalUpdateStrategy implements G02Strategy {
 
   async execute(cmd: OrderCommand, ctx: StrategyContext): Promise<OrderResult> { // @event arrived
     return ctx.em.transactional(async (em) => {
+      await ctx.contentionWindow('after-read'); // @event injected_delay
       const affected = await em.nativeUpdate( // @event db_write
         Product,
         { id: cmd.productId, stock: { $gte: cmd.qty } }, // @learn where-stock-gte — 판정을 WHERE에 넣는다. 잠금 대기 뒤 최신 행으로 다시 평가된다(EvalPlanQual)

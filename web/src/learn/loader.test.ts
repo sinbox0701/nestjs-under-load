@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildScenarios,
   evidenceOf,
+  isInjected,
   normalizeMeasured,
   outcomeFor,
   parseLearnYaml,
   resolveFocus,
+  shortRunId,
   situationSummary,
 } from './loader';
 import { findMarker, parseMarkers } from './markers';
@@ -57,6 +59,7 @@ concepts: [{ id: c1, label: 개념, body: 본문 }]
 situations:
   - { id: a, label: 상황A, load: { model: closed, vus: 2 }, instances: 1, chaos: none }
   - { id: b, label: 상황B, load: { model: open, rate: 200, shape: spike }, instances: 2, chaos: { toxiproxy: { latencyMs: 50 } } }
+  - { id: c, label: 상황C, load: { model: open, rate: 200, shape: constant }, instances: 1, chaos: none, injected: { contentionWindowMs: 30 } }
 outcomes:
   - strategy: x
     situation: a
@@ -72,6 +75,12 @@ outcomes:
     expected: 예상
     measured: { run: r42, oversell: 3 }
     why: 이유2
+  - strategy: x
+    situation: c
+    verdict: broken
+    expected: 깨짐
+    measured: { run: 2026-10-06T16-50-01Z_g02_x_i1, injected: { contentionWindowMs: 30 }, summary: 경합 창 30ms 주입됨 · 위반 3/3회 }
+    why: 창이 넓다
   - strategy: y
     situation: a
     verdict: ok
@@ -102,6 +111,13 @@ describe('learn.yaml 정규화', () => {
     expect(situationSummary(doc.situations[1]!)).toBe(
       '200 req/s · spike · 서버 2대 · DB 지연 50ms',
     );
+    expect(situationSummary(doc.situations[2]!)).toBe(
+      '200 req/s · constant · 서버 1대 · 경합 창 +30ms',
+    );
+  });
+  it('주입 여부: chaos 또는 경합 창 주입이면 true', () => {
+    expect(doc.situations.map(isInjected)).toEqual([false, true, true]);
+    expect(doc.situations[2]!.injected).toEqual({ contentionWindowMs: 30 });
   });
 });
 
@@ -119,6 +135,19 @@ describe('실측 vs 예상', () => {
       run: 'r42',
       text: 'oversell 3',
     });
+  });
+  it('주입된 실측은 injectedMs를 함께 넘긴다', () => {
+    expect(evidenceOf(outcomeFor(doc, 'x', 'c'))).toEqual({
+      kind: 'measured',
+      run: '2026-10-06T16-50-01Z_g02_x_i1',
+      text: '경합 창 30ms 주입됨 · 위반 3/3회',
+      injectedMs: 30,
+    });
+  });
+  it('긴 run id는 세션 시각으로 줄인다', () => {
+    expect(shortRunId('2026-10-06T16-20-36Z_g02_row-lock_i2')).toBe('10-06 16:20:36');
+    expect(shortRunId('r7')).toBe('r7');
+    expect(shortRunId('abcdefghijklmnopqrstuvwxyz')).toBe('abcdefghijklmno…');
   });
   it('measured 문자열은 run 없이 실측', () => {
     expect(evidenceOf(outcomeFor(doc, 'y', 'a'))).toEqual({

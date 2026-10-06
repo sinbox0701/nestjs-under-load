@@ -68,6 +68,11 @@ describe('learn.yaml 기본 구조', () => {
       assert.ok(['open', 'closed'].includes(s.load?.model), `${s.id}: load.model`);
       assert.ok(s.chaos !== undefined, `${s.id}: chaos(none 포함) 필요`);
       if (s.params) for (const k of Object.keys(s.params)) assert.ok(strategyIds.includes(k), `${s.id}: params.${k}`);
+      if (s.injected !== undefined) {
+        assert.deepEqual(Object.keys(s.injected), ['contentionWindowMs'], `${s.id}: injected는 contentionWindowMs만`);
+        assert.ok(Number.isInteger(s.injected.contentionWindowMs) && s.injected.contentionWindowMs > 0, `${s.id}: injected.contentionWindowMs`);
+        assert.equal(s.chaos, 'none', `${s.id}: 경합 창 주입은 chaos와 섞지 않는다`);
+      }
     }
   });
 
@@ -124,10 +129,11 @@ describe('outcomes', () => {
     }
   });
 
-  it('app-memory-lock: 서버 1대 상황은 ok, 2대 상황은 broken', () => {
+  it('app-memory-lock: 서버 1대 상황은 위반 없음(ok, 경합 창 주입으로 줄이 밀리면 slow), 2대 상황은 broken', () => {
     for (const o of learn.outcomes.filter((x) => x.strategy === 'app-memory-lock')) {
       const s = learn.situations.find((x) => x.id === o.situation);
-      assert.equal(o.verdict, s.instances === 1 ? 'ok' : 'broken', o.situation);
+      if (s.instances === 1) assert.ok(o.verdict === 'ok' || (o.verdict === 'slow' && s.injected), o.situation);
+      else assert.equal(o.verdict, 'broken', o.situation);
     }
   });
 });

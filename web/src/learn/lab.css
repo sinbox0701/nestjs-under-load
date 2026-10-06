@@ -545,6 +545,30 @@
 .lab-ev--measured {
   background: var(--info);
   color: var(--paper);
+  max-width: 100%;
+  min-width: 0;
+}
+/* 실측·주입됨 배지 묶음. 칸이 좁으면 줄바꿈하고, 긴 run id는 말줄임(전체는 title 툴팁) */
+.lab-evs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: middle;
+}
+.lab-ev__run {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.lab-vt td:last-child {
+  max-width: 12rem;
+}
+/* 근거 상자에서는 배지 묶음이 본문에 밀려 줄어들지 않게 한다(본문이 다음 줄로 간다) */
+.lab-evbox > .lab-evs {
+  flex-shrink: 0;
 }
 .lab-why {
   margin: var(--s2) 0;
@@ -553,6 +577,7 @@
 }
 .lab-evbox {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--s2);
   align-items: baseline;
   padding: var(--s2);

@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 
 import YAML from 'yaml';
 
-import { buildMeasured, matchSituation, planMeasured, replaceMeasured, runFacts, spread } from './measured.mjs';
+import { batchKey, buildMeasured, matchSituation, planMeasured, replaceMeasured, runFacts, spread } from './measured.mjs';
 import { REPO_ROOT } from './run.mjs';
 
 const LEARN_PATH = path.join(REPO_ROOT, 'packs/generic/g02-stock-decrement/learn.yaml');
@@ -14,7 +14,7 @@ const LEARN_TEXT = readFileSync(LEARN_PATH, 'utf8');
 const LEARN = YAML.parse(LEARN_TEXT);
 
 /** run.mjs buildMetadata 모양의 최소 메타데이터 */
-function md({ rep = 1, strategy = 'no-lock', instances = 2, valid = true, oversell = 0, p95 = 2, httpReqs = 4000, failed = 0, success = 500 } = {}) {
+function md({ rep = 1, strategy = 'no-lock', instances = 2, valid = true, oversell = 0, p95 = 2, httpReqs = 4000, failed = 0, success = 500, interventions = [] } = {}) {
   const batchId = `S_g02_${strategy}_i${instances}`;
   return {
     runId: `${batchId}_r${rep}`,
@@ -27,7 +27,7 @@ function md({ rep = 1, strategy = 'no-lock', instances = 2, valid = true, overse
     timeouts: { k6RequestMs: 10000 },
     data: { rows: { products: 5 }, stockPerProduct: 100, distribution: 'uniform', qtyPerOrder: 1 },
     load: { model: 'open', rate: 200, duration: '20s', warmup: '5s(별도 실행, 웜업 전용 상품)', maxVUs: 2000 },
-    interventions: [],
+    interventions,
     chaos: [],
     validity: { valid, reasons: valid ? [] : ['k6 CPU 포화'], droppedCountedAsFailure: true, k6CpuAvgRatio: 0.05 },
     invariants: [
@@ -59,6 +59,26 @@ describe('measured 집계', () => {
     assert.equal(matchSituation(LEARN.situations, { ...key, appInstances: 1 })?.id, 'spike-200-one-instance');
     assert.equal(matchSituation(LEARN.situations, { ...key, rate: 150 }), null);
     assert.equal(matchSituation(LEARN.situations, { ...key, chaos: 'some' }), null);
+  });
+
+  it('경합 창 주입(after-read): situation injected.contentionWindowMs와 ms가 같아야 대응, 다른 개입이 섞이면 대응 없음', () => {
+    const win = (ms) => [{ type: 'inject-delay', point: 'after-read', ms }];
+    assert.equal(matchSituation(LEARN.situations, batchKey(md({ instances: 1, interventions: win(30) })))?.id, 'contention-window-30-one-instance');
+    assert.equal(matchSituation(LEARN.situations, batchKey(md({ instances: 2, interventions: win(30) })))?.id, 'contention-window-30-two-instances');
+    assert.equal(matchSituation(LEARN.situations, batchKey(md({ instances: 2, interventions: win(50) }))), null);
+    assert.equal(matchSituation(LEARN.situations, batchKey(md({ instances: 2 })))?.id, 'spike-200-two-instances');
+    const mixed = [...win(30), { type: 'inject-delay', point: 'after-lock', ms: 5 }];
+    assert.equal(matchSituation(LEARN.situations, batchKey(md({ instances: 2, interventions: mixed }))), null);
+  });
+
+  it('buildMeasured: 주입된 실행은 measured.injected·summary·conditions에 "주입됨"이 남는다', () => {
+    const s = LEARN.situations.find((x) => x.id === 'contention-window-30-two-instances');
+    const interventions = [{ type: 'inject-delay', point: 'after-read', ms: 30 }];
+    const m = buildMeasured([md({ rep: 1, interventions }), md({ rep: 2, interventions })], s);
+    assert.deepEqual(m.injected, { contentionWindowMs: 30 });
+    assert.match(m.summary, /^경합 창 30ms 주입됨 · /);
+    assert.match(m.conditions, /경합 창 지연 30ms 주입됨\(after-read/);
+    assert.equal(buildMeasured([md()], LEARN.situations.find((x) => x.id === 'spike-200-two-instances')).injected, undefined);
   });
 
   it('buildMeasured: 무효 실행 제외, 위반 횟수·수치·조건 문구', () => {

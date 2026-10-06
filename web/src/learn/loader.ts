@@ -29,7 +29,11 @@ export function normalizeMeasured(v: unknown): Measured | null {
   if (typeof v === 'string' || typeof v === 'number') return { run: null, text: String(v) };
   if (!isObj(v)) return null;
   const run = v.run ?? v.runId ?? v.id;
-  const rest = Object.entries(v).filter(([k]) => !['run', 'runId', 'id'].includes(k));
+  const injectedMs =
+    isObj(v.injected) && typeof v.injected.contentionWindowMs === 'number'
+      ? v.injected.contentionWindowMs
+      : undefined;
+  const rest = Object.entries(v).filter(([k]) => !['run', 'runId', 'id', 'injected'].includes(k));
   const summary = v.summary ?? v.text;
   const text =
     typeof summary === 'string'
@@ -37,7 +41,11 @@ export function normalizeMeasured(v: unknown): Measured | null {
       : rest
           .map(([k, val]) => `${k} ${typeof val === 'object' ? JSON.stringify(val) : val}`)
           .join(' · ');
-  return { run: run == null ? null : String(run), text };
+  return {
+    run: run == null ? null : String(run),
+    text,
+    ...(injectedMs !== undefined ? { injectedMs } : {}),
+  };
 }
 
 function normalizeVerdict(v: unknown): Verdict {
@@ -67,6 +75,10 @@ export function normalizeLearn(raw: unknown): LearnDoc {
       load: isObj(s.load) ? (s.load as Situation['load']) : undefined,
       instances: typeof s.instances === 'number' ? s.instances : undefined,
       chaos: s.chaos === 'none' || isObj(s.chaos) ? (s.chaos as Situation['chaos']) : undefined,
+      injected:
+        isObj(s.injected) && typeof s.injected.contentionWindowMs === 'number'
+          ? { contentionWindowMs: s.injected.contentionWindowMs }
+          : undefined,
       note: typeof s.note === 'string' ? s.note : undefined,
     }))
     .filter((s) => s.id);
@@ -113,14 +125,14 @@ export function outcomeFor(doc: LearnDoc, strategy: string, situation: string): 
 }
 
 export type Evidence =
-  | { kind: 'measured'; run: string | null; text: string }
+  | { kind: 'measured'; run: string | null; text: string; injectedMs?: number }
   | { kind: 'expected'; text: string }
   | { kind: 'none' };
 
 /** 실측이 있으면 실측, 없으면 예상. 화면은 둘을 다른 배지로 그린다. */
 export function evidenceOf(o: Outcome | null): Evidence {
   if (!o) return { kind: 'none' };
-  if (o.measured) return { kind: 'measured', run: o.measured.run, text: o.measured.text };
+  if (o.measured) return { kind: 'measured', ...o.measured };
   if (o.expected) return { kind: 'expected', text: o.expected };
   return { kind: 'none' };
 }
@@ -152,6 +164,21 @@ export const VERDICT_META: Record<Verdict, { label: string; icon: string; tone: 
   'n/a': { label: '해당 없음', icon: '–', tone: 'neutral' },
 };
 
+/** 장애·지연이 인위로 주입된 상황인가(chaos 또는 경합 창 주입). 화면에 "주입됨" 배지를 붙인다. */
+export function isInjected(s: Situation): boolean {
+  return (s.chaos != null && s.chaos !== 'none') || (s.injected?.contentionWindowMs ?? 0) > 0;
+}
+
+/**
+ * 실측 run id를 배지에 들어갈 길이로 줄인다. 전체 id는 툴팁(title)으로 보인다.
+ * `2026-10-06T16-20-36Z_g02_row-lock_i2` → `10-06 16:20:36` (strategy·대수는 표의 행·상황이 이미 말해 준다)
+ */
+export function shortRunId(run: string): string {
+  const m = /^\d{4}-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})Z/.exec(run);
+  if (m) return `${m[1]}-${m[2]} ${m[3]}:${m[4]}:${m[5]}`;
+  return run.length > 16 ? `${run.slice(0, 15)}…` : run;
+}
+
 export function situationSummary(s: Situation): string {
   const parts: string[] = [];
   if (s.load) {
@@ -165,6 +192,7 @@ export function situationSummary(s: Situation): string {
     const tp = isObj(s.chaos.toxiproxy) ? s.chaos.toxiproxy : null;
     parts.push(tp && typeof tp.latencyMs === 'number' ? `DB 지연 ${tp.latencyMs}ms` : '장애 주입');
   }
+  if (s.injected?.contentionWindowMs) parts.push(`경합 창 +${s.injected.contentionWindowMs}ms`);
   return parts.join(' · ');
 }
 

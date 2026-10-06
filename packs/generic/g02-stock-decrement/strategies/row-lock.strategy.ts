@@ -18,6 +18,7 @@ const LOCK_NOT_AVAILABLE = '55P03';
  * 이 코드가 하는 일
  * - 트랜잭션 첫 문장으로 `SET LOCAL lock_timeout`을 건다(트랜잭션이 끝나면 자동 원복).
  * - `LockMode.PESSIMISTIC_WRITE`로 상품을 읽는다 → `SELECT ... FOR UPDATE`. 다른 트랜잭션이 행을 잡고 있으면 여기서 기다린다.
+ * - 경합 창 주입 지점(after-read)은 FOR UPDATE로 읽은 직후다. 다른 strategy와 같은 위치지만 여기서는 잠금을 쥔 채 기다린다.
  * - 잠근 행으로 재고를 판정하고 차감(flush) 또는 품절 처리, 원장 INSERT 후 커밋. 커밋/롤백 때 행 잠금이 풀린다.
  * - lock_timeout을 넘기면 PostgreSQL이 55P03을 던진다 → 트랜잭션 롤백(원장에 남지 않음) → 503.
  *
@@ -48,6 +49,7 @@ export class RowLockStrategy implements G02Strategy<RowLockParams> {
           lockMode: LockMode.PESSIMISTIC_WRITE, // @learn for-update — SELECT ... FOR UPDATE. 잠금을 기다린 뒤 최신 커밋 버전을 읽어 온다
         }); // @event lock_acquired
         await ctx.contentionWindow('after-lock'); // @event injected_delay
+        await ctx.contentionWindow('after-read'); // @event injected_delay
         if (product.stock < cmd.qty) { // @learn fresh-read-check — 잠근 행의 최신 값으로 판정한다. 다른 트랜잭션은 이 행을 바꿀 수 없다
           await ctx.ledger.record(em, cmd, 'sold_out');
           return 'sold_out' as const;

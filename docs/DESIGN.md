@@ -366,6 +366,7 @@ checklist:
 
 - `concepts[]`: 이 시나리오에서 배우는 개념(`id`, `label`, `body` 3~5문장). 용어 툴팁과 공유한다.
 - `situations[]`: 부하·환경 조합(`id`, `label`, `load{model,vus|rate,shape}`, `instances`, `chaos`, `note`). 예: 동시 2명·서버 1대 / 마감 직전 200 req/s·서버 2대 / DB 지연 50ms 주입.
+  - 선택 `injected: { contentionWindowMs }`: 모든 strategy의 같은 경합 창 지점(`after-read`, 읽기 후 쓰기 전. 읽기가 없는 strategy는 첫 쓰기 문장 전)에 넣는 인위 지연(ms). 실행은 RunConfig `injectDelay: [{ point: after-read, ms }]`로 하고, 판정·실측 화면에 "주입됨"으로 표시한다(실측에는 `measured.injected`).
 - `outcomes[]`: strategy × situation 판정. `verdict`(`ok|broken|slow|rejects|n/a`), `expected`(예상), `measured`(실측, 없으면 `null`), `why`, `focus[]`(`{file, marker}`), `sql[]`, 선택 `concepts: [id]`(해당 판정과 관련된 개념만 카드로 표시, 없으면 시나리오 전체 개념).
 - `choose[]`: "이 상황이면 이 코드" 결정 가이드(`when`, `pick`, `because`, `avoid[]`).
 - **코드 마커:** 소스에 `// @learn <marker-id> — <한 줄 설명>` 주석. 화면은 마커로 줄을 찾아 강조하고 줄 번호는 데이터에 쓰지 않는다. 계측용 `// @event <phase>`와 별개이며 한 줄에 둘 다 가능하다.

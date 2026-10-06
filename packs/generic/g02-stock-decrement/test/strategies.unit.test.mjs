@@ -167,3 +167,27 @@ describe('app-memory-lock mutex (가짜 DB엔 행 잠금이 없어서 mutex만�
     assert.ok(v.soldEqualsDecrement + v.oversell > 0, JSON.stringify(v));
   });
 });
+
+describe('경합 창 주입 지점(after-read)은 모든 strategy에 같은 조건으로 걸린다', () => {
+  for (const id of ['no-lock', 'app-memory-lock', 'row-lock', 'conditional-update']) {
+    for (const stock of [5, 0]) {
+      it(`${id} · 재고 ${stock}: after-read가 요청당 정확히 1번, 첫 쓰기 문장(UPDATE·원장 INSERT)보다 먼저`, async () => {
+        fake.db.products.clear();
+        fake.db.ledger.length = 0;
+        fake.db.sql.length = 0;
+        fake.seed(stock);
+        const calls = [];
+        const { strategy, params } = makeStrategy(id);
+        const ctx = makeCtx(fake.orm.em, { params });
+        ctx.contentionWindow = async (point) => {
+          calls.push({ point, sqlBefore: fake.db.sql.length });
+        };
+        await strategy.execute(cmd(), ctx);
+        const reads = calls.filter((c) => c.point === 'after-read');
+        assert.equal(reads.length, 1, JSON.stringify(calls));
+        const firstWrite = fake.db.sql.findIndex((s) => /^(update|insert)/.test(s));
+        assert.ok(firstWrite >= 0 && reads[0].sqlBefore <= firstWrite, `${id}: 주입이 쓰기 뒤에 있음 ${JSON.stringify(fake.db.sql)}`);
+      });
+    }
+  }
+});

@@ -73,7 +73,7 @@ load:
   allowedProfiles: [constant]
 
 chaosHooks:
-  - contention-window-delay     # strategy 안 ctx.contentionWindow('after-read') 지점
+  - contention-window-delay     # strategy 안 ctx.contentionWindow('after-read') 지점(4개 strategy 모두 읽기 후 쓰기 전 같은 위치, conditional-update는 UPDATE 직전)
 
 stage:
   sceneType: queue-at-counter

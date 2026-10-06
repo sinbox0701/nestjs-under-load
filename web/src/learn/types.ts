@@ -23,6 +23,8 @@ export interface Situation {
   instances?: number;
   /** 'none' 또는 { toxiproxy: { latencyMs } } 같은 주입 설정 */
   chaos?: 'none' | Record<string, unknown>;
+  /** 모든 strategy의 같은 경합 창 지점(after-read)에 넣는 인위 지연(DESIGN §6.5). 화면에 "주입됨"으로 표시 */
+  injected?: { contentionWindowMs?: number };
   note?: string;
 }
 
@@ -35,6 +37,8 @@ export interface FocusRef {
 export interface Measured {
   run: string | null;
   text: string;
+  /** 경합 창 지연을 주입하고 잰 실측이면 그 ms(measured.injected.contentionWindowMs) */
+  injectedMs?: number;
 }
 
 export interface Outcome {

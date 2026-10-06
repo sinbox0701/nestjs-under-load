@@ -117,6 +117,27 @@ situations:
     note: >-
       row-lock의 lock_timeout을 50ms로 줄이고, 잠근 뒤 20ms짜리 작업(after-lock 지연 주입)을 넣는다. 상품 1에는 초당 약 57건이 온다.
       lock_timeout과 after-lock 지점은 row-lock에만 있다. 다른 strategy에는 같은 부하의 핫 상품 조건으로만 작용한다.
+  - id: contention-window-30-one-instance
+    label: 경합 창 30ms 주입 · 서버 1대
+    load: { model: open, rate: 200, shape: constant, duration: 20s }
+    instances: 1
+    chaos: none
+    injected: { contentionWindowMs: 30 }
+    data: { products: 5, stockPerProduct: 100, distribution: { kind: uniform } }
+    note: >-
+      로컬은 DB 왕복이 1ms 안팎이라 읽기~쓰기 사이(경합 창)가 실제 운영보다 좁다. 모든 strategy의 같은 지점(after-read: 읽은 직후,
+      읽기가 없는 conditional-update는 UPDATE 직전, 모두 트랜잭션 안)에 30ms를 인위로 넣어 창을 넓힌다. 주입된 조건이므로 결과에 "주입됨"으로 표시한다.
+      상품당 초당 약 40건이면 30ms 창 안에 같은 상품 요청이 평균 1.2건 더 들어온다.
+  - id: contention-window-30-two-instances
+    label: 경합 창 30ms 주입 · 서버 2대
+    load: { model: open, rate: 200, shape: constant, duration: 20s }
+    instances: 2
+    chaos: none
+    injected: { contentionWindowMs: 30 }
+    data: { products: 5, stockPerProduct: 100, distribution: { kind: uniform } }
+    note: >-
+      위와 같은 30ms 주입에 nginx round-robin으로 서버 2대. 같은 상품 요청이 인스턴스마다 초당 약 20건씩 나뉘어 처리된다.
+      지연 주입 없이 위반 0이 나왔던 app-memory-lock 2대가 창이 넓어지면 어떻게 되는지 본다.
 
 outcomes:
   # ── no-lock ────────────────────────────────────────────────────────────────
@@ -213,6 +234,56 @@ outcomes:
       - { file: strategies/no-lock.strategy.ts, marker: app-computed-set }
     sql: *sql-no-lock
 
+  - strategy: no-lock
+    situation: contention-window-30-one-instance
+    verdict: broken
+    expected: "위반 3/3회. 재고가 남아 있는 동안 30ms 창 안에 같은 상품 요청이 겹쳐 같은 재고를 읽고 같은 상수를 쓴다. 원장 성공이 총재고(500)를 수백 건 넘고 no_oversell·sold_equals_decrement가 상품 대부분에서 위반된다. p95는 약 30ms + 왕복"
+    measured:
+      run: 2026-10-06T16-42-09Z_g02_no-lock_i1
+      runs: [ 2026-10-06T16-42-09Z_g02_no-lock_i1_r1, 2026-10-06T16-42-09Z_g02_no-lock_i1_r2, 2026-10-06T16-42-09Z_g02_no-lock_i1_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 3/3회 발생(sold-equals-decrement 상품 5·5·5개, no-oversell 상품 5·5·5개) · 원장 성공 1098·1101·1115건 / 총재고 500 · 처리량 200 req/s(200~200.1) · p95 33.81ms(33.68~34.3) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 5, 5, 5 ]
+        no-oversell: [ 5, 5, 5 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 1098, 1101, 1115 ]
+      throughputRps: { median: 200, min: 200, max: 200.1 }
+      p95Ms: { median: 33.81, min: 33.68, max: 34.3 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.044, min: 0.043, max: 0.045 }
+      conditions: "로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
+    why: "SELECT~UPDATE 사이에 30ms를 넣으면 같은 상품 요청이 거의 항상 그 사이에 끼어든다. 뒤의 UPDATE는 앞 커밋을 기다렸다가 WHERE id만 재검사하고 앱이 계산한 상수로 덮어쓴다. 서버 1대여도 await 사이에 다른 요청이 끼어드는 것은 같다. 실측: 3회 모두 5개 상품 전부 위반, 원장 성공 약 1,100건(총재고 500의 2.2배). 주입 없이 1/3회였던 같은 코드가 창이 넓어지자 매번 깨졌다. p95(약 34ms)는 주입 30ms + 왕복이다"
+    focus:
+      - { file: strategies/no-lock.strategy.ts, marker: read-then-write }
+      - { file: strategies/no-lock.strategy.ts, marker: app-computed-set }
+    sql: *sql-no-lock
+  - strategy: no-lock
+    situation: contention-window-30-two-instances
+    verdict: broken
+    expected: "서버 1대와 같은 규모로 위반 3/3회. 대수와 무관하다"
+    measured:
+      run: 2026-10-06T16-42-09Z_g02_no-lock_i2
+      runs: [ 2026-10-06T16-42-09Z_g02_no-lock_i2_r1, 2026-10-06T16-42-09Z_g02_no-lock_i2_r2, 2026-10-06T16-42-09Z_g02_no-lock_i2_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 3/3회 발생(sold-equals-decrement 상품 5·5·5개, no-oversell 상품 5·5·5개) · 원장 성공 1083·1114·1097건 / 총재고 500 · 처리량 200.1 req/s(200~200.1) · p95 33.9ms(33.81~33.97) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 5, 5, 5 ]
+        no-oversell: [ 5, 5, 5 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 1083, 1114, 1097 ]
+      throughputRps: { median: 200.1, min: 200, max: 200.1 }
+      p95Ms: { median: 33.9, min: 33.81, max: 33.97 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.043, min: 0.042, max: 0.043 }
+      conditions: "로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
+    why: "막는 장치가 어디에도 없으므로 요청이 어느 인스턴스로 가든 겹치면 깨진다. 겹침 확률은 상품당 도착률 × 창 길이로 정해지고 대수와는 상관없다. 실측도 1대와 같은 규모였다(원장 성공 1,083~1,114건, 5개 상품 전부 위반)"
+    focus:
+      - { file: strategies/no-lock.strategy.ts, marker: read-then-write }
+      - { file: strategies/no-lock.strategy.ts, marker: app-computed-set }
+    sql: *sql-no-lock
   # ── row-lock ───────────────────────────────────────────────────────────────
   - strategy: row-lock
     situation: two-users-one-instance
@@ -308,6 +379,56 @@ outcomes:
       - { file: strategies/row-lock.strategy.ts, marker: lock-timeout-55p03 }
     sql: *sql-row-lock
 
+  - strategy: row-lock
+    situation: contention-window-30-one-instance
+    verdict: slow
+    expected: "위반 0. 주입 지점이 FOR UPDATE 뒤라 행 잠금을 30ms 이상 쥔다. 상품당 천장이 초당 약 30건으로 도착(약 40건)보다 낮아 대기가 쌓이고 p95가 수백 ms~초 단위로 오른다. 풀(10개)이 잠금 대기 트랜잭션으로 차서 대기는 주로 풀 획득에서 생기고, lock_timeout(1000ms) 503은 거의 없을 것"
+    measured:
+      run: 2026-10-06T16-42-09Z_g02_row-lock_i1
+      runs: [ 2026-10-06T16-42-09Z_g02_row-lock_i1_r1, 2026-10-06T16-42-09Z_g02_row-lock_i1_r2, 2026-10-06T16-42-09Z_g02_row-lock_i1_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 160.5 req/s(160.1~161.7) · p95 7298.96ms(7297.27~7782.41) · 실패율 19.77%(19.2~19.97) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 160.5, min: 160.1, max: 161.7 }
+      p95Ms: { median: 7298.96, min: 7297.27, max: 7782.41 }
+      failRatePct: { median: 19.77, min: 19.2, max: 19.97 }
+      k6CpuAvgRatio: { median: 0.058, min: 0.056, max: 0.06 }
+      conditions: "로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
+    why: "같은 30ms라도 FOR UPDATE 뒤에 있으면 잠금 보유 시간이 되고, 상품당 천장 ≈ 1/보유 시간이 초당 약 30건으로 내려간다. 품절 뒤에도 FOR UPDATE와 주입 지점을 지나므로 줄이 풀리지 않는다. 실측: 위반 0, 503 0건이지만 p50 약 3.5초, p95 약 7.3초로 app-memory-lock 1대(p95 약 4.7초)보다도 나빴다. 예상(수백 ms~초)보다 크다. 잠금 대기 트랜잭션이 풀 커넥션(10개)을 쥐고 있어서, 한 상품의 대기자가 커넥션을 차지하면 다른 상품 요청도 풀에서 기다린다(app-memory-lock은 상품별 대기를 메모리에서 해서 커넥션은 각 줄의 맨 앞만 쓴다). 대기의 대부분이 풀 획득이라 행 잠금 대기는 lock_timeout(1000ms)에 닿지 않았다. 실패율 약 20%는 서버 거절이 아니라 k6 dropped_iterations(vus_max 약 850 < maxVUs 2000)이며 규칙상 실패로 센다"
+    focus:
+      - { file: strategies/row-lock.strategy.ts, marker: for-update }
+      - { file: strategies/row-lock.strategy.ts, marker: lock-held-span }
+    sql: *sql-row-lock
+  - strategy: row-lock
+    situation: contention-window-30-two-instances
+    verdict: slow
+    expected: "위반 0. 상품당 천장은 DB 행 잠금이 정하므로 서버 2대여도 같다. 풀이 20개로 늘어 DB 쪽 잠금 대기는 길어지지만 지연·처리량은 1대와 비슷하다"
+    measured:
+      run: 2026-10-06T16-42-09Z_g02_row-lock_i2
+      runs: [ 2026-10-06T16-42-09Z_g02_row-lock_i2_r1, 2026-10-06T16-42-09Z_g02_row-lock_i2_r2, 2026-10-06T16-42-09Z_g02_row-lock_i2_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 168.8 req/s(168.7~169.9) · p95 5383.44ms(5071.74~5454.59) · 실패율 15.6%(15.07~15.67) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 168.8, min: 168.7, max: 169.9 }
+      p95Ms: { median: 5383.44, min: 5071.74, max: 5454.59 }
+      failRatePct: { median: 15.6, min: 15.07, max: 15.67 }
+      k6CpuAvgRatio: { median: 0.055, min: 0.052, max: 0.056 }
+      conditions: "로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
+    why: "잠금이 DB 행에 있어 인스턴스를 늘려도 한 상품의 트랜잭션은 한 줄로 선다(위반 0, 503 0건). 다만 예상과 달리 1대보다 나았다(p95 약 5.4초 대 7.3초, 처리량 169 대 161 req/s, 실패율(k6 드롭) 15.6% 대 19.8%). 풀이 20개로 늘어 한 상품의 대기자가 커넥션을 다 차지해 다른 상품까지 막는 일이 줄었기 때문으로 본다. 천장(상품당 초당 약 30건)은 그대로라 대기열은 여전히 쌓인다"
+    focus:
+      - { file: strategies/row-lock.strategy.ts, marker: for-update }
+      - { file: strategies/row-lock.strategy.ts, marker: lock-held-span }
+    sql: *sql-row-lock
   # ── conditional-update ─────────────────────────────────────────────────────
   - strategy: conditional-update
     situation: two-users-one-instance
@@ -399,6 +520,56 @@ outcomes:
       - { file: strategies/conditional-update.strategy.ts, marker: where-stock-gte }
     sql: *sql-conditional
 
+  - strategy: conditional-update
+    situation: contention-window-30-one-instance
+    verdict: ok
+    expected: "위반 0, 실패 0. p95는 약 30ms + 왕복으로 주입만큼만 늘고 처리량은 도착률 그대로다"
+    measured:
+      run: 2026-10-06T16-42-09Z_g02_conditional-update_i1
+      runs: [ 2026-10-06T16-42-09Z_g02_conditional-update_i1_r1, 2026-10-06T16-42-09Z_g02_conditional-update_i1_r2, 2026-10-06T16-42-09Z_g02_conditional-update_i1_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 200.1 req/s(200.1~200.1) · p95 33.94ms(33.89~34.13) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 200.1, min: 200.1, max: 200.1 }
+      p95Ms: { median: 33.94, min: 33.89, max: 34.13 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.043, min: 0.041, max: 0.044 }
+      conditions: "로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
+    why: "읽기가 없어서 주입 지점은 UPDATE 직전, 행 잠금을 쥐기 전이다. 기다린 뒤 보내는 UPDATE가 최신 행으로 WHERE stock >= qty를 판정하므로 창이 넓어져도 덮어쓰기가 없고, 잠금 보유 시간도 늘지 않는다. 실측: 위반 0, 실패 0, 처리량 200 req/s, p95 약 34ms(주입 30ms + 왕복)로 예상과 같다. 같은 30ms가 잠금 안에 들어간 row-lock(p95 약 7.3초)과의 차이가 곧 보유 시간의 차이다"
+    focus:
+      - { file: strategies/conditional-update.strategy.ts, marker: where-stock-gte }
+      - { file: strategies/conditional-update.strategy.ts, marker: db-computed-set }
+    sql: *sql-conditional
+  - strategy: conditional-update
+    situation: contention-window-30-two-instances
+    verdict: ok
+    expected: "위반 0, 실패 0. 서버 1대와 같다"
+    measured:
+      run: 2026-10-06T16-42-09Z_g02_conditional-update_i2
+      runs: [ 2026-10-06T16-42-09Z_g02_conditional-update_i2_r1, 2026-10-06T16-42-09Z_g02_conditional-update_i2_r2, 2026-10-06T16-42-09Z_g02_conditional-update_i2_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 200.1 req/s(200.1~200.1) · p95 33.75ms(33.72~33.83) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 200.1, min: 200.1, max: 200.1 }
+      p95Ms: { median: 33.75, min: 33.72, max: 33.83 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.04, min: 0.04, max: 0.04 }
+      conditions: "로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
+    why: "판정과 차감이 DB 한 문장 안에 있어 인스턴스 수와 무관하다. 주입된 30ms는 잠금 밖에 있으므로 줄을 세우지 않는다"
+    focus:
+      - { file: strategies/conditional-update.strategy.ts, marker: where-stock-gte }
+      - { file: strategies/conditional-update.strategy.ts, marker: affected-rows }
+    sql: *sql-conditional
   # ── app-memory-lock ────────────────────────────────────────────────────────
   - strategy: app-memory-lock
     situation: two-users-one-instance
@@ -487,6 +658,57 @@ outcomes:
     focus:
       - { file: strategies/app-memory-lock.strategy.ts, marker: promise-chain-mutex }
       - { file: strategies/app-memory-lock.strategy.ts, marker: process-local-map }
+    sql: *sql-no-lock
+
+  - strategy: app-memory-lock
+    situation: contention-window-30-one-instance
+    verdict: slow
+    expected: "위반 0. 대신 주입 지점이 mutex 안이라 상품당 보유가 30ms를 넘고, 천장(초당 약 30건)이 도착(약 40건)보다 낮아 앱 안 대기열이 계속 길어진다. p95가 초 단위로 오른다"
+    measured:
+      run: 2026-10-06T16-42-09Z_g02_app-memory-lock_i1
+      runs: [ 2026-10-06T16-42-09Z_g02_app-memory-lock_i1_r1, 2026-10-06T16-42-09Z_g02_app-memory-lock_i1_r2, 2026-10-06T16-42-09Z_g02_app-memory-lock_i1_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 172.7 req/s(172.4~173.2) · p95 4672.62ms(4594.97~4852.42) · 실패율 13.68%(13.45~13.82) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 172.7, min: 172.4, max: 173.2 }
+      p95Ms: { median: 4672.62, min: 4594.97, max: 4852.42 }
+      failRatePct: { median: 13.68, min: 13.45, max: 13.82 }
+      k6CpuAvgRatio: { median: 0.058, min: 0.054, max: 0.058 }
+      conditions: "로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
+    why: "한 프로세스 안에서는 같은 상품 요청이 줄을 서므로 창이 넓어져도 겹치지 않는다(실측 위반 0, 3/3회). 그 대가로 30ms가 고스란히 직렬 구간에 들어가 상품당 천장이 초당 약 30건이 되고, 초당 약 40건이 오므로 대기열이 계속 길어졌다. 실측 p50 약 2초, p95 약 4.7초, 처리량 약 173 req/s. 실패율 약 14%는 서버 거절(503·에러 0건)이 아니라 k6 dropped_iterations다. 응답이 늦어 VU가 묶이는 속도를 k6의 VU 추가 할당이 따라가지 못했다(vus_max 약 800 < maxVUs 2000). 규칙상 실패로 센다. 대기는 Promise 체인에만 있어 pg_locks에는 보이지 않는다. 판정을 ok가 아니라 slow로 둔 이유다"
+    focus:
+      - { file: strategies/app-memory-lock.strategy.ts, marker: promise-chain-mutex }
+      - { file: strategies/app-memory-lock.strategy.ts, marker: release-after-commit }
+    sql: *sql-no-lock
+  - strategy: app-memory-lock
+    situation: contention-window-30-two-instances
+    verdict: broken
+    expected: "위반 3/3회. 지연 주입 없이 0이었던 같은 코드가 창 30ms에서는 매번 깨진다. 인스턴스마다 상품당 초당 약 20건이라 각자의 mutex 안에서는 대기가 크지 않다"
+    measured:
+      run: 2026-10-06T16-42-09Z_g02_app-memory-lock_i2
+      runs: [ 2026-10-06T16-42-09Z_g02_app-memory-lock_i2_r1, 2026-10-06T16-42-09Z_g02_app-memory-lock_i2_r2, 2026-10-06T16-42-09Z_g02_app-memory-lock_i2_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 3/3회 발생(sold-equals-decrement 상품 5·5·5개, no-oversell 상품 5·5·5개) · 원장 성공 801·785·780건 / 총재고 500 · 처리량 200.1 req/s(200.1~200.1) · p95 107.1ms(105.68~119.29) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 5, 5, 5 ]
+        no-oversell: [ 5, 5, 5 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 801, 785, 780 ]
+      throughputRps: { median: 200.1, min: 200.1, max: 200.1 }
+      p95Ms: { median: 107.1, min: 105.68, max: 119.29 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.046, min: 0.044, max: 0.047 }
+      conditions: "로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
+    why: "두 인스턴스의 mutex는 서로를 모르므로, 두 줄의 맨 앞 요청이 같은 상품의 30ms 창을 동시에 지나면 no-lock과 같은 잃어버린 갱신이 난다. 실측: 3회 모두 5개 상품 전부 위반, 원장 성공 780~801건. 주입 없이 위반 0이었던 같은 코드다. no-lock(약 1,100건)보다 적은 것은 인스턴스 안에서는 줄을 서서 동시에 창을 지나는 요청이 인스턴스당 하나뿐이기 때문이다. 인스턴스마다 상품당 초당 약 20건이 천장(약 30건) 아래라 대기열은 쌓이지 않았지만, 줄은 서므로 p95가 107ms로 주입분(약 34ms)보다 크다"
+    focus:
+      - { file: strategies/app-memory-lock.strategy.ts, marker: process-local-map }
+      - { file: strategies/app-memory-lock.strategy.ts, marker: same-read-then-write }
     sql: *sql-no-lock
 
 choose:

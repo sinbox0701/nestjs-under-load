@@ -2,7 +2,9 @@ import { useEffect, useRef, type KeyboardEvent } from 'react';
 import {
   VERDICT_META,
   evidenceOf,
+  isInjected,
   outcomeFor,
+  shortRunId,
   situationSummary,
   type Evidence,
   type Highlight,
@@ -23,9 +25,23 @@ export function VerdictBadge({ verdict }: { verdict: Verdict }) {
 
 export function EvidenceBadge({ ev }: { ev: Evidence }) {
   if (ev.kind === 'measured') {
+    const injected = ev.injectedMs != null;
     return (
-      <span className="badge lab-ev lab-ev--measured" title={ev.text}>
-        실측{ev.run ? ` run#${ev.run}` : ''}
+      <span className="lab-evs">
+        <span
+          className="badge lab-ev lab-ev--measured"
+          title={`${ev.run ? `실측 run#${ev.run}\n` : ''}${ev.text}`}
+        >
+          <span className="lab-ev__run">실측{ev.run ? ` run#${shortRunId(ev.run)}` : ''}</span>
+        </span>
+        {injected && (
+          <span
+            className="badge t-info lab-ev--injected"
+            title={`경합 창 ${ev.injectedMs}ms 인위 지연을 주입하고 잰 실측`}
+          >
+            주입됨
+          </span>
+        )}
       </span>
     );
   }
@@ -212,7 +228,7 @@ export function SituationBar({ scenario, situation, onSituation }: SituationBarP
       {cur && (
         <p className="lab-sitbar__note">
           <span className="badge t-neutral">{situationSummary(cur) || cur.id}</span>
-          {cur.chaos && cur.chaos !== 'none' && <span className="badge t-info">주입됨</span>}
+          {isInjected(cur) && <span className="badge t-info">주입됨</span>}
           {cur.note && <span>{cur.note}</span>}
         </p>
       )}
@@ -454,12 +470,14 @@ export function Matrix({ scenario, situation, strategy, onPick }: MatrixProps) {
                         type="button"
                         className={cur ? 'lab-mt__cell is-cur' : 'lab-mt__cell'}
                         aria-current={cur ? 'true' : undefined}
-                        aria-label={`${st.id} × ${s.label}: ${VERDICT_META[v].label}${ev.kind === 'measured' ? ' (실측)' : ''}`}
+                        aria-label={`${st.id} × ${s.label}: ${VERDICT_META[v].label}${ev.kind === 'measured' ? (ev.injectedMs != null ? ' (실측·주입됨)' : ' (실측)') : ''}`}
                         onClick={() => onPick(st.id, s.id)}
                       >
                         <VerdictBadge verdict={v} />
                         {ev.kind === 'measured' && (
-                          <span className="lab-ev lab-ev--measured badge">실측</span>
+                          <span className="lab-ev lab-ev--measured badge">
+                            {ev.injectedMs != null ? '실측·주입됨' : '실측'}
+                          </span>
                         )}
                       </button>
                     </td>

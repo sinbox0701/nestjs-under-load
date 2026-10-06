@@ -25,6 +25,7 @@ concepts:
 situations:
   - { id: calm, label: 동시 2명 · 서버 1대, load: { model: closed, vus: 2 }, instances: 1, chaos: none }
   - { id: busy, label: 200 req/s · 서버 2대, load: { model: open, rate: 200 }, instances: 2, chaos: none }
+  - { id: wide, label: 경합 창 30ms 주입 · 서버 2대, load: { model: open, rate: 200 }, instances: 2, chaos: none, injected: { contentionWindowMs: 30 } }
 outcomes:
   - { strategy: naive, situation: calm, verdict: broken, expected: 위반 가능, measured: null, why: 상수를 쓴다,
       focus: [{ file: strategies/naive.strategy.ts, marker: write }], sql: ["update t set v = $1"], concepts: [c-lost] }
@@ -33,6 +34,11 @@ outcomes:
   - { strategy: locked, situation: calm, verdict: ok, expected: 위반 0, measured: null, why: 줄을 선다,
       focus: [{ file: strategies/locked.strategy.ts, marker: lock }], sql: ["select ... for update"] }
   - { strategy: locked, situation: busy, verdict: slow, expected: p95 증가, measured: null, why: 잠금 대기,
+      focus: [{ file: strategies/locked.strategy.ts, marker: lock }], sql: [] }
+  - { strategy: naive, situation: wide, verdict: broken, expected: 위반 다수,
+      measured: { run: 2026-10-06T16-50-01Z_g02_naive_i2, injected: { contentionWindowMs: 30 }, summary: 경합 창 30ms 주입됨 · 위반 3/3회 },
+      why: 창이 넓다, focus: [{ file: strategies/naive.strategy.ts, marker: read }], sql: [] }
+  - { strategy: locked, situation: wide, verdict: ok, expected: 위반 0, measured: null, why: 줄을 선다,
       focus: [{ file: strategies/locked.strategy.ts, marker: lock }], sql: [] }
 choose:
   - { when: 늘 맞아야 한다, pick: locked, because: DB가 줄 세운다, avoid: [naive] }
@@ -95,6 +101,30 @@ describe('CodeLab', () => {
       .find((r) => r.textContent?.includes('locked'))!;
     expect(within(lockedRow).getByText('느림')).toBeInTheDocument();
     expect(within(lockedRow).getByText('예상')).toBeInTheDocument();
+  });
+
+  it('경합 창 주입 상황: 상황 바와 실측에 "주입됨", 긴 run id는 줄이고 전체는 툴팁', async () => {
+    await setup();
+    expect(screen.queryByText('주입됨')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: '경합 창 30ms 주입 · 서버 2대' }));
+    expect(screen.getByText('200 req/s · 서버 2대 · 경합 창 +30ms')).toBeInTheDocument();
+    const panel = screen.getByRole('complementary', { name: '판정' });
+    const naiveRow = within(panel)
+      .getAllByRole('row')
+      .find((r) => r.textContent?.includes('naive'))!;
+    const badge = within(naiveRow).getByText('실측 run#10-06 16:50:01');
+    expect(badge.closest('[title]')).toHaveAttribute(
+      'title',
+      expect.stringContaining('실측 run#2026-10-06T16-50-01Z_g02_naive_i2'),
+    );
+    expect(within(naiveRow).getByText('주입됨')).toBeInTheDocument();
+    // 상황 바(1) + 표의 naive 행(1) + 선택한 naive 근거 상자(1)
+    expect(screen.getAllByText('주입됨').length).toBe(3);
+    fireEvent.click(screen.getByRole('button', { name: /매트릭스/ }));
+    const matrix = screen.getByRole('region', { name: '전체 판정 매트릭스' });
+    expect(
+      within(matrix).getByRole('button', { name: /naive × 경합 창.*\(실측·주입됨\)/ }),
+    ).toBeInTheDocument();
   });
 
   it('판정 표에서 strategy를 고르면 그 파일 탭이 열리고 강조가 따라간다', async () => {

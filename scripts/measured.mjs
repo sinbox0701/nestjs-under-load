@@ -7,6 +7,8 @@
 // 규칙
 // - 세션의 batch(strategy × 앱 대수, 3회 반복)마다 learn.yaml situation 하나에 대응시킨다.
 //   대응 조건: instances = 앱 대수, load.model = open, load.rate = 도착률, data(products·stockPerProduct·uniform 분포)가 같고 chaos 없음.
+//   경합 창 지연 주입(interventions의 inject-delay after-read)은 situation `injected.contentionWindowMs`와 ms가 같아야 한다(없으면 둘 다 0).
+//   그 밖의 개입(after-lock 등)이 있으면 대응하지 않는다.
 //   load.shape·duration은 0단계 run.mjs가 constant만 지원하므로 비교하지 않고, 차이는 conditions에 적는다.
 // - 무효(validity.valid=false) 실행은 집계에서 뺀다. 유효 실행이 없으면 그 batch는 쓰지 않는다.
 // - 기존 measured는 덮어쓴다. 실행하지 않은 situation의 measured는 건드리지 않는다(null 유지).
@@ -56,8 +58,14 @@ export function runFacts(md) {
   };
 }
 
+/** 모든 strategy 공통 경합 창 지점. situation `injected.contentionWindowMs`가 이 지점의 지연이다(DESIGN §6.5). */
+export const CONTENTION_POINT = 'after-read';
+
+const isContentionWindow = (d) => d.type === 'inject-delay' && d.point === CONTENTION_POINT;
+
 /** batch(같은 strategy × 앱 대수의 반복들) → situation 대응 키 */
 export function batchKey(md) {
+  const interventions = md.interventions ?? [];
   return {
     strategy: md.strategy.id,
     appInstances: md.topology.appInstances,
@@ -66,7 +74,8 @@ export function batchKey(md) {
     products: md.data.rows.products,
     stockPerProduct: md.data.stockPerProduct,
     distribution: md.data.distribution,
-    chaos: (md.interventions ?? []).length === 0 && (md.chaos ?? []).length === 0 ? 'none' : 'some',
+    chaos: interventions.every(isContentionWindow) && (md.chaos ?? []).length === 0 ? 'none' : 'some',
+    contentionWindowMs: interventions.filter(isContentionWindow).reduce((a, d) => a + d.ms, 0),
   };
 }
 
@@ -82,6 +91,7 @@ export function matchSituation(situations, key) {
       (s.data?.distribution?.kind ?? 'uniform') === key.distribution &&
       (s.chaos ?? 'none') === 'none' &&
       key.chaos === 'none' &&
+      (s.injected?.contentionWindowMs ?? 0) === (key.contentionWindowMs ?? 0) &&
       !s.params,
   );
   return hits.length === 1 ? hits[0] : null;
@@ -90,12 +100,14 @@ export function matchSituation(situations, key) {
 function conditionsText(md, situation, reps) {
   const h = md.host ?? {};
   const memGiB = h.dockerMemBytes ? (h.dockerMemBytes / 2 ** 30).toFixed(1) : '?';
+  const windowMs = batchKey(md).contentionWindowMs;
   const shapeNote = situation.load?.shape && situation.load.shape !== 'constant' ? `(상황 정의 shape=${situation.load.shape}, 0단계 run.mjs는 constant만 지원)` : '';
   return [
     `로컬 맥(${h.cpu ?? '?'}, Docker ${h.dockerNcpu ?? '?'} vCPU / ${memGiB} GiB, profile ${md.profile}, cpuset ${md.limits?.app?.cpuset ?? 'none'})`,
     `app ${md.topology.appInstances}대(각 cpus ${md.limits?.app?.cpus ?? '?'}) · postgres cpus ${md.limits?.postgres?.cpus ?? '?'} · nginx round-robin`,
     `open constant-arrival-rate ${md.load.rate}/s × ${md.load.duration}${shapeNote} · 웜업 ${md.load.warmup} · ${reps}회 반복 · k6 timeout ${md.timeouts.k6RequestMs}ms · maxVUs ${md.load.maxVUs}`,
     `상품 ${md.data.rows.products}개 × 재고 ${md.data.stockPerProduct}, 균등 분포, 요청당 ${md.data.qtyPerOrder}개`,
+    ...(windowMs > 0 ? [`경합 창 지연 ${windowMs}ms 주입됨(${CONTENTION_POINT}: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안)`] : []),
     '절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용',
   ].join(' · ');
 }
@@ -120,10 +132,13 @@ export function buildMeasured(mds, situation) {
       : `위반 ${withViolation}/${valid.length}회 발생(${violatedIds.map((id) => `${id} 상품 ${valid.map((f) => f.violations[id] ?? 0).join('·')}개`).join(', ')})`;
   const ledgerText = `원장 성공 ${valid.map((f) => f.ledgerSuccess ?? '?').join('·')}건 / 총재고 ${totalStock}`;
   const excluded = facts.length - valid.length;
+  const windowMs = batchKey(md).contentionWindowMs;
   return {
     run: md.batchId,
     runs: valid.map((f) => f.runId),
+    ...(windowMs > 0 ? { injected: { contentionWindowMs: windowMs } } : {}),
     summary: [
+      ...(windowMs > 0 ? [`경합 창 ${windowMs}ms 주입됨`] : []),
       violationText,
       ledgerText,
       `처리량 ${fmtRange(thr, ' req/s')}`,

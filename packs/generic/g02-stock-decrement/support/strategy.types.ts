@@ -13,7 +13,12 @@ export interface OrderCommand {
   qty: number;
 }
 
-/** 경합 창 지연 주입 지점 이름. RunConfig `injectDelay`에 같은 이름이 있을 때만 대기한다(DESIGN §6.3). */
+/**
+ * 경합 창 지연 주입 지점 이름. RunConfig `injectDelay`에 같은 이름이 있을 때만 대기한다(DESIGN §6.3).
+ * - `after-read`: 읽기 후 쓰기 전. **모든 strategy가 같은 위치에 둔다**(공정 비교). 읽기가 없는 strategy(conditional-update)는
+ *   트랜잭션 안 첫 쓰기 문장 바로 앞에 둔다. 락을 쥔 상태인지는 strategy마다 다르고, 그 차이가 비교 대상이다.
+ * - `after-lock`: row-lock 전용. 행 잠금을 얻은 직후(잠금 안 작업 시간 흉내).
+ */
 export type ContentionPoint = 'after-read' | 'before-write' | 'after-lock';
 
 export interface StrategyContext<P = Record<string, unknown>> {
