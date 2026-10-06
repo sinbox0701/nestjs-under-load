@@ -1,0 +1,10 @@
+# 0단계: 파일만 준비(--profile obs). app /metrics·exporter 스크레이프는 1단계에서 추가.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+# k6는 experimental-prometheus-rw로 remote-write(--web.enable-remote-write-receiver)

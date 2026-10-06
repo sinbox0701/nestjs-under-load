@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - packs/**
+  - engine/*
+  - web
+
+# 네이티브 빌드 스크립트를 허용할 패키지(없으면 비워 둔다).
+onlyBuiltDependencies: []

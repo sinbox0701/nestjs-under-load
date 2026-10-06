@@ -1,0 +1,11 @@
+# BuildKit: <Dockerfile>.dockerignore 가 이 Dockerfile 전용 ignore로 쓰인다(컨텍스트 = 레포 루트).
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+runs
+web
+design
+docs
+infra
+scripts

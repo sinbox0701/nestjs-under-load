@@ -1,0 +1,347 @@
+/* 컴포넌트 레이아웃만. 장식은 최소. */
+
+/* TopBar */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  flex-wrap: wrap;
+}
+.topbar__brand {
+  font-weight: 700;
+}
+.topbar__tabs {
+  display: flex;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex-wrap: wrap;
+}
+.topbar__tabs a {
+  text-decoration: none;
+}
+.topbar > .btn:last-child {
+  margin-left: auto;
+}
+
+/* Stage */
+.stage__hud,
+.stage__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+.stage__hud {
+  margin-bottom: var(--s2);
+}
+.stage__hud .push {
+  margin-left: auto;
+}
+.stage__foot {
+  margin-top: var(--s2);
+}
+.stage__mat {
+  display: flex;
+  justify-content: center;
+  background: var(--stage-mat);
+  padding: var(--s2) 0;
+  overflow: hidden;
+}
+.stage__box {
+  position: relative;
+}
+.stage__canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+.stage__overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.stage__tag {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+.callout {
+  position: absolute;
+  left: var(--s2);
+  right: var(--s2);
+  bottom: var(--s2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  align-items: baseline;
+  padding: var(--s2);
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  clip-path: var(--notch);
+}
+
+/* PlaybackBar */
+.pbar {
+  display: grid;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+.pbar__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  align-items: center;
+}
+.pbar__rail {
+  position: relative;
+  height: 28px;
+}
+.pbar__track {
+  position: absolute;
+  inset: 0;
+  background: var(--sunk);
+  border: 2px solid var(--edge);
+  overflow: hidden;
+}
+.pbar__done {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--mist);
+}
+.pbar__fold {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  opacity: 0.55;
+  background: repeating-linear-gradient(135deg, var(--fg) 0 1px, transparent 1px 4px);
+}
+.pbar__tick,
+.lane__mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+.tk-bad {
+  background: var(--bad);
+}
+.tk-wait {
+  background: var(--wait);
+}
+.tk-retry {
+  background: var(--retry);
+}
+.tk-ok {
+  background: var(--ok);
+}
+.tk-info {
+  background: var(--info);
+}
+.tk-neutral {
+  background: var(--slate);
+}
+.pbar__range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.pbar__clock {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s4);
+}
+
+/* ResultCard */
+.result__primary {
+  display: flex;
+  gap: var(--s3);
+  align-items: center;
+  padding: var(--s3);
+  background: var(--sunk);
+}
+.result__big {
+  font-size: 48px;
+  line-height: 1;
+  font-weight: 700;
+}
+.result__big.is-bad {
+  color: var(--bad-fg);
+}
+.result__big.is-ok {
+  color: var(--ok-fg);
+}
+.result__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s2);
+  margin: var(--s3) 0;
+}
+.result__grid dd {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+}
+.result__grid dd.small {
+  font-size: 10px;
+  font-weight: 400;
+}
+
+/* Side tabs */
+.tabs {
+  display: flex;
+  gap: var(--s1);
+  margin-bottom: var(--s2);
+}
+
+/* CodePanel */
+.code__path {
+  font: 10px var(--font-pixel-mono);
+  word-break: break-all;
+}
+.code__body {
+  position: relative;
+  max-height: 470px;
+  overflow: auto;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+}
+.code__body pre {
+  margin: 0;
+  padding: var(--s2) 0;
+  font: 12px/18px var(--font-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.code__body code {
+  counter-reset: ln;
+}
+.code__body .line {
+  display: inline-block;
+  width: 100%;
+  padding-left: 42px;
+  text-indent: -42px;
+  border-left: 3px solid transparent;
+}
+.code__body .line::before {
+  counter-increment: ln;
+  content: counter(ln);
+  display: inline-block;
+  width: 34px;
+  margin-right: 8px;
+  text-align: right;
+  color: var(--dim);
+  text-indent: 0;
+}
+.code__body .line.is-hl[data-tone='bad'] {
+  background: color-mix(in srgb, var(--bad) 18%, transparent);
+  border-left-color: var(--bad);
+}
+.code__body .line.is-hl[data-tone='wait'] {
+  background: color-mix(in srgb, var(--wait) 18%, transparent);
+  border-left-color: var(--wait);
+}
+.code__body .line.is-hl[data-tone='ok'] {
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+  border-left-color: var(--ok);
+}
+.code__body .line.is-hl[data-tone='info'] {
+  background: color-mix(in srgb, var(--info) 18%, transparent);
+  border-left-color: var(--info);
+}
+.code__plain {
+  padding: var(--s2);
+}
+.code__event {
+  margin-top: var(--s2);
+  display: grid;
+  gap: var(--s1);
+}
+.code__event p {
+  margin: 0;
+}
+
+/* ServerInside */
+.server__h {
+  margin: var(--s3) 0 var(--s1);
+  font-size: 12px;
+}
+
+/* Timeline */
+.timeline__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  margin-bottom: var(--s2);
+}
+.timeline__tools .btn[aria-pressed='false'] {
+  text-decoration: line-through;
+}
+.timeline__lanes {
+  display: grid;
+  gap: var(--s1);
+  margin-bottom: var(--s2);
+}
+.lane {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: var(--s2);
+  align-items: center;
+}
+.lane__track {
+  position: relative;
+  height: 12px;
+  background: var(--sunk);
+}
+.lane__now {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--fg);
+}
+.timeline__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 236px;
+  overflow: auto;
+}
+.row {
+  border-bottom: 1px dotted var(--line);
+}
+.row.is-future {
+  opacity: 0.4;
+}
+.row.is-now {
+  background: color-mix(in srgb, var(--info) 14%, transparent);
+  box-shadow: inset 3px 0 0 var(--info);
+}
+.row__btn {
+  display: grid;
+  grid-template-columns: 96px auto auto minmax(0, 1fr);
+  gap: var(--s2);
+  align-items: center;
+  width: 100%;
+  padding: var(--s1) var(--s2);
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.row__d {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.foot {
+  text-align: center;
+}

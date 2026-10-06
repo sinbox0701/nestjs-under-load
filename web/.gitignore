@@ -1,0 +1,3 @@
+# vite / vitest local caches
+node_modules/.tmp/
+*.local

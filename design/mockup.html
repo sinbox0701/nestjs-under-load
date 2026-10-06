@@ -1,0 +1,2621 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nestjs-under-load · 무대 시안</title>
+<link rel="icon" href="data:,">
+<script>try{var t=localStorage.getItem('nul-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
+<!-- 외부 리소스는 이 폰트 CSS 하나뿐. Galmuri (c) Lee Minseo, SIL OFL 1.1 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/galmuri@2.40.3/dist/galmuri.css">
+<style>
+/* ============================================================
+   토큰 — DESIGN_SYSTEM.md §1과 같은 값. 바꾸면 양쪽 다 바꾼다.
+   ============================================================ */
+:root {
+  /* 도트 팔레트 12색 (무대 캔버스와 UI가 공유) */
+  --ink:   #1E222A;
+  --slate: #4B5262;
+  --mist:  #B9C0CA;
+  --shell: #E2E4E8;
+  --paper: #F6F7F3;
+  --ok:    #1F7F45;  /* 정상·커밋 */
+  --wait:  #E2AE24;  /* 대기 */
+  --bad:   #CC3B34;  /* 충돌·실패 */
+  --retry: #EB7A2C;  /* 재시도 */
+  --info:  #2F6BCB;  /* 정보 */
+  --skin:  #F0C39C;
+  --wood:  #94704F;
+
+  /* 의미 토큰 — 라이트 */
+  --bg:      #E4E7EA;
+  --bg-dot:  #D6DADF;
+  --panel:   var(--paper);
+  --sunk:    #ECEEEA;
+  --edge:    var(--ink);     /* 컨트롤(버튼·세그먼트) 2px 테두리 */
+  --edge-soft: #9CA3AE;      /* 패널(카드) 2px 테두리 — 라이트에서 한 톤 낮춤 */
+  --line:    #DADDE1;        /* 패널 안 구분선 */
+  --fg:      var(--ink);
+  --dim:     #5A6170;
+  --ok-fg:   var(--ok);
+  --bad-fg:  var(--bad);
+  --sel-bg:  var(--ink);
+  --sel-fg:  var(--paper);
+  --stage-mat: #D3D7DD;      /* 무대 레터박스 */
+  --vignette: none;
+
+  /* 간격 4px 그리드 */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
+
+  --f-ui:   "Galmuri11", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --f-sm:   "Galmuri9", "Galmuri11", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --f-mono: "GalmuriMono9", "Galmuri9", ui-monospace, Menlo, monospace;
+  --f-code: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* 2px 계단 모서리 (픽셀식 둥근 모서리) */
+  --notch: polygon(2px 0, calc(100% - 2px) 0, 100% 2px, 100% calc(100% - 2px), calc(100% - 2px) 100%, 2px 100%, 0 calc(100% - 2px), 0 2px);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101216; --bg-dot: #191C22; --panel: #181B20; --sunk: #1F232A; --edge: #3A404B; --edge-soft: #3A404B; --line: #2A2F37;
+    --fg: #E8EAED; --dim: #9AA2AF; --ok-fg: #4CC27C; --bad-fg: #F06A5F; --sel-bg: #E8EAED; --sel-fg: #1E222A; --stage-mat: #0F1114;
+    --vignette: inset 0 0 48px 12px rgba(0,0,0,.55);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101216; --bg-dot: #191C22; --panel: #181B20; --sunk: #1F232A; --edge: #3A404B; --edge-soft: #3A404B; --line: #2A2F37;
+  --fg: #E8EAED; --dim: #9AA2AF; --ok-fg: #4CC27C; --bad-fg: #F06A5F; --sel-bg: #E8EAED; --sel-fg: #1E222A; --stage-mat: #0F1114;
+  --vignette: inset 0 0 48px 12px rgba(0,0,0,.55);
+  color-scheme: dark;
+}
+
+/* ============================================================ base */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--bg-dot) 1px, transparent 1px);
+  background-size: 8px 8px;
+  color: var(--fg);
+  font: 12px/1.5 var(--f-ui);
+  -webkit-font-smoothing: none;
+  min-height: 100vh;
+}
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.px-ico { width: 8px; height: 8px; display: inline-block; vertical-align: -1px; shape-rendering: crispEdges; flex: none; }
+.wrap { max-width: 1440px; margin: 0 auto; padding: 0 var(--s4); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ============================================================ 패널(카드) */
+.panel { background: var(--panel); border: 2px solid var(--edge-soft); clip-path: var(--notch); min-width: 0; }
+.panel__h { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); flex-wrap: wrap;
+  padding: 6px var(--s3); border-bottom: 2px solid var(--line); min-height: 34px; }
+.panel__h h2 { margin: 0; font: 700 12px/16px var(--f-ui); display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+.panel__h h2 .num { font: 10px/14px var(--f-sm); color: var(--dim); font-weight: 400; }
+.meta { font: 10px/14px var(--f-sm); color: var(--dim); }
+.panel__b { padding: var(--s3); }
+
+/* ============================================================ 공통 조각 */
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 5px; font: 10px/14px var(--f-sm); white-space: nowrap; clip-path: var(--notch); }
+.t-ok    { background: var(--ok);    color: var(--paper); }
+.t-wait  { background: var(--wait);  color: var(--ink); }
+.t-bad   { background: var(--bad);   color: var(--paper); }
+.t-retry { background: var(--retry); color: var(--ink); }
+.t-info  { background: var(--info);  color: var(--paper); }
+.t-neutral { background: var(--sunk); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line); }
+.chip { display: inline-grid; place-items: center; min-width: 16px; height: 14px; padding: 0 3px; font: 700 10px/14px var(--f-sm); color: var(--paper); clip-path: var(--notch); }
+.a0 { background: var(--slate); } .a1 { background: var(--wood); } .a2 { background: var(--ink); } .a3 { background: var(--mist); color: var(--ink); }
+:root[data-theme="dark"] .a2 { background: #5A606C; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .a2 { background: #5A606C; } }
+kbd { font: 10px/12px var(--f-sm); padding: 0 3px; border: 1px solid var(--line); background: var(--sunk); color: var(--dim); }
+/* "왜?" 용어 툴팁 */
+.term { position: relative; border-bottom: 1px dashed currentColor; cursor: help; }
+.term:hover::after, .term:focus::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 4px); z-index: 30; width: max-content; max-width: min(280px, 80vw);
+  white-space: normal; padding: 6px 8px; background: var(--ink); color: var(--paper); font: 12px/16px var(--f-ui); box-shadow: 2px 2px 0 rgba(0,0,0,.3); }
+:root[data-theme="dark"] .term:hover::after, :root[data-theme="dark"] .term:focus::after { background: #E8EAED; color: #1E222A; }
+
+/* ============================================================ 상단 바 */
+.appbar { display: flex; align-items: center; gap: var(--s2) var(--s4); flex-wrap: wrap; padding: var(--s3) 0 var(--s2); }
+.brand { display: flex; align-items: center; gap: var(--s2); font: 700 14px/16px var(--f-ui); white-space: nowrap; }
+.brand .logo { width: 16px; height: 16px; }
+.nav { display: flex; gap: 2px; flex-wrap: wrap; }
+.nav a { padding: 4px 8px; text-decoration: none; color: var(--dim); font: 12px/16px var(--f-ui); clip-path: var(--notch); }
+.nav a:hover { color: var(--fg); background: var(--sunk); }
+.nav a[aria-current="page"] { color: var(--sel-fg); background: var(--sel-bg); }
+.appbar .tools { margin-left: auto; display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
+.fake { display: inline-flex; gap: 6px; align-items: center; font: 12px/16px var(--f-ui); color: var(--fg); padding: 2px 8px; background: var(--sunk); box-shadow: inset 0 0 0 2px var(--wait); clip-path: var(--notch); }
+
+/* ============================================================ 설정 */
+.controls { padding: 0; }
+.ctl-sum { display: none; }
+.ctl-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s3) var(--s5); padding: var(--s3); }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field > .lbl { font: 10px/14px var(--f-sm); color: var(--dim); display: flex; gap: 6px; align-items: center; }
+.scn-name { height: 32px; display: inline-flex; align-items: center; gap: 6px; font: 700 12px/16px var(--f-ui); white-space: nowrap; }
+.seg { display: inline-flex; border: 2px solid var(--edge); clip-path: var(--notch); background: var(--panel); }
+.seg button { border: 0; background: none; cursor: pointer; padding: 0 10px; height: 28px; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; font: 12px/1 var(--f-ui); }
+.seg button + button { box-shadow: inset 2px 0 0 var(--line); }
+.seg button:hover { background: var(--sunk); }
+.seg button[aria-checked="true"] { background: var(--sel-bg); color: var(--sel-fg); box-shadow: none; }
+.seg button[aria-checked="true"] + button { box-shadow: none; }
+.seg button[aria-disabled="true"] { color: var(--dim); cursor: not-allowed; background: repeating-linear-gradient(135deg, transparent 0 4px, var(--line) 4px 5px); }
+.seg button[aria-disabled="true"] .tag { opacity: .55; }
+.seg .soon { font: 10px/12px var(--f-sm); color: var(--dim); }
+.seg .tag { font: 10px/12px var(--f-sm); padding: 0 3px; }
+.seg button[aria-checked="true"] .tag { outline: 1px solid var(--sel-fg); }
+.shape { display: inline-flex; gap: 1px; align-items: flex-end; height: 8px; }
+.shape i { width: 2px; background: currentColor; }
+.range { display: flex; align-items: center; gap: 8px; height: 18px; }
+.range input { width: 110px; accent-color: var(--fg); margin: 0; }
+.range output { font: 12px/16px var(--f-ui); min-width: 42px; }
+.field.is-off .range { opacity: .45; }
+.field .hint { font: 10px/14px var(--f-sm); color: var(--dim); max-width: 230px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pred input { width: 64px; height: 32px; padding: 0 8px; border: 2px solid var(--edge); clip-path: var(--notch); background: var(--panel); font: 12px/1 var(--f-ui); }
+.runbar { margin-left: auto; display: flex; gap: var(--s2); align-items: flex-end; }
+.btn { display: inline-flex; gap: 8px; align-items: center; height: 32px; padding: 0 14px; border: 2px solid var(--edge); clip-path: var(--notch); cursor: pointer; font: 700 12px/1 var(--f-ui);
+  box-shadow: inset 0 -3px 0 rgba(0,0,0,.18); white-space: nowrap; word-break: keep-all; }
+.btn:active, .btn.is-pressed { box-shadow: inset 0 -1px 0 rgba(0,0,0,.18); transform: translateY(1px); }
+.btn kbd { font-weight: 400; background: transparent; color: inherit; border-color: currentColor; opacity: .75; }
+.btn--run { background: var(--ok); color: var(--paper); border-color: var(--ink); }
+.btn--stop { background: var(--panel); color: var(--fg); }
+.btn--ghost { background: var(--panel); color: var(--fg); height: 28px; padding: 0 10px; font-weight: 400; box-shadow: none; }
+.btn[disabled] { opacity: .4; cursor: default; transform: none; }
+
+/* ============================================================ 메인 그리드
+   <760: 무대 → 재생 바 → 결과 → 설정(접힘) → 코드 → 타임라인
+   760–1119: 설정 → 무대 → 재생 바(sticky) → 결과 → 코드 → 타임라인
+   ≥1120: 설정 / [무대 · 재생 바 · 타임라인] [결과 · 코드] — 무대+재생 바+코드가 한 화면 */
+.grid { display: grid; gap: var(--s4); padding: var(--s2) 0 var(--s6); grid-template-columns: minmax(0, 1fr); }
+.col { display: contents; }
+.a-stage { order: 1; } .a-transport { order: 2; } .a-result { order: 3; } .a-controls { order: 4; } .a-side { order: 5; } .a-timeline { order: 6; }
+.a-stage { clip-path: polygon(2px 0, calc(100% - 2px) 0, 100% 2px, 100% 100%, 0 100%, 0 2px); }
+.a-transport { margin-top: calc(-1 * var(--s4)); border-top-width: 0; clip-path: polygon(0 0, 100% 0, 100% calc(100% - 2px), calc(100% - 2px) 100%, 2px 100%, 0 calc(100% - 2px)); }
+@media (min-width: 760px) {
+  .a-controls { order: 0; }
+  .a-transport { position: sticky; top: 0; z-index: 8; margin-top: calc(-1 * var(--s4)); border-top-width: 2px; border-top-color: var(--line); box-shadow: 0 4px 0 rgba(0,0,0,.06); }
+  .a-result .res { grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr)); }
+  .a-result .res__primary { grid-column: auto; grid-row: span 2; border-bottom: 0; box-shadow: inset -2px 0 0 var(--line); }
+  .a-result .res__sumh { grid-column: 2 / -1; }
+}
+@media (min-width: 1120px) {
+  .grid { grid-template-columns: minmax(0, 1.2fr) minmax(440px, 1fr); align-items: start; }
+  .a-controls { grid-column: 1 / -1; }
+  .col { display: flex; flex-direction: column; gap: var(--s4); min-width: 0; }
+  .a-transport { position: static; box-shadow: none; border-top-width: 0; }
+  .a-result .res { grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, 1fr)); }
+  .a-result .res__primary { grid-row: auto; padding: 6px var(--s3) 8px; column-gap: var(--s2); }
+  .a-result .res__sumh { display: none; }
+  .a-result .res__m { padding-top: 6px; }
+  .a-result .res__label .pos { display: none; }
+  .a-result .res__primary .res__num { font-size: 36px; line-height: 40px; }
+  .a-result .res__num { font-size: 24px; line-height: 28px; }
+  .ctl-body { gap: var(--s2) var(--s4); padding: 10px var(--s3); }
+  .a-result .res__note, .code-note { display: none; }
+  .a-result .res__m { padding-bottom: 8px; }
+  /* 한 화면(1440×790)에 무대 ×2 + 재생 바 + 코드가 들어가도록 세로를 아낀다:
+     설정은 라벨을 왼쪽에 붙여 두 줄(각 32px), 재생 바는 빈 구간 토글을 시계 줄로 옮겨 세 줄 */
+  .appbar { padding: 8px 0 4px; }
+  .grid { padding-top: 4px; }
+  .ctl-body { padding: 8px var(--s3); align-items: center; }
+  .ctl-body .field, .ctl-body .runbar { flex-direction: row; align-items: center; gap: 6px; }
+  .ctl-body .field .hint { display: none; }   /* 힌트는 같은 내용을 편집 시간 칸의 title로 */
+  .transport { gap: var(--s2) var(--s3); padding-bottom: var(--s2); }
+  .foot-strip { height: 30px; flex-wrap: nowrap; overflow: hidden; }   /* 배율과 무관한 고정 높이 — 배율 계산이 흔들리지 않게 */
+  .transport .scrub { order: 4; }
+  .transport #pbFF { order: 5; }
+  .transport .clock { order: 6; flex: 1 1 0; min-width: 0; align-self: center; }
+}
+
+/* ============================================================ 무대 */
+.hud { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); padding: 6px var(--s3); border-bottom: 2px solid var(--line); flex-wrap: wrap; min-height: 34px; }
+.hud__title { display: flex; gap: 8px; align-items: center; min-width: 0; flex-wrap: wrap; }
+.hud__title b { font: 700 12px/16px var(--f-ui); }
+.hud__title .sub { font: 12px/16px var(--f-ui); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud__right { display: flex; gap: 8px; align-items: center; }
+#hudInv { transition: none; }
+#hudInv.pulse { animation: pulse .3s steps(3, jump-none); }
+@keyframes pulse { 50% { transform: scale(1.35); } }
+.stage-box { position: relative; display: flex; justify-content: center; background-color: var(--stage-mat); box-shadow: var(--vignette);
+  background-image: radial-gradient(rgba(0,0,0,.08) 1px, transparent 1px); background-size: 6px 6px; }
+#stage { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+.overlay { position: absolute; top: 0; left: 50%; pointer-events: none; overflow: hidden; }
+.cta { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; justify-items: center; gap: 8px; text-align: center; z-index: 4; }
+.cta[hidden] { display: none; }
+.cta .btn { height: 44px; padding: 0 20px; font-size: 12px; }
+.cta p { margin: 0; padding: 2px 8px; font: 12px/16px var(--f-ui); color: var(--ink); background: var(--paper); box-shadow: 2px 2px 0 rgba(16,18,24,.3); }
+.foot-strip { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: space-between; align-items: center; padding: 6px var(--s3); border-top: 2px solid var(--line); font: 12px/16px var(--f-ui); color: var(--dim); }
+.foot-strip span { white-space: nowrap; }
+.foot-strip .meta { font: 10px/14px var(--f-sm); }
+
+/* 무대 위 HTML 레이어(말풍선·이름표·팝업) — 무대 안이므로 항상 라이트 팔레트 */
+.ov { position: absolute; left: 0; top: 0; will-change: transform; white-space: nowrap; }
+.ov.tag { font: 10px/12px var(--f-sm); padding: 0 3px; color: var(--paper); }
+.ov.vtag { font: 10px/12px var(--f-sm); padding: 0 3px; background: var(--paper); color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.ov.vtag.doc { background: var(--ink); color: var(--paper); display: flex; gap: 3px; align-items: center; padding: 1px 4px; }
+.ov.vtag.doc.x { background: var(--mist); color: var(--ink); }
+.ov.zone { font: 10px/12px var(--f-sm); color: var(--ink); background: rgba(246,247,243,.85); padding: 1px 4px; box-shadow: inset 0 0 0 1px var(--wait); }
+.bubble { font: 12px/16px var(--f-ui); background: var(--paper); color: var(--ink); border: 2px solid var(--bad); padding: 3px 7px; box-shadow: 2px 2px 0 rgba(30,34,42,.3); }
+.bubble::after { content: ""; position: absolute; left: 50%; bottom: -8px; margin-left: -4px; border: 4px solid transparent; border-top: 4px solid var(--bad); }
+.bubble.wait { border-color: var(--wait); } .bubble.wait::after { border-top-color: var(--wait); }
+.pop { font: 700 12px/16px var(--f-ui); color: var(--paper); background: var(--bad); padding: 2px 6px; display: flex; gap: 4px; align-items: center; }
+.pop.wait { background: var(--wait); color: var(--ink); }
+.small-k .bubble, .small-k .pop { font: 10px/12px var(--f-sm); }
+
+/* ============================================================ 결과 카드 */
+.res { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.res__primary { grid-column: 1 / -1; padding: var(--s3); border-bottom: 2px solid var(--line); background: var(--sunk);
+  display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--s4); align-items: center; }
+.res__primary .res__label { grid-column: 1 / -1; }
+.res__sumh { grid-column: 1 / -1; padding: 4px var(--s3) 0; font: 10px/14px var(--f-sm); color: var(--dim); }
+.res__m { padding: 4px var(--s3) 10px; min-width: 0; }
+.res__m + .res__m { box-shadow: inset 2px 0 0 var(--line); }
+.res__label { display: flex; align-items: center; gap: 4px; font: 10px/14px var(--f-sm); color: var(--dim); white-space: nowrap; }
+.res__label .pos { margin-left: auto; }
+.res__num { display: block; font: 700 24px/28px var(--f-ui); font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap; }
+.res__num small { font: 10px var(--f-sm); color: var(--dim); font-weight: 400; margin-left: 2px; }
+.res__primary .res__num { font-size: 48px; line-height: 52px; }
+.res__primary.is-bad .res__num { color: var(--bad-fg); }
+.res__primary.is-ok .res__num { color: var(--ok-fg); }
+.res__sub { font: 12px/16px var(--f-ui); color: var(--dim); margin-top: 2px; }
+.res__m .res__sub { overflow-wrap: anywhere; }   /* 보조문은 잘지 않고 줄바꿈 */
+.res__verdict { margin-bottom: 4px; display: flex; gap: 4px; flex-wrap: wrap; }
+.res__note { grid-column: 1 / -1; padding: 6px var(--s3); border-top: 2px solid var(--line); font: 10px/14px var(--f-sm); color: var(--dim); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.is-flash { animation: flash .5s steps(2, jump-none) 2; }
+@keyframes flash { 50% { background: rgba(204,59,52,.2); } }
+
+/* ============================================================ 서버 속 */
+.kv { display: flex; justify-content: space-between; align-items: center; gap: 8px; font: 10px/14px var(--f-sm); color: var(--dim); flex-wrap: wrap; }
+.kv b { color: var(--fg); font-weight: 400; font-variant-numeric: tabular-nums; }
+.why { margin: 4px 0 var(--s3); font: 12px/18px var(--f-ui); }
+.why summary { cursor: pointer; color: var(--info); width: max-content; }
+:root[data-theme="dark"] .why summary { color: #8FB6F2; }
+.why p { margin: 4px 0 0; padding: 6px 8px; background: var(--sunk); }
+.tree { margin: 4px 0 var(--s3); padding: 6px 8px; background: var(--sunk); min-height: 60px; font: 12px/18px var(--f-ui); }
+.tree .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tree .row.child { padding-left: 14px; }
+.tree .row.child::before { content: "└"; color: var(--dim); margin-left: -12px; width: 8px; }
+.tree .row.h { font: 10px/14px var(--f-sm); color: var(--dim); margin-top: 4px; }
+.tree .row.h:first-child { margin-top: 0; }
+.tree .mute { color: var(--dim); }
+.pool { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; margin: 4px 0 var(--s3); }
+.pool i { height: 12px; background: var(--sunk); box-shadow: inset 0 0 0 1px var(--line); }
+.pool i.on { background: var(--info); box-shadow: none; }
+.pool i.lk { background: repeating-linear-gradient(90deg, var(--wait) 0 3px, #B88912 3px 4px); box-shadow: none; }
+.sql { margin-top: 4px; padding: 6px 8px; background: #1E222A; color: #D7DCE3; font: 11px/16px var(--f-code); white-space: pre-wrap; word-break: break-word; }
+:root[data-theme="dark"] .sql { background: #0E1013; box-shadow: inset 0 0 0 1px var(--line); }
+.sql .kw, .sqlbox .kw { color: #8FB6F2; } .sql .hl, .sqlbox .hl { color: var(--wait); }
+.tx { list-style: none; margin: 4px 0 4px; padding: 0; font: 12px/16px var(--f-ui); min-height: 40px; }
+.tx li { display: grid; grid-template-columns: 52px auto minmax(0, 1fr); gap: 6px; align-items: center; padding: 2px 0; border-top: 1px dashed var(--line); }
+.tx li:first-child { border-top: 0; }
+.tx .pid { font: 10px/14px var(--f-sm); color: var(--dim); font-variant-numeric: tabular-nums; display: inline-flex; gap: 3px; align-items: center; }
+.tx .st { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 11px/16px var(--f-code); }
+.tx .empty { color: var(--dim); display: block; grid-column: 1 / -1; }
+.spark { display: flex; align-items: flex-end; gap: 2px; height: 28px; margin-top: 4px; padding: 2px; background: var(--sunk); }
+.spark i { flex: 1; background: var(--slate); min-height: 1px; }
+.spark i.hot { background: var(--wait); }
+.note { margin: var(--s2) 0 0; font: 12px/18px var(--f-ui); color: var(--dim); }
+
+/* ============================================================ 타임라인 */
+.tl-toggle { border: 0; background: none; padding: 0; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; font: 700 12px/16px var(--f-ui); color: var(--fg); }
+.tl-toggle .car { display: inline-block; transition: none; }
+.tl-toggle[aria-expanded="false"] .car { transform: rotate(-90deg); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-bottom: var(--s2); font: 10px/14px var(--f-sm); color: var(--dim); }
+.legend span { display: inline-flex; gap: 4px; align-items: center; }
+.legend i { display: inline-block; width: 16px; height: 10px; position: relative; }
+.lanes { display: grid; gap: 4px; margin-bottom: var(--s3); }
+.lane { display: grid; grid-template-columns: 22px 1fr; gap: 6px; align-items: center; }
+.lane__track { position: relative; height: 16px; background: var(--sunk); overflow: hidden;
+  background-image: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), var(--line) calc(10% - 1px) 10%); }
+.bd { position: absolute; top: 3px; bottom: 3px; min-width: 2px; }
+.bd-rd, .legend .bd-rd { background: var(--slate); }
+.bd-ac, .legend .bd-ac { background: var(--info); top: 2px; bottom: 2px; }   /* 자동 커밋 UPDATE 한 문장 = 쓰기(트랜잭션) 색으로 채운 막대 */
+.bd-ed, .legend .bd-ed { background: repeating-linear-gradient(135deg, var(--mist) 0 2px, transparent 2px 4px); box-shadow: inset 0 0 0 1px var(--mist); }
+.bd-tx, .legend .bd-tx { top: 1px; bottom: 1px; box-shadow: inset 0 0 0 2px var(--info); background: color-mix(in srgb, var(--info) 14%, transparent); }
+.bd-tx.rb { box-shadow: inset 0 0 0 2px var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.bd-wt, .legend .bd-wt { top: 5px; bottom: 5px; background: repeating-linear-gradient(90deg, var(--wait) 0 3px, #B88912 3px 4px); }
+.bd-ls, .legend .bd-ls { top: 0; bottom: auto; height: 3px; background: var(--info); }
+.legend i.bd { position: relative; top: auto; bottom: auto; }
+.legend .bd-ls { height: 3px; margin-top: -6px; }
+.mark { position: absolute; top: 0; bottom: 0; width: 2px; }
+.mark.ok { background: var(--ok); } .mark.bad { background: var(--bad); } .mark.wait { background: var(--wait); width: 2px; top: 8px; }
+.log { list-style: none; margin: 0; padding: 0; font: 12px/16px var(--f-ui); min-height: 104px; max-height: 236px; overflow-y: auto; scrollbar-width: thin; }
+.log li { display: grid; grid-template-columns: 64px auto 112px minmax(0, 1fr); gap: 6px; align-items: center; padding: 3px 4px; border-top: 1px dashed var(--line); cursor: pointer; }
+.log li:first-child { border-top: 0; }
+.log li:hover { background: var(--sunk); }
+.log li.is-new { animation: slidein .25s steps(3, jump-none); }
+@keyframes slidein { from { transform: translateX(-6px); opacity: 0; } }
+.log .ts { font: 10px/14px var(--f-sm); font-variant-numeric: tabular-nums; color: var(--dim); text-align: right; }
+.log .d { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log li.is-future { opacity: .4; }
+.log li.is-now { background: color-mix(in srgb, var(--info) 14%, transparent); box-shadow: inset 3px 0 0 var(--info); opacity: 1; }
+.log li.is-now .d { color: var(--fg); }
+.log li.is-cause { box-shadow: inset 3px 0 0 var(--wait); background: color-mix(in srgb, var(--wait) 16%, transparent); opacity: 1; }
+.log li.is-key .badge { font-weight: 700; }
+.log .who { display: inline-flex; gap: 2px; }
+.lane__track .ph { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg); z-index: 1; }
+.prog { display: flex; align-items: center; gap: 6px; }
+.prog__bar { width: 80px; height: 8px; background: var(--sunk); box-shadow: inset 0 0 0 1px var(--line); position: relative; }
+.prog__bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--fg); }
+.tl-tools { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; margin-bottom: var(--s2); }
+.filters { display: flex; flex-wrap: wrap; gap: 4px; }
+.fchip { border: 0; cursor: pointer; padding: 1px 5px; display: inline-flex; gap: 4px; align-items: center; font: 10px/14px var(--f-sm); clip-path: var(--notch); }
+.fchip[aria-pressed="false"] { background: transparent; color: var(--dim); box-shadow: inset 0 0 0 1px var(--line); text-decoration: line-through; }
+.fchip[disabled] { opacity: .35; cursor: default; }
+
+/* ============================================================ 다른 화면 */
+.others { padding-bottom: var(--s6); }
+.others__h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0 0 var(--s3); }
+.others__h h2 { margin: 0; font: 700 12px var(--f-ui); }
+.thumbs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s4); }
+.thumb .panel__b { font: 10px/14px var(--f-sm); min-height: 120px; }
+.mini-card { display: flex; justify-content: space-between; align-items: center; padding: 3px 6px; margin-bottom: 4px; background: var(--sunk); gap: 4px; }
+.mini-card b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 400; }
+.mini-bars { display: grid; gap: 6px; }
+.mini-bars div { display: grid; grid-template-columns: 64px 1fr 34px; gap: 6px; align-items: center; }
+.mini-bars i { height: 8px; display: block; background: var(--slate); }
+.mini-bars i.wrong { background: repeating-linear-gradient(45deg, var(--bad) 0 2px, transparent 2px 4px); box-shadow: inset 0 0 0 1px var(--bad); }
+.mini-tbl { width: 100%; border-collapse: collapse; }
+.mini-tbl td { padding: 3px 0; border-bottom: 1px dashed var(--line); white-space: nowrap; }
+.mini-tbl td:last-child { text-align: right; }
+
+footer { border-top: 2px solid var(--line); padding: var(--s4) 0 var(--s8); color: var(--dim); font: 12px/18px var(--f-ui); display: grid; gap: 4px; }
+footer p { margin: 0; }
+
+/* ============================================================ 기록 재생 컨트롤 */
+.transport { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); padding: var(--s2) var(--s3) var(--s3); }
+.tp-btns { display: flex; gap: 4px; }
+.tbtn { width: 32px; height: 32px; display: grid; place-items: center; border: 2px solid var(--edge); clip-path: var(--notch); background: var(--panel); cursor: pointer; padding: 0; box-shadow: inset 0 -3px 0 rgba(0,0,0,.12); }
+.tbtn:hover { background: var(--sunk); }
+.tbtn:active, .tbtn.is-pressed { transform: translateY(1px); box-shadow: inset 0 -1px 0 rgba(0,0,0,.12); }
+.tbtn[disabled] { opacity: .4; cursor: default; transform: none; }
+.tbtn--play { width: auto; padding: 0 12px; display: inline-flex; gap: 6px; background: var(--sel-bg); color: var(--sel-fg); font: 700 12px/1 var(--f-ui); min-width: 104px; justify-content: center; white-space: nowrap; }
+.tbtn--play:hover { background: var(--sel-bg); filter: brightness(1.15); }
+.field--inline { flex-direction: row; align-items: center; gap: 6px; }
+.seg--sm button { height: 24px; padding: 0 8px; font-size: 12px; }
+.toggle { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 2px solid var(--edge); clip-path: var(--notch); background: var(--panel); cursor: pointer; font: 12px/1 var(--f-ui); white-space: nowrap; }
+.toggle i { width: 22px; height: 12px; background: var(--sunk); box-shadow: inset 0 0 0 2px var(--edge); position: relative; }
+.toggle i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 8px; height: 8px; background: var(--dim); }
+.toggle[aria-pressed="true"] i { background: var(--ok); box-shadow: inset 0 0 0 2px var(--ink); }
+.toggle[aria-pressed="true"] i::after { left: 12px; background: var(--paper); }
+.toggle::after { content: "OFF"; font: 10px var(--f-sm); color: var(--dim); }
+.toggle[aria-pressed="true"]::after { content: "ON"; color: var(--ok-fg); }
+.scrub { position: relative; flex: 1 1 100%; height: 28px; }
+.scrub__rail { position: absolute; left: 0; right: 0; top: 8px; height: 12px; background: var(--sunk); box-shadow: inset 0 0 0 2px var(--edge); overflow: hidden; }
+.scrub__fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--mist); }
+.scrub__rail .rd { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--edge); }
+.scrub__rail .rl { position: absolute; top: 1px; font: 9px/10px var(--f-sm); color: var(--dim); padding-left: 4px; }
+.scrub__rail .tk { position: absolute; top: 2px; bottom: 2px; width: 2px; }
+.tk.bad { background: var(--bad); } .tk.wait { background: var(--wait); } .tk.retry { background: var(--retry); } .tk.read { background: var(--info); }
+.scrub input { position: absolute; inset: 0; width: 100%; height: 28px; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; }
+.scrub input:disabled { cursor: default; }
+.scrub input::-webkit-slider-runnable-track { height: 28px; background: transparent; }
+.scrub input::-moz-range-track { height: 28px; background: transparent; }
+.scrub input::-webkit-slider-thumb { -webkit-appearance: none; width: 8px; height: 28px; background: var(--fg); box-shadow: 0 0 0 2px var(--panel); }
+.scrub input::-moz-range-thumb { width: 8px; height: 28px; border: 0; border-radius: 0; background: var(--fg); box-shadow: 0 0 0 2px var(--panel); }
+.scrub input:disabled::-webkit-slider-thumb { opacity: 0; }
+.scrub__rail .gz { position: absolute; top: 2px; bottom: 2px; background: repeating-linear-gradient(135deg, var(--dim) 0 1px, transparent 1px 4px); opacity: .55; }
+.clock { flex: 1 1 100%; display: flex; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; font: 12px/16px var(--f-ui); color: var(--dim); }
+.clock #clockPos { color: var(--fg); font-variant-numeric: tabular-nums; cursor: help; }
+.clock .end { color: var(--fg); font-weight: 700; }
+.real { display: inline-flex; gap: 6px; align-items: center; color: var(--fg); }
+.ff-on { color: var(--fg); }
+.autobox { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.chk { display: inline-flex; gap: 4px; align-items: center; font: 12px/16px var(--f-ui); cursor: pointer; }
+.chk input { margin: 0; accent-color: var(--fg); }
+
+/* 자동 멈춤 강조 · 설명 */
+.pop, .bubble { z-index: 2; } .callout { z-index: 3; }
+.spot { z-index: 1; box-shadow: 0 0 0 9999px rgba(16,18,24,.42); outline: 2px solid var(--paper); outline-offset: 0; }
+.spot::before, .spot::after { content: ""; position: absolute; width: 8px; height: 8px; border: 2px solid var(--wait); }
+.spot::before { left: -6px; top: -6px; border-right: 0; border-bottom: 0; }
+.spot::after { right: -6px; bottom: -6px; border-left: 0; border-top: 0; }
+.callout { white-space: normal; width: min(calc(100% - 16px), 480px); background: var(--paper); color: var(--ink); border: 2px solid var(--ink); padding: 6px 8px; display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: start; font: 12px/16px var(--f-ui); box-shadow: 3px 3px 0 rgba(16,18,24,.35); pointer-events: auto; }
+.callout .hint { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; justify-content: space-between; font: 12px/16px var(--f-ui); color: #5A6170; }
+.callout .go { border: 2px solid var(--ink); background: var(--ink); color: var(--paper); font: 700 12px/1 var(--f-ui); height: 24px; padding: 0 10px; cursor: pointer; clip-path: var(--notch); display: inline-flex; gap: 6px; align-items: center; }
+/* 무대 밖 아래 시트 (좁은 화면) */
+.sheet { border-top: 2px solid var(--line); padding: 8px var(--s3); background: var(--panel); }
+.sheet[hidden] { display: none; }
+.sheet .callout { width: auto; box-shadow: none; border-color: var(--edge-soft); }
+/* 자동 멈춤 때 무대 아래 트랜잭션 띠 요약 — 높이 고정 58px(머리줄 + 2줄, 배율 계산이 미리 비워 둠) */
+.txsum { border-top: 2px solid var(--line); padding: 6px var(--s3); background: var(--panel); display: grid; gap: 2px; overflow: hidden; height: 58px; align-content: start; }
+.txsum[hidden] { display: none; }
+.txsum__h { display: flex; gap: 8px; align-items: center; height: 16px; font: 10px/14px var(--f-sm); color: var(--dim); min-width: 0; }
+.txsum__h b { color: var(--fg); font-weight: 700; }
+.txsum__w { color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.txsum .lane { grid-template-columns: 22px 1fr; height: 12px; }
+.txsum .lane__track { height: 12px; }
+.txsum .lane .chip { height: 12px; line-height: 12px; }
+.txsum .bd { top: 2px; bottom: 2px; } .txsum .bd-tx { top: 0; bottom: 0; } .txsum .bd-ls { top: 0; height: 2px; }
+.txsum .lane.is-who .lane__track { box-shadow: inset 0 0 0 1px var(--fg); }
+
+/* ============================================================ 탭 · 코드 패널 */
+.tabs-h { padding-top: 0; padding-bottom: 0; }
+.tabs { display: flex; align-self: stretch; gap: 0; margin-bottom: -2px; }
+.tabs [role="tab"] { border: 0; background: none; cursor: pointer; padding: 0 12px; min-height: 34px; display: inline-flex; gap: 6px; align-items: center; font: 700 12px/1 var(--f-ui); color: var(--dim); border-bottom: 2px solid transparent; }
+.tabs [role="tab"][aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
+.tabs [role="tab"]:hover { color: var(--fg); }
+.code-bar { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.code-file { font: 10px/14px var(--f-mono); color: var(--dim); display: inline-flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; word-break: break-all; }
+.code-tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.select { appearance: none; -webkit-appearance: none; height: 28px; padding: 0 30px 0 10px; border: 2px solid var(--edge); clip-path: var(--notch); background-color: var(--panel); cursor: pointer; font: 12px/1 var(--f-ui); max-width: 100%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges' fill='%235A6170'%3E%3Crect x='1' y='2' width='6' height='1'/%3E%3Crect x='2' y='3' width='4' height='1'/%3E%3Crect x='3' y='4' width='2' height='1'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; background-size: 12px 12px; }
+.code-note { margin: 0 0 6px; font: 12px/16px var(--f-ui); color: var(--dim); }
+.code-note code { font: 11px var(--f-code); color: var(--fg); }
+.ent { margin: 0 0 6px; }
+.ent summary { cursor: pointer; font: 12px/16px var(--f-ui); color: var(--dim); }
+.ent .code-wrap { max-height: none; margin-top: 4px; }
+.code-wrap { position: relative; display: grid; max-height: 470px; overflow: auto; background: var(--sunk); box-shadow: inset 0 0 0 1px var(--line); scrollbar-width: thin; }
+.code-wrap.two { gap: 0; }
+.code-col { min-width: 0; }
+.code-col + .code-col { box-shadow: inset 0 2px 0 var(--line); }
+.code-col__h { position: sticky; top: 0; z-index: 2; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 4px 8px; background: var(--panel); border-bottom: 1px solid var(--line); font: 10px/14px var(--f-sm); color: var(--dim); }
+.cl { display: grid; grid-template-columns: 30px 30px 12px minmax(0, 1fr); align-items: start; min-height: 18px; }
+.cl .ln { text-align: right; padding-right: 4px; color: var(--mist); font: 11px/18px var(--f-code); user-select: none; }
+:root[data-theme="dark"] .cl .ln { color: #5A6170; }
+.cl .cur { display: flex; flex-wrap: wrap; gap: 1px; align-items: center; padding-top: 2px; user-select: none; }
+.cl .cur i { font: 700 9px/12px var(--f-sm); font-style: normal; color: var(--paper); padding: 0 2px; min-width: 9px; text-align: center; }
+.cl .cur i::after { content: "▶"; font-size: 7px; margin-left: 1px; }
+.cl .mk { font: 11px/18px var(--f-code); text-align: center; color: var(--dim); user-select: none; }
+.cl code { font: 12px/18px var(--f-code); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); padding-right: 12px; tab-size: 2; }
+.cl .c-cm { font-family: "GalmuriMono11", "Galmuri11", ui-monospace, monospace; font-size: 12px; color: var(--dim); }
+.cl .c-kw { color: var(--info); }
+.cl .c-st { color: var(--wood); }
+.cl .c-dc { color: var(--wood); font-weight: 700; }
+.cl .c-ty { font-weight: 700; }
+:root[data-theme="dark"] .cl .c-kw { color: #8FB6F2; } :root[data-theme="dark"] .cl .c-st, :root[data-theme="dark"] .cl .c-dc { color: #D2A982; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .cl .c-kw { color: #8FB6F2; } :root:not([data-theme="light"]) .cl .c-st, :root:not([data-theme="light"]) .cl .c-dc { color: #D2A982; } :root:not([data-theme="light"]) .cl .ln { color: #5A6170; } }
+.cl.sec code { color: var(--dim); }
+/* 강조 줄: 색 + 왼쪽 3px 막대 + 줄번호 반전 (색 외 단서) */
+.cl.is-hit { background: color-mix(in srgb, var(--info) 18%, transparent); box-shadow: inset 3px 0 0 var(--info); }
+.cl.is-hit .ln { background: var(--fg); color: var(--panel); font-weight: 700; }
+.cl.is-hit2 { background: color-mix(in srgb, var(--info) 8%, transparent); }
+.cl.is-hit.tone-bad { background: color-mix(in srgb, var(--bad) 16%, transparent); box-shadow: inset 3px 0 0 var(--bad); }
+.cl.is-hit.tone-wait { background: color-mix(in srgb, var(--wait) 22%, transparent); box-shadow: inset 3px 0 0 var(--wait); }
+.cl.is-hit.tone-ok { background: color-mix(in srgb, var(--ok) 14%, transparent); box-shadow: inset 3px 0 0 var(--ok); }
+.cl.is-hit.tone-retry { background: color-mix(in srgb, var(--retry) 18%, transparent); box-shadow: inset 3px 0 0 var(--retry); }
+/* 비교: 색은 그쪽 처리 방식의 상태 색 (고장=빨강, 고침=초록, 절충=파랑), +/− 유지 */
+.cl.dl-bad  { background: color-mix(in srgb, var(--bad) 12%, transparent); }  .cl.dl-bad .mk  { color: var(--bad-fg); }
+.cl.dl-ok   { background: color-mix(in srgb, var(--ok) 13%, transparent); }   .cl.dl-ok .mk   { color: var(--ok-fg); }
+.cl.dl-info { background: color-mix(in srgb, var(--info) 12%, transparent); } .cl.dl-info .mk { color: var(--info); }
+.fold { display: block; width: 100%; border: 0; border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line); background: var(--panel); color: var(--dim); font: 10px/16px var(--f-sm); text-align: left; padding: 1px 8px 1px 72px; cursor: pointer; }
+.fold:hover { color: var(--fg); }
+.code-wrap.mini .cl.far { display: none; }
+.mini-more { display: none; }
+.code-ev { margin-top: 8px; min-height: 132px; }
+.code-ev__h { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font: 10px/14px var(--f-sm); color: var(--dim); margin-bottom: 4px; }
+.code-ev__h b { color: var(--fg); font-weight: 400; }
+.code-ev .sqlbox { margin: 0; padding: 6px 8px; background: #1E222A; color: #D7DCE3; font: 11px/16px var(--f-code); white-space: pre-wrap; word-break: break-word; }
+:root[data-theme="dark"] .code-ev .sqlbox { background: #0E1013; box-shadow: inset 0 0 0 1px var(--line); }
+.sqlbox .out { color: #9AA2AF; } .sqlbox .out.bad { color: #F06A5F; } .sqlbox .out.ok { color: #4CC27C; } .sqlbox .cm { color: #8C94A3; }
+.code-ev p { margin: 6px 0 0; font: 12px/18px var(--f-ui); }
+.code-ev .idle { color: var(--dim); }
+
+/* ============================================================ 단축키 오버레이 */
+.kbd-ov { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(16,18,24,.5); padding: var(--s4); }
+.kbd-ov[hidden] { display: none; }
+.kbd-ov .panel { width: min(440px, 100%); }
+.kbd-ov dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font: 12px/18px var(--f-ui); }
+.kbd-ov dt { text-align: right; white-space: nowrap; }
+.kbd-ov dd { margin: 0; }
+
+@media (max-width: 1119px) {
+  .code-wrap { max-height: 420px; }
+}
+@media (max-width: 759px) {
+  .ctl-sum { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: none; cursor: pointer; padding: 10px var(--s3); font: 12px/16px var(--f-ui); text-align: left; }
+  .ctl-sum .car { flex: none; }
+  .ctl-sum[aria-expanded="false"] + .ctl-body { display: none; }
+  .ctl-sum[aria-expanded="true"] { border-bottom: 2px solid var(--line); }
+  .runbar { margin-left: 0; width: 100%; flex-wrap: wrap; }
+  .runbar .btn { flex: 1; justify-content: center; }
+  .thumbs { grid-template-columns: 1fr; }
+  .appbar .tools { margin-left: 0; }
+  .field { max-width: 100%; }
+  #segStrat { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; }
+  #segStrat button { height: 30px; }
+  #segStrat button + button { box-shadow: inset 0 2px 0 var(--line); }
+  #segStrat button[aria-checked="true"] + button { box-shadow: none; }
+  .field:has(#segStrat) { width: 100%; }
+  .cl { grid-template-columns: 24px 26px 10px minmax(0, 1fr); }
+  .cl code { font-size: 11px; }
+  .code-wrap { max-height: none; overflow: visible; }
+  .code-wrap.mini + .mini-more, .code-wrap.mini ~ .mini-more { display: inline-flex; margin-top: 6px; }
+  .fold { padding-left: 58px; }
+}
+@media (max-width: 420px) {
+  .res__primary .res__num { font-size: 36px; line-height: 40px; }
+  .res__num { font-size: 20px; line-height: 24px; }
+  .log li { grid-template-columns: max-content auto max-content minmax(0, 1fr); }
+  .log .ts { white-space: nowrap; }
+  .transport { gap: var(--s2); }
+  .seg button { padding: 0 8px; }
+  .tbtn--play { min-width: 92px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="appbar">
+    <div class="brand"><svg class="logo px-ico" viewBox="0 0 8 8" aria-hidden="true" shape-rendering="crispEdges"><rect width="8" height="8" fill="var(--fg)"/><rect x="1" y="5" width="1" height="2" fill="var(--ok)"/><rect x="3" y="3" width="1" height="4" fill="var(--wait)"/><rect x="5" y="1" width="1" height="6" fill="var(--bad)"/></svg>nestjs-under-load</div>
+    <nav class="nav" aria-label="화면">
+      <a href="#others">시나리오</a><a href="#" aria-current="page">실행</a><a href="#others">비교</a><a href="#others">기록</a><a href="#others">지표</a>
+    </nav>
+    <div class="tools">
+      <span class="fake" id="fakeNote"><span id="icoFake"></span>시안용 가짜 데이터 · 가짜 이벤트 재생 · 서버 연결 없음</span>
+      <button class="btn btn--ghost" id="btnKeys" type="button" aria-haspopup="dialog" title="단축키 (?)">단축키 <kbd>?</kbd></button>
+      <button class="btn btn--ghost" id="btnTheme" type="button" title="라이트/다크 (T)">테마</button>
+    </div>
+  </header>
+
+  <main class="grid" id="grid">
+    <!-- 설정 (좁은 화면: 한 줄 요약으로 접힘) -->
+    <section class="panel controls a-controls" aria-label="실행 설정">
+      <button class="ctl-sum" id="ctlSum" type="button" aria-expanded="false" aria-controls="ctlBody"><span id="ctlSumTxt">설정</span><span class="car" aria-hidden="true">▾</span></button>
+      <div class="ctl-body" id="ctlBody">
+        <div class="field"><span class="lbl">시나리오</span>
+          <span class="scn-name" title="범용 팩 G01. 세무 팩 T01(수정 vs 승인 동시 도착)은 같은 무대 타입을 쓰지만 다른 장면이다."><span class="badge t-info">G01</span>같은 문서 동시 수정</span>
+        </div>
+        <div class="field"><span class="lbl">처리 방식 <kbd>S</kbd></span><div class="seg" role="radiogroup" aria-label="처리 방식" id="segStrat"></div></div>
+        <div class="field"><span class="lbl">편집자 인원</span><div class="seg" role="radiogroup" aria-label="인원" id="segPeople"></div></div>
+        <div class="field"><span class="lbl">부하 모양</span><div class="seg" role="radiogroup" aria-label="부하 모양" id="segShape"></div></div>
+        <div class="field" id="fEdit"><label class="lbl" for="editRange">편집 시간 (사람) · 압축 ↔ 실제</label>
+          <div class="range"><input type="range" id="editRange" min="0" max="3" step="1" value="0" aria-describedby="editHint"><output id="editOut" for="editRange">압축</output></div>
+          <span class="hint" id="editHint">편집 잠금에서만 대가가 달라진다</span>
+        </div>
+        <div class="runbar">
+          <label class="field pred"><span class="lbl">예측: 위반 몇 건? (선택)</span><input type="number" id="pred" min="0" max="99" inputmode="numeric" placeholder="—"></label>
+          <button class="btn btn--run" id="btnRun" type="button"><span id="icoPlay"></span>실행하기<kbd>Enter</kbd></button>
+          <button class="btn btn--stop" id="btnStop" type="button" disabled><span id="icoStop"></span>실행 중단<kbd>Esc</kbd></button>
+        </div>
+      </div>
+    </section>
+
+    <div class="col col--l">
+      <!-- 무대 -->
+      <section class="panel a-stage" aria-label="무대">
+        <div class="hud">
+          <div class="hud__title"><b>같은 문서 동시 수정 (G01)</b><span class="sub" id="hudStrat">덮어쓰기</span></div>
+          <div class="hud__right">
+            <span class="badge t-neutral" id="hudIso" title="이 처리 방식의 트랜잭션 격리 수준">READ COMMITTED</span>
+            <span class="badge t-neutral" id="hudInv" role="status"></span>
+          </div>
+        </div>
+        <div class="stage-box" id="stageBox">
+          <canvas id="stage" width="256" height="192" role="img" aria-label="무대"></canvas>
+          <div class="overlay" id="overlay" aria-hidden="true"></div>
+          <div class="cta" id="cta">
+            <button class="btn btn--run" id="ctaBtn" type="button"><span id="icoCta"></span>실행해서 보기</button>
+            <p id="ctaTxt">두 사람이 같은 문서를 동시에 고치면?</p>
+          </div>
+        </div>
+        <div class="sheet" id="sheet" hidden aria-live="polite"></div>
+        <div class="txsum" id="txSum" hidden></div>
+        <div class="foot-strip">
+          <span id="fsSample">대표 2명 표시 / 전체 20명</span>
+          <span id="fsReal">실행 전</span>
+          <span class="meta" id="fsScale">256×192 ×2</span>
+          <span class="badge t-info" title="사람의 편집 시간(초~분)을 실험실에서는 ms 단위 think time으로 줄여 충돌을 자주 일으킨다">주입됨 · 편집 시간 압축</span>
+        </div>
+      </section>
+      <!-- 재생 바 -->
+      <section class="panel a-transport" aria-label="기록 재생">
+        <div class="transport" role="group" aria-label="기록 재생">
+          <div class="tp-btns">
+            <button class="tbtn" id="pbStart" type="button" aria-label="처음으로 (Home)" title="처음으로 (Home)"></button>
+            <button class="tbtn" id="pbPrev" type="button" aria-label="이전 단계 (←)" title="이전 단계 (←)"></button>
+            <button class="tbtn tbtn--play" id="pbPlay" type="button" aria-label="재생 (Space)"></button>
+            <button class="tbtn" id="pbNext" type="button" aria-label="다음 단계 (→)" title="다음 단계 (→)"></button>
+          </div>
+          <div class="field field--inline"><span class="lbl">속도</span><div class="seg seg--sm" role="radiogroup" aria-label="재생 속도" id="segSpeed"></div></div>
+          <div class="autobox">
+            <button class="toggle" id="pbAuto" type="button" aria-pressed="true" title="충돌·잃어버린 수정·락 대기·잠금 거절에서 자동으로 멈춤 (A)"><i aria-hidden="true"></i>자동 멈춤</button>
+            <label class="chk" title="두 번째 사람이 같은 버전을 받는 순간(원인)에서도 멈춤"><input type="checkbox" id="pbCause" checked>원인에서도</label>
+          </div>
+          <button class="toggle" id="pbFF" type="button" aria-pressed="true" title="이벤트가 없는 구간(걷기·편집 같은 사람 시간)을 최대 0.3초로 접음 (F). 걷기 같은 이동은 기록된 두 이벤트 사이의 보간일 뿐, 이벤트 없이 상태가 바뀌지 않는다"><i aria-hidden="true"></i>빈 구간 빨리 감기</button>
+          <div class="scrub">
+            <div class="scrub__rail" aria-hidden="true"><i class="scrub__fill" id="scrubFill"></i><div id="scrubTicks"></div></div>
+            <input type="range" id="scrub" min="0" max="1" step="1" value="0" aria-label="재생 위치" disabled>
+          </div>
+          <div class="clock"><span id="clockPos">기록 없음</span><span id="clockNote">실제의 1/160 속도로 재생 · 빈 구간 접음</span></div>
+        </div>
+      </section>
+      <!-- 이벤트 타임라인 (접이식) -->
+      <section class="panel a-timeline" aria-label="이벤트 타임라인">
+        <div class="panel__h">
+          <button class="tl-toggle" id="tlToggle" type="button" aria-expanded="true" aria-controls="tlBody"><span class="car" aria-hidden="true">▾</span>이벤트 타임라인</button>
+          <div class="prog"><span class="meta" id="roundTxt">라운드 —</span><span class="prog__bar"><i id="roundBar" style="width:0"></i></span></div>
+        </div>
+        <div class="panel__b" id="tlBody">
+          <div class="tl-tools">
+            <div class="seg seg--sm" role="radiogroup" aria-label="표시 범위" id="segView"></div>
+            <div class="filters" id="filters" role="group" aria-label="이벤트 종류 필터"></div>
+          </div>
+          <div class="legend" id="legend" aria-label="레인 범례"></div>
+          <div class="lanes" id="lanes"></div>
+          <ol class="log" id="log" aria-label="이번 라운드 이벤트 (행을 누르면 그 시점으로 이동)"></ol>
+          <p class="note" id="logNote">시간은 라운드 시작부터의 실제 경과 시간(ms)입니다. 편집 구간(사람 시간)은 압축해서 그립니다. 캐릭터 이동은 기록된 이벤트 사이의 보간이며, 이벤트 없이 상태가 바뀌지 않습니다. 같은 사람의 같은 종류가 이어지면 ×N으로 묶습니다.</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="col col--r">
+      <!-- 결과: 정합성 위반이 맨 먼저 -->
+      <section class="panel a-result" aria-label="결과" aria-live="polite">
+        <div class="panel__h"><h2>결과</h2><span class="meta" id="mState">대기 중</span></div>
+        <div class="res">
+          <div class="res__primary" id="resPrimary">
+            <span class="res__label"><span id="icoInv"></span>정합성 위반 · 잃어버린 수정<span class="pos">재생 위치까지</span></span>
+            <span class="res__num" id="mViol">—</span>
+            <div>
+              <div class="res__verdict" id="mVerdict"></div>
+              <div class="res__sub" id="mInvSub">불변식: 원장의 성공 수정 토큰 = 최종 이력</div>
+            </div>
+          </div>
+          <div class="res__sumh" title="로컬 단일 머신 · 처리 방식 간 상대 비교용 · 지연은 해석 주의(closed 모델)">기록 전체 요약 (재생 위치와 무관) · 상대 비교용 · 가짜 숫자</div>
+          <div class="res__m"><span class="res__label" title="기록 전체 요약 · 재생 위치와 무관">처리량 · 전체</span><span class="res__num" id="mTput">—</span><div class="res__sub" id="mTputSub">성공 기준</div></div>
+          <div class="res__m"><span class="res__label" id="mP95Lbl">p95 지연</span><span class="res__num" id="mP95">—</span><div class="res__sub" id="mP95Sub">성공 요청</div></div>
+          <div class="res__m"><span class="res__label" title="기록 전체 요약 · 재생 위치와 무관">실패율 · 전체</span><span class="res__num" id="mFail">—</span><div class="res__sub" id="mFailSub">409 · 423</div></div>
+          <div class="res__note"><span>로컬 단일 머신 · 처리 방식 간 상대 비교용 · 시안 숫자는 가짜</span><span>지연은 해석 주의(closed 모델)</span></div>
+        </div>
+      </section>
+
+      <!-- 코드 / 서버 속 (탭) -->
+      <section class="panel a-side" aria-label="코드와 서버 속">
+        <div class="panel__h tabs-h">
+          <div class="tabs" role="tablist" aria-label="보기">
+            <button type="button" role="tab" id="tabCode" aria-controls="pnCode" aria-selected="true"><span id="icoCode"></span>코드</button>
+            <button type="button" role="tab" id="tabSrv" aria-controls="pnSrv" aria-selected="false" tabindex="-1"><span id="icoSrv"></span>서버 속</button>
+          </div>
+          <span class="meta" id="sampleMeta">샘플: 대표 2명분</span>
+        </div>
+        <div class="panel__b" role="tabpanel" id="pnCode" aria-labelledby="tabCode">
+          <div class="code-bar">
+            <span class="code-file" id="codeFile" title="시안용 예시 코드 · 실제 구현은 packs/generic/g01-shared-document/strategies/에 개발자가 직접 쓴다">—</span>
+            <div class="code-tools">
+              <button class="toggle" id="cmpToggle" type="button" aria-pressed="false" title="두 처리 방식 코드를 위아래로 놓고 다른 줄만 펼침 (C)"><i aria-hidden="true"></i>비교</button>
+              <select class="select" id="cmpWith" aria-label="비교할 처리 방식" hidden></select>
+              <button class="btn btn--ghost" id="codeCopy" type="button">복사</button>
+            </div>
+          </div>
+          <p class="code-note" id="codeNote">시안용 예시 코드 · 실제 구현은 <code>packs/generic/g01-shared-document/strategies/</code>에 개발자가 직접 쓴다.</p>
+          <details class="ent"><summary>공통 코드 <code>document.entity.ts</code> · <code>dto.ts</code> · <code>record-edit.ts</code> — 문서 엔티티 하나 + 원장·이력</summary><div class="code-wrap" id="entWrap"></div></details>
+          <div class="code-wrap" id="codeWrap"></div>
+          <button class="btn btn--ghost mini-more" id="miniMore" type="button">전체 코드 보기</button>
+          <div class="code-ev" id="codeEv" aria-live="polite"></div>
+        </div>
+        <div class="panel__b" role="tabpanel" id="pnSrv" aria-labelledby="tabSrv" hidden>
+          <div class="kv"><span>격리 수준</span><span id="isoTxt"></span></div>
+          <details class="why"><summary>왜? 격리 수준을 올리면 덮어쓰기가 막힐까</summary>
+            <p>못 막는다. 화면 열기(SELECT, 자동 커밋)와 저장(begin → UPDATE → 원장·이력 INSERT → commit)은 <b>서로 다른 트랜잭션</b>이고, 그 사이에 사람의 편집 시간(초~분)이 끼어 있다. DB는 각 트랜잭션 안쪽만 보므로 SERIALIZABLE로 올려도 "B가 A보다 먼저 읽었다"는 사실을 모른다. 그래서 클라이언트가 본 버전을 저장 요청 본문(version)에 들고 와야 한다(서버는 lockVersion + WHERE version으로 확인). (대비: 읽기와 쓰기가 한 트랜잭션 안이었다면 SERIALIZABLE은 늦은 쪽을 40001 serialization_failure로 중단시킨다. 하지만 사람 편집 시간 동안 트랜잭션을 열어 둘 수는 없다.) 동시에 도착한 두 UPDATE는 READ COMMITTED의 행 락 + WHERE 재평가로 충분히 갈린다.</p>
+          </details>
+          <div class="kv"><span id="lockTitle">락 · 잠금</span><span id="lockMode">document#7</span></div>
+          <div class="tree" id="tree"></div>
+          <div class="kv"><span>커넥션 풀 (이 인스턴스)</span><span><b id="poolTxt">0/10</b> 사용 · <span id="poolWait">대기 0</span></span></div>
+          <div class="pool" id="pool" aria-hidden="true"></div>
+          <div class="kv"><span>현재 SQL (파라미터 마스킹)</span><span id="sqlWho"></span></div>
+          <div class="sql" id="sql">—</div>
+          <div class="kv" style="margin-top:var(--s3)"><span>DB 세션 (pg_stat_activity 샘플)</span><span id="txCount"></span></div>
+          <ul class="tx" id="tx"></ul>
+          <p class="note" id="txNote">HTTP 요청 목록이 아니라 DB 세션입니다. 편집 중인 사람, 423을 받고 다시 노크하려는 사람은 세션을 잡지 않습니다.</p>
+          <div class="kv" style="margin-top:var(--s3)"><span>이벤트 루프 지연 p99 · 최근 24틱</span><b id="eldTxt">—</b></div>
+          <div class="spark" id="spark" aria-hidden="true"></div>
+          <p class="note">시계열(RED·USE·풀·PG)은 지표 화면의 Grafana가 그립니다. 여기는 Grafana가 못 그리는 것만.</p>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- 다른 화면 (분위기만) -->
+  <section class="others" id="others" aria-label="다른 화면">
+    <div class="others__h"><h2>다른 화면</h2><span class="meta">시안 범위 밖 — 톤 확인용 썸네일 · 가짜 데이터</span></div>
+    <div class="thumbs">
+      <article class="panel thumb">
+        <div class="panel__h"><h2>시나리오 목록 <span class="num">화면 1</span></h2><span class="meta">범용 · 세무</span></div>
+        <div class="panel__b">
+          <div class="mini-card"><b>G01 같은 문서 동시 수정</b><span class="badge t-info">▶ 실행</span></div>
+          <div class="mini-card"><b>G02 재고·좌석 차감 경합</b><span class="badge t-ok">✓ 노트</span></div>
+          <div class="mini-card"><b>T01 수정 vs 승인 동시 도착</b><span class="badge t-wait">… 예측</span></div>
+          <div class="mini-card"><b>T02 승인자 최소 1명</b><span class="badge t-neutral">미시작</span></div>
+        </div>
+      </article>
+      <article class="panel thumb">
+        <div class="panel__h"><h2>비교 <span class="num">화면 8</span></h2><span class="meta">정합성 먼저 → 처리량</span></div>
+        <div class="panel__b">
+          <div class="mini-bars">
+            <div><span>덮어쓰기</span><i class="wrong" style="width:92%"></i><span class="badge t-bad">✕ 3</span></div>
+            <div><span>맹목 재시도</span><i class="wrong" style="width:70%"></i><span class="badge t-bad">✕ 3</span></div>
+            <div><span>버전 감지</span><i style="width:78%"></i><span class="badge t-ok">✓ 0</span></div>
+            <div><span>편집 잠금</span><i style="width:44%"></i><span class="badge t-ok">✓ 0</span></div>
+          </div>
+          <p class="note">빗금 = 빠르지만 틀림(순위 제외)</p>
+        </div>
+      </article>
+      <article class="panel thumb">
+        <div class="panel__h"><h2>실행 기록 <span class="num">화면 7</span></h2><span class="meta">메타데이터</span></div>
+        <div class="panel__b">
+          <table class="mini-tbl"><tbody>
+            <tr><td>#0143 G01 버전 감지</td><td><span class="badge t-ok">✓ 유효</span></td></tr>
+            <tr><td>#0142 G01 맹목 재시도</td><td><span class="badge t-bad">✕ 위반 3</span></td></tr>
+            <tr><td>#0141 G01 덮어쓰기</td><td><span class="badge t-bad">✕ 위반 3</span></td></tr>
+            <tr><td>#0139 G11 게이트</td><td><span class="badge t-wait">! 무효·k6 포화</span></td></tr>
+          </tbody></table>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <footer>
+    <p>이 결과는 <b>로컬 단일 머신</b>(Docker Desktop VM, CPU·메모리 limit 고정)에서 <b>처리 방식 간 상대 비교</b>를 위해 측정한 값입니다. 운영 환경의 처리 용량을 뜻하지 않습니다. — 이 시안의 숫자와 이벤트는 전부 가짜 데이터입니다.</p>
+    <p>폰트: Galmuri11 · Galmuri9 · GalmuriMono9 (© 2019–2025 Lee Minseo, SIL Open Font License 1.1, jsDelivr npm galmuri@2.40.3). <span id="fontState">폰트 확인 중…</span></p>
+    <p>도트 그래픽과 아이콘은 이 시안을 위해 직접 그린 오리지널입니다. 실존 게임·기기의 상표, 에셋, 캐릭터, 사운드를 쓰지 않습니다.</p>
+  </footer>
+</div>
+
+<!-- 단축키 (?) -->
+<div class="kbd-ov" id="kbdOv" hidden role="dialog" aria-modal="true" aria-labelledby="kbdTitle">
+  <section class="panel">
+    <div class="panel__h"><h2 id="kbdTitle">단축키</h2><button class="btn btn--ghost" id="kbdClose" type="button">닫기 <kbd>Esc</kbd></button></div>
+    <div class="panel__b"><dl>
+      <dt><kbd>Enter</kbd></dt><dd>실행하기 (기록 만들기)</dd>
+      <dt><kbd>Esc</kbd></dt><dd>실행 중단 · 이 창 닫기</dd>
+      <dt><kbd>Space</kbd></dt><dd>재생 / 일시정지 / 계속</dd>
+      <dt><kbd>→</kbd> <kbd>←</kbd></dt><dd>다음 / 이전 단계 (타임라인에 보이는 행 단위)</dd>
+      <dt><kbd>Home</kbd></dt><dd>처음으로</dd>
+      <dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>속도: 아주 느리게 · 느리게 · 보통 · 빠르게</dd>
+      <dt><kbd>A</kbd></dt><dd>자동 멈춤 켜기/끄기</dd>
+      <dt><kbd>F</kbd></dt><dd>빈 구간 빨리 감기</dd>
+      <dt><kbd>C</kbd></dt><dd>코드 비교</dd>
+      <dt><kbd>S</kbd></dt><dd>처리 방식 바꾸기</dd>
+      <dt><kbd>T</kbd></dt><dd>테마</dd>
+      <dt><kbd>?</kbd></dt><dd>이 창</dd>
+    </dl></div>
+  </section>
+</div>
+
+<!--
+  라이선스 메모
+  - Galmuri: SIL Open Font License 1.1 (https://scripts.sil.org/OFL), Reserved Font Name "Galmuri".
+    CDN 로드만 하고 파일을 수정·재배포하지 않는다. 앱에 번들할 때는 OFL 전문을 함께 넣는다.
+  - 그 밖의 모든 그래픽은 이 파일 안의 CSS/캔버스 코드로 그렸다(외부 이미지 없음).
+-->
+
+<script>
+(() => {
+'use strict';
+
+/* ================================================================
+   1. 팔레트 · 픽셀 비트맵
+   ================================================================ */
+const PAL = { k:'#1E222A', s:'#4B5262', m:'#B9C0CA', h:'#E2E4E8', p:'#F6F7F3', g:'#1F7F45', y:'#E2AE24', r:'#CC3B34', o:'#EB7A2C', b:'#2F6BCB', f:'#F0C39C', w:'#94704F', d:'#7A5A3E', n:'#D3D8DE' };
+
+const ICON = {
+  arrive: ["...#....","...##...","######..","#######.","######..","...##...","...#....","........"],
+  wait:   ["#######.","#.....#.",".#...#..","..#.#...","..#.#...",".#.#.#..","#######.","........"],
+  bang:   ["..###...","..###...","..###...","..###...","...#....","........","..###...","........"],
+  retry:  ["..####..",".#....#.","#....###","#.....#.","#.......","#.....#.",".#...#..","..###..."],
+  check:  ["........","......##",".....##.","#...##..","##.##...",".###....","..#.....","........"],
+  cross:  ["##...##.",".##.##..","..###...","..###...",".##.##..","##...##.","........","........"],
+  lock:   ["..###...",".#...#..",".#...#..","#######.","###.###.","###.###.","#######.","........"],
+  unlock: ["..###...",".#...#..",".#......","#######.","###.###.","###.###.","#######.","........"],
+  read:   ["######..","#....#..","#.##.#..","#....#..","#.##.#..","#....#..","######..","........"],
+  write:  [".....##.","....####","...####.","..####..",".####...","###.....","##......","........"],
+  play:   ["##......","####....","######..","#######.","######..","####....","##......","........"],
+  stop:   ["........",".######.",".######.",".######.",".######.",".######.",".######.","........"],
+  out:    ["....#...","....##..","#######.","########","#######.","....##..","....#...","........"],
+};
+function svgIcon(name, cls = '') {
+  const rows = ICON[name]; let r = '';
+  rows.forEach((row, y) => { for (let x = 0; x < row.length; x++) if (row[x] === '#') r += `<rect x="${x}" y="${y}" width="1" height="1"/>`; });
+  return `<svg class="px-ico ${cls}" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true">${r}</svg>`;
+}
+
+/* 직원 12×18 (범용 팩 캐릭터) — S=정장, T=넥타이 */
+const BODY = [
+  "....kkkk....",
+  "...kkkkkk...",
+  "..kkkkkkkk..",
+  "..kffffffk..",
+  "..fkfffkff..",
+  "..ffffffff..",
+  "...ffffff...",
+  "....pTTp....",
+  "..SSpTTpSS..",
+  ".SSSSTTSSSS.",
+  ".SSSSTTSSSS.",
+  ".fSSSSSSSSf.",
+  ".fSSSSSSSSf.",
+  "..SSSSSSSS..",
+];
+const LEGS = {
+  stand: ["...kk..kk...","...kk..kk...","...kk..kk...","..kkk..kkk.."],
+  a:     ["...kk..kk...","..kk....kk..","..kk....kk..",".kkk.....kk."],
+  b:     ["...kk..kk...","...kk..kk...","...kk.kk....","..kkk.kkk..."],
+};
+const SUITS = [ {S:'s',T:'w'}, {S:'w',T:'k'}, {S:'k',T:'b'}, {S:'m',T:'s'} ];
+const COPY = ["kkkkkk.","kppppkk","kpkkkpk","kpppppk","kpkkkpk","kpppppk","kkkkkkk"];
+const PADLOCK = ["..kkk..",".k...k.",".k...k.","kkkkkkk","kmmmmmk","kmmkmmk","kmmkmmk","kkkkkkk"];
+
+function blit(ctx, rows, x, y, map = {}, flip = false) {
+  for (let j = 0; j < rows.length; j++) {
+    const row = rows[j];
+    for (let i = 0; i < row.length; i++) {
+      let c = row[i]; if (c === '.') continue;
+      c = map[c] || c;
+      const col = PAL[c]; if (!col) continue;
+      ctx.fillStyle = col;
+      ctx.fillRect(flip ? x + row.length - 1 - i : x + i, y + j, 1, 1);
+    }
+  }
+}
+function blitIcon(ctx, name, x, y, color) {
+  ctx.fillStyle = color;
+  ICON[name].forEach((row, j) => { for (let i = 0; i < 8; i++) if (row[i] === '#') ctx.fillRect(x + i, y + j, 1, 1); });
+}
+
+
+/* ================================================================
+   2. 설정 — 시나리오 G01 같은 문서 동시 수정 (docs/SCENARIOS.md G01)
+   편집 모델: 전체 교체(PUT). 클라이언트는 화면을 열 때(GET) 받은 version을 들고 온다.
+   ================================================================ */
+const W = 256, H = 192;
+const SLOW = 40;            // 무대 시간 40ms = 실험실 실제 1ms
+const L = ['A','B','C','D'];
+const STRATS = [
+  { id:'naive', name:'덮어쓰기',    code:'naive-overwrite',    tone:'bad',  tag:'고장' },
+  { id:'blind', name:'맹목 재시도', code:'blind-retry',        tone:'bad',  tag:'고장' },
+  { id:'opt',   name:'버전 감지',   code:'optimistic-version', tone:'ok',   tag:'고침' },
+  { id:'merge', name:'필드 병합',   code:'field-merge',        tone:'info', tag:'절충', soon:true },
+  { id:'lease', name:'편집 잠금',   code:'edit-lease',         tone:'info', tag:'절충' },
+];
+const SCN = { id:'G01', doc:'문서', ent:'document#7', route:'/documents/7' };
+const PEOPLE = [2, 3, 4];
+const SHAPES = [
+  { id:'const', name:'일정',    bars:[4,4,4,4,4,4] },
+  { id:'ramp',  name:'램프',    bars:[1,2,3,4,5,6] },
+  { id:'spike', name:'스파이크', bars:[2,2,7,2,2,2] },
+];
+const EDITS = [
+  { name:'압축', real:0.035, long:'압축(실험실 think time 35ms)' },
+  { name:'2초',  real:2,     long:'2초' },
+  { name:'30초', real:30,    long:'30초' },
+  { name:'5분',  real:300,   long:'5분' },
+];
+const SPEEDS = [
+  { v:0.1,  name:'아주 느리게' },
+  { v:0.25, name:'느리게' },
+  { v:0.5,  name:'보통' },
+  { v:1,    name:'빠르게' },
+];
+const ROUNDS = 4;
+const EDIT_STAGE = 1400;    // 편집 구간은 길이와 상관없이 같은 길이로 압축해 그린다
+const TTL_STAGE = 4200;     // 잠금 TTL(실험실은 줄여서 재현)
+const cfg = { strat:0, people:0, shape:0, edit:0 };
+const sid = () => STRATS[cfg.strat].id;
+
+/* 재생 상태 — 화면 전체는 재생 위치 P(무대 ms)의 함수다 */
+const PB = {
+  rec: null, P: 0, playing: false, speed: 0.25, auto: true, autoCause: true, callout: null,
+  view: 'key', off: new Set(), runNo: 0, rows: [], dirty: true,
+  ff: true, cmp: false, cmpWith: 'opt', codeKey: '', running: null, runMsg: '', pred: null, lastViol: 0, mini: true, unfold: new Set(),
+};
+const FF_PRE = 100, FF_POST = 480, FF_MAX_WALL = 300;
+
+/* 이벤트 phase 사전 (DESIGN §9.1 + G01 확장) */
+const PH = {
+  arrived:        { label:'요청',          tone:'info',    icon:'arrive', grp:'req' },
+  db_read:        { label:'읽기·버전',     tone:'neutral', icon:'read',   grp:'read', key:true },
+  editing:        { label:'편집(사람)',    tone:'neutral', icon:'write',  grp:'edit' },
+  db_write:       { label:'쓰기',          tone:'neutral', icon:'write',  grp:'io' },
+  lock_wait:      { label:'행 락 대기',    tone:'wait',    icon:'wait',   grp:'lock', key:true, auto:true },
+  conflict:       { label:'409 충돌',      tone:'bad',     icon:'bang',   grp:'conflict', key:true, auto:true },
+  retry:          { label:'재시도',        tone:'retry',   icon:'retry',  grp:'retry', key:true },
+  committed:      { label:'커밋',          tone:'ok',      icon:'check',  grp:'commit', key:true },
+  lost:           { label:'잃어버린 수정', tone:'bad',     icon:'cross',  grp:'lost', key:true, auto:true },
+  lock_acquired:  { label:'잠금 획득',     tone:'info',    icon:'lock',   grp:'lock', key:true },
+  lease_rejected: { label:'423 거절',      tone:'wait',    icon:'lock',   grp:'lock', key:true },
+  lock_released:  { label:'잠금 해제',     tone:'neutral', icon:'unlock', grp:'lock', key:true },
+  holder_left:    { label:'보유자 이탈',   tone:'bad',     icon:'out',    grp:'lock', key:true, auto:true },
+  holder_paused:  { label:'보유자 멈춤',   tone:'bad',     icon:'stop',   grp:'lock', key:true, auto:true },
+  lease_expired:  { label:'TTL 만료',      tone:'wait',    icon:'wait',   grp:'lock', key:true, auto:true },
+  responded:      { label:'응답',          tone:'neutral', icon:'out',    grp:'req' },
+};
+const GROUPS = [
+  { id:'req',      label:'요청·응답',     tone:'info',    icon:'arrive' },
+  { id:'read',     label:'읽기·버전',     tone:'neutral', icon:'read' },
+  { id:'edit',     label:'편집',          tone:'neutral', icon:'write' },
+  { id:'io',       label:'쓰기',          tone:'neutral', icon:'write' },
+  { id:'lock',     label:'락·잠금',       tone:'wait',    icon:'lock' },
+  { id:'conflict', label:'409',           tone:'bad',     icon:'bang' },
+  { id:'retry',    label:'재시도',        tone:'retry',   icon:'retry' },
+  { id:'commit',   label:'커밋',          tone:'ok',      icon:'check' },
+  { id:'lost',     label:'잃어버린 수정', tone:'bad',     icon:'cross' },
+];
+const KEY_GROUPS = new Set(['read', 'lock', 'conflict', 'retry', 'commit', 'lost']);
+
+/* "왜?" 용어 툴팁 */
+const TERMS = {
+  autocommit: '자동 커밋: BEGIN 없이 보낸 문장 하나가 곧 트랜잭션 하나다. 끝나면 바로 커밋된다.',
+  flush: 'flush: identity map에서 바뀐 엔티티를 찾아 UPDATE를 만든다. em.transactional 안이면 그 트랜잭션에서 실행되고(여기서는 원장·이력 INSERT와 함께 commit), 밖이면 스스로 BEGIN … COMMIT으로 감싼다.',
+  identity: 'identity map: EntityManager가 읽어 둔 엔티티 사본. flush는 이 사본의 바뀐 필드로 UPDATE를 만든다.',
+  rows0: '0행 갱신: WHERE에 맞는 행이 없어 UPDATE가 아무것도 바꾸지 못한 것. DB 에러가 아니라서 ORM이 영향 행 수를 보고 OptimisticLockError로 바꾼다.',
+  lockVersion: 'lockVersion: findOne 옵션. 읽어 온 엔티티의 version과 메모리에서 비교만 한다(SQL·트랜잭션 없음). 다르면 OptimisticLockError, 값이 undefined면 검사를 건너뛴다. 동시에 도착한 저장은 이 비교를 둘 다 통과할 수 있어서, 실제 보장은 flush의 WHERE version = ? 가 한다.',
+  lease: 'lease(임대 잠금): 만료 시각이 있는 잠금. 쥔 사람이 사라져도 시간이 지나면 풀린다. DB 칼럼 locked_by·lease_until에 기록한다.',
+  s423: '423 Locked: WebDAV(RFC 4918) 코드를 일부러 빌려 쓴다. 여기서는 편집 잠금 acquire 거절에만 쓰고 Retry-After를 함께 보낸다.',
+  s409: '409 Conflict: 내가 알던 상태가 현재와 다르다. 저장 실패는 모두 409 + reason(version_mismatch | lease_lost | lease_expired).',
+  rc: 'READ COMMITTED: PostgreSQL 기본 격리 수준. 문장마다 그 순간 커밋된 데이터를 본다.',
+  epq: 'WHERE 재평가: READ COMMITTED에서 UPDATE가 행 락을 기다렸다가 앞 트랜잭션이 커밋하면, 최신 행으로 WHERE를 다시 검사한다(EvalPlanQual). 거짓이면 그 행을 건너뛴다 → 0 rows.',
+  rowlock: '행 락: UPDATE가 고치는 행에 거는 락. 트랜잭션이 끝날 때 풀린다. 같은 행을 고치려는 다른 UPDATE는 기다린다.',
+  fencing: 'fencing 토큰(fence 칼럼): 잠금을 얻을 때마다 1씩 오르는 번호. save가 WHERE fence = ?로 함께 확인해, 잠금을 잃은 뒤(같은 사람이 다시 얻었더라도) 옛 세션이 늦게 보낸 저장을 거른다.',
+  native: 'nativeUpdate: identity map과 버전 검사를 거치지 않고 UPDATE를 바로 보낸다. MikroORM 7.1.4에서는 version + 1이 자동으로 붙지만 WHERE version 조건은 없다.',
+  retryafter: 'Retry-After: 몇 초 뒤 다시 시도하라는 응답 헤더. 서버가 줄을 세우는 게 아니라 클라이언트가 다시 온다.',
+};
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const T = (k, label) => `<span class="term" tabindex="0" data-tip="${esc(TERMS[k])}">${label}</span>`;
+
+/* ================================================================
+   3. 가짜 기록 만들기 (실행 = 기록 생성)
+   ================================================================ */
+function rng(seed) {
+  return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+function buildRound(round, v0) {
+  const s = sid(), n = PEOPLE[cfg.people], shape = SHAPES[cfg.shape].id;
+  let pace = 1;
+  if (shape === 'ramp')  pace = 1.4 - round * (0.8 / (ROUNDS - 1));
+  if (shape === 'spike') pace = round === 2 ? 0.45 : 1.1;
+  const st = Math.round(340 * pace);
+  const ev = []; const add = (t, a, phase, o = {}) => { ev.push({ t: Math.round(t), a, phase, ...o }); };
+  const R = SCN.route;
+  let cur = v0;
+
+  if (s === 'lease') cur = buildLease(round, v0, n, st, add);
+  else {
+    const readT = i => 1500 + i * st;
+    for (let i = 0; i < n; i++) {
+      add(i * st, i, 'arrived', { d:`GET ${R} · 화면 열기`, req:'get' });
+      add(readT(i), i, 'db_read', { d:`v${v0} 받음 (자동 커밋 SELECT)${i ? ' · 같은 버전' : ''}`, v:v0, open:true, dup: i > 0, dupFirst: i === 1 });
+      add(readT(i) + 200, i, 'editing', { d:'편집 중 · 사람 시간(압축) · 서버는 아무것도 안 잡음' });
+    }
+    const base = readT(n - 1) + 200 + EDIT_STAGE;
+    if (s === 'naive') {
+      for (let k = 0; k < n; k++) {
+        const t = base + k * 900;
+        add(t, k, 'arrived', { d:`PUT ${R} · version ${v0} (서버가 보지 않음)`, req:'put', rv:v0 });
+        add(t + 120, k, 'db_write', { d:'begin · nativeUpdate · WHERE id만 (version 조건 없음)', w:'naive' });
+        cur++; add(t + 300, k, 'committed', { d:`원장·이력 INSERT → commit · v${cur} · 이 시점 내용 = ${L[k]}안`, v:cur });
+        if (k > 0) add(t + 340, k - 1, 'lost', { d:`${L[k]}가 덮어씀 · ${L[k - 1]}도 200 받음`, by:k, byRead: readT(k), vSave: base + (k - 1) * 900 + 300 });
+        add(t + 560, k, 'responded', { d:'200 OK' });
+      }
+    } else {
+      const blind = s === 'blind', conc = round % 2 === 1;
+      const losers = [0, 2, 3].slice(0, n - 1);
+      const seen = {};   // 409를 받은 사람마다 그 순간의 currentVersion을 따로 기억한다(맹목 재시도는 이 값으로 다시 PUT)
+      let t = base, lastConf;
+      add(t, 1, 'arrived', { d:`PUT ${R} · version ${v0}`, req:'put', rv:v0 });
+      add(t + 120, 1, 'db_write', { d:`begin · lockVersion ${v0} 통과 → UPDATE … version = ${v0}`, w:'opt', rv:v0 });
+      if (conc) {
+        add(t + 40, 0, 'arrived', { d:`PUT ${R} · version ${v0} (B와 거의 동시)`, req:'put', rv:v0 });
+        add(t + 200, 0, 'db_write', { d:`begin · lockVersion ${v0} 통과 → UPDATE … version = ${v0}`, w:'opt', rv:v0, blocked:true });
+        add(t + 240, 0, 'lock_wait', { d:'B의 UPDATE가 같은 행을 잡고 있음 → 행 락 대기', owner:1, rv:v0 });
+        cur++; add(t + 700, 1, 'committed', { d:`원장·이력 INSERT → commit · v${cur} · 이 시점 내용 = B안`, v:cur });
+        add(t + 760, 0, 'conflict', { d:`B 커밋 → WHERE 재평가 → 0 rows → rollback · 409 · currentVersion ${cur}`, via:'recheck', rv:v0, cur, owner:1, reason:'version_mismatch' });
+        add(t + 900, 1, 'responded', { d:'200 OK' });
+        lastConf = t + 760;
+      } else {
+        cur++; add(t + 300, 1, 'committed', { d:`원장·이력 INSERT → commit · v${cur} · 이 시점 내용 = B안`, v:cur });
+        add(t + 520, 1, 'responded', { d:'200 OK' });
+        add(t + 700, 0, 'arrived', { d:`PUT ${R} · version ${v0}`, req:'put', rv:v0 });
+        add(t + 860, 0, 'conflict', { d:`lockVersion ${v0} ≠ 현재 ${cur} → rollback · 409 · currentVersion ${cur}`, via:'lockVersion', rv:v0, cur, reason:'version_mismatch' });
+        lastConf = t + 860;
+      }
+      seen[0] = cur;
+      for (let k = 2; k < n; k++) {
+        const u = lastConf + 300;
+        add(u, k, 'arrived', { d:`PUT ${R} · version ${v0}`, req:'put', rv:v0 });
+        add(u + 160, k, 'conflict', { d:`lockVersion ${v0} ≠ 현재 ${cur} → rollback · 409 · currentVersion ${cur}`, via:'lockVersion', rv:v0, cur, reason:'version_mismatch' });
+        seen[k] = cur;
+        lastConf = u + 160;
+      }
+      let rt = lastConf + 600, lastWriter = 1;
+      for (const j of losers) {
+        if (blind) {
+          // 클라이언트 코드는 if 한 번: 기억한 currentVersion으로 한 번만 다시 PUT. 그 사이 버전이 더 올랐으면 다시 409로 끝난다
+          const mv = seen[j];
+          add(rt, j, 'retry', { d:`409 때 받은 currentVersion ${mv}만 꺼냄 · 최신 내용은 안 봄`, blind:true, rv:mv });
+          const p = rt + 300;
+          add(p, j, 'arrived', { d:`PUT · version ${mv} · body는 처음 그대로`, req:'put', rv:mv, retry:true });
+          if (mv === cur) {
+            add(p + 120, j, 'db_write', { d:`begin · lockVersion ${mv} 통과 → UPDATE … version = ${mv}`, w:'opt', rv:mv });
+            cur++; add(p + 300, j, 'committed', { d:`원장·이력 INSERT → commit · v${cur} · 이 시점 내용 = ${L[j]}의 옛 본문`, v:cur });
+            add(p + 340, lastWriter, 'lost', { d:`${L[j]}가 버전만 바꿔 덮어씀 · 서버는 정상 처리로 봄`, by:j, blind:true });
+            add(p + 560, j, 'responded', { d:'200 OK (재시도 1회)' });
+            lastWriter = j;
+          } else {
+            add(p + 160, j, 'conflict', { d:`기억한 v${mv} ≠ 현재 v${cur} → rollback · 다시 409 · if 한 번뿐이라 여기서 끝`, via:'lockVersion', rv:mv, cur, reason:'version_mismatch', again:true });
+            add(p + 380, j, 'responded', { d:'409 (재시도 1회 뒤 실패 · 이 수정은 저장 안 됨)' });
+          }
+          rt = p + 900;
+        } else {
+          add(rt, j, 'retry', { d:'다시 GET → 내 변경을 최신본에 다시 적용' });
+          add(rt + 240, j, 'db_read', { d:`v${cur} 다시 받음 (최신본)`, v:cur });
+          add(rt + 440, j, 'editing', { d:'최신본에 내 변경 다시 적용 (병합·사용자 결정)', merge:true });
+          const p = rt + 440 + 900;
+          add(p, j, 'arrived', { d:`PUT · version ${cur} · 병합본`, req:'put', rv:cur, retry:true });
+          add(p + 120, j, 'db_write', { d:`begin · lockVersion ${cur} 통과 → UPDATE … version = ${cur}`, w:'opt', rv:cur });
+          cur++; add(p + 300, j, 'committed', { d:`원장·이력 INSERT → commit · v${cur} · 앞사람 수정 + ${L[j]} 수정`, v:cur });
+          add(p + 520, j, 'responded', { d:'200 OK (재시도 1회)' });
+          rt = p + 800;
+        }
+      }
+    }
+  }
+  ev.sort((a, b) => a.t - b.t);
+  return { ev, span: ev[ev.length - 1].t + 1600, pace, endVersion: cur };
+}
+
+/* 편집 잠금: 서버는 줄을 세우지 않는다. 423 → 클라이언트가 n ms 뒤 다시 노크(폴링). 다음 노크가 가장 빠른 사람이 가져간다.
+   보유자가 끝나는 두 장면(서버 인스턴스와 무관 — 잠금은 DB 칼럼이라 서버를 죽여도 그대로다):
+   R2 'left'   클라이언트 이탈 → release를 보내지 않음 → TTL 만료 → 다음 노크가 회수
+   R3 'paused' 같은 클라이언트가 멈춤(GC·네트워크 단절) → TTL 만료·회수 → 깨어나 늦게 저장 → locked_by·fence 불일치 → 409 lease_lost */
+let FENCE = 0;
+function buildLease(round, v0, n, st, add) {
+  const R = SCN.route, mode = round === 1 ? 'left' : round === 2 ? 'paused' : '';
+  let cur = v0;
+  for (let i = 0; i < n; i++) add(i * st, i, 'arrived', { d:`POST ${R}/lease · 잠금 요청`, req:'acq' });
+  const waiting = [];
+  for (let j = 1; j < n; j++) {
+    const k0 = Math.max(1700 + (j - 1) * Math.round(st * 0.7), j * st + 1400);
+    add(k0, j, 'lease_rejected', { d:`acquire 0 rows → 423 · Retry-After · 보유자 ${L[0]}`, owner:0, first:true });
+    const every = 1000 + (n - j) * 170;   // 늦게 온 사람이 더 자주 노크할 수도 있다 → 순서 보장 없음
+    waiting.push({ j, next: k0 + every, every, lastT: k0 });
+  }
+  // 노크 한 번 = retry(다시 노크) + lease_rejected(423) 한 쌍. 같은 사람의 노크는 앞 노크 응답 뒤에만 시작한다(중복 없음)
+  const knock = (w, owner) => {
+    add(Math.max(w.lastT + 200, w.next - 450), w.j, 'retry', { d:'Retry-After 지나서 다시 노크', knock:true });
+    add(w.next, w.j, 'lease_rejected', { d:`acquire 0 rows → 423 · 보유자 ${L[owner]}`, owner });
+    w.lastT = w.next; w.next += w.every;
+  };
+  const pollUntil = (free, owner) => waiting.forEach(w => { while (w.next < free) knock(w, owner); });
+  let holder = 0, at = 1500, note = '빈 잠금 → 획득', take = '', late = null;
+  for (;;) {
+    cur++; FENCE++;   // acquire도 UPDATE라 버전 칼럼 +1 (save +1, release +1 → 한 차례에 +3)
+    const fence = FENCE;
+    add(at, holder, 'lock_acquired', { d:`${note} · fence ${fence} · lease_until = DB clock_timestamp() + 30s`, v:cur, fence, take });
+    if (late) {   // 멈췄던 A가 깨어나 늦게 저장 — 새 보유자의 acquire(+1) 뒤라 409의 currentVersion은 그 값
+      const t = at + 900;
+      add(t, 0, 'arrived', { d:`PUT ${R} · 깨어난 A의 늦은 저장 (fence ${late.fence})`, req:'put', late:true, fence: late.fence });
+      add(t + 120, 0, 'db_write', { d:`begin · WHERE locked_by = A AND fence = ${late.fence} AND lease_until > clock_timestamp() → 0 rows`, w:'leaseFail', owner: holder, fence: late.fence, curFence: fence });
+      add(t + 260, 0, 'conflict', { d:`재조회: locked_by = ${L[holder]}, fence ${fence} → rollback · 409 lease_lost · currentVersion ${cur}`, via:'lease', reason:'lease_lost', owner: holder, cur, fence: late.fence, curFence: fence });
+      add(t + 480, 0, 'responded', { d:'409 Conflict' });
+      late = null;
+    }
+    add(at + 300, holder, 'db_read', { d:`v${cur} 받음 (자동 커밋 SELECT)`, v:cur, open:true });
+    add(at + 500, holder, 'editing', { d:`편집 중 · 사람 시간 ${EDITS[cfg.edit].name} · 잠금 쥔 채`, hold:true });
+    let free;
+    if (mode && holder === 0) {
+      if (mode === 'left') add(at + 1300, 0, 'holder_left', { d:'A가 떠남(탭 닫기·이탈) · release(DELETE /lease)를 보내지 않음 · locked_by = A가 남음' });
+      else { add(at + 1300, 0, 'holder_paused', { d:`A 클라이언트가 멈춤(GC·네트워크 단절) · 저장 직전 · fence ${fence}를 든 채`, fence }); late = { fence }; }
+      free = at + TTL_STAGE;
+      pollUntil(free, 0);
+      add(free, 0, 'lease_expired', { d:'lease_until ≤ clock_timestamp() · 칼럼엔 A가 남았지만 효력 없음' });
+    } else {
+      const s = at + 500 + EDIT_STAGE;
+      add(s, holder, 'arrived', { d:`PUT ${R} · 잠금 보유자 저장 (fence ${fence})`, req:'put', fence });
+      add(s + 120, holder, 'db_write', { d:`begin · WHERE locked_by = ${L[holder]} AND fence = ${fence} AND lease_until > clock_timestamp()`, w:'lease', fence });
+      cur++; add(s + 300, holder, 'committed', { d:`원장·이력 INSERT → commit · v${cur} · 이 시점 내용 = ${L[holder]}안`, v:cur });
+      free = s + 500;
+      pollUntil(free, holder);
+      cur++; add(free, holder, 'lock_released', { d:`잠금 해제 (DELETE /lease · WHERE locked_by AND fence = ${fence})`, v:cur, fence });
+      add(free + 100, holder, 'responded', { d:'200 OK' });
+    }
+    if (!waiting.length) break;
+    if (waiting.length > 1) {   // 시안: 늦게 온 사람의 노크 주기가 마침 맞아 먼저 차지하는 장면을 보인다
+      const lateW = waiting.reduce((p, q) => q.j > p.j ? q : p), m = Math.min(...waiting.map(x => x.next));
+      lateW.next = Math.max(free + 60, lateW.lastT + 700, m - 80);
+    }
+    waiting.sort((p, q) => p.next - q.next);
+    const w = waiting.shift();
+    const earliest = Math.min(w.j, ...waiting.map(x => x.j));
+    add(Math.max(w.lastT + 200, w.next - 450), w.j, 'retry', { d:'Retry-After 지나서 다시 노크', knock:true });
+    const wasExpired = mode && holder === 0;
+    at = w.next; holder = w.j;
+    take = wasExpired ? 'expired' : '';
+    note = wasExpired ? '만료된 잠금 회수' : (w.j !== earliest ? `${L[w.j]}가 먼저 차지 (${L[earliest]}가 먼저 왔지만 순서 보장 없음)` : '빈 잠금 → 획득');
+  }
+  return cur;
+}
+
+function fmtMs(ms) {
+  if (ms < 1000) return { n: Math.round(ms), u: 'ms' };
+  if (ms < 60000) return { n: +(ms / 1000).toFixed(1), u: 's' };
+  return { n: +(ms / 60000).toFixed(1), u: '분' };
+}
+function summary(s, n, R) {
+  const j = () => 0.95 + R() * 0.1;
+  const base = { naive:[420, 36, 0], blind:[300, 71, 0], opt:[352, 58, 0], lease:[186, 128, 0] }[s];
+  if (s === 'lease') {
+    const ed = EDITS[cfg.edit];
+    const tput = base[0] * [1, 0.12, 0.009, 0.0009][cfg.edit] / (1 + (n - 2) * 0.35) * j();
+    const p95 = cfg.edit === 0 ? base[1] * (1 + (n - 2) * 0.7) * j() : ed.real * 1000 * (n - 1) * 0.97;
+    return { tput, p95, p95Label: '잠금 대기 p95', p95Sub: cfg.edit ? `편집 ${ed.name} × 앞사람 ${n - 1}명` : '압축된 편집 시간 기준' };
+  }
+  const tput = base[0] * (1 - (n - 2) * (s === 'naive' ? 0.04 : 0.09)) * j();
+  const p95 = base[1] * (s === 'naive' ? 1 : 1 + (n - 2) * 0.3) * j();
+  return { tput, p95, p95Label: 'p95 지연', p95Sub: s === 'naive' ? '편집 시간과 무관' : '재시도 포함 · 편집 시간 제외' };
+}
+
+function buildRecording() {
+  const s = sid(), n = PEOPLE[cfg.people];
+  const R = rng(PB.runNo * 9973 + cfg.strat * 131 + cfg.people * 17 + cfg.shape * 7 + cfg.edit * 3);
+  const rounds = [], all = [], eld = [];
+  FENCE = 11;
+  let v = 7, start = 0, viol = 0, conf = 0, r423 = 0, retr = 0, put = 0;
+  for (let r = 0; r < ROUNDS; r++) {
+    const b = buildRound(r, v);
+    Object.assign(b, { idx: r, start, baseVersion: v });
+    v = b.endVersion;
+    for (let t = 0; t < b.span; t += 450) eld.push({ g: start + t, v: Math.max(2, Math.round({ naive:6, blind:8, opt:8, lease:7 }[s] * (0.6 + R() * 0.9))) });
+    b.ev.forEach(e => {
+      e.g = start + e.t; e.r = r; e.i = all.length;
+      if (e.phase === 'lost') viol++;
+      if (e.phase === 'conflict') conf++;
+      if (e.phase === 'lease_rejected') r423++;
+      if (e.phase === 'retry') retr++;
+      if (e.phase === 'arrived' && e.req === 'put') put++;
+      e.cum = { viol, conf, r423, retr };
+      all.push(e);
+    });
+    start += b.span; rounds.push(b);
+  }
+  const gaps = []; let cur = 0;
+  all.forEach(e => {
+    const a = Math.max(0, e.g - FF_PRE), b = e.g + FF_POST;
+    if (a > cur) gaps.push({ a: cur, b: a });
+    cur = Math.max(cur, b);
+  });
+  if (cur < start) gaps.push({ a: cur, b: start });
+  const sum = summary(s, n, R);
+  sum.fail = put ? conf / (put + r423) * 100 : 0;
+  sum.conf = conf; sum.r423 = r423; sum.retr = retr; sum.viol = viol;
+  const rec = { rounds, all, eld, total: start, gaps, sum, sid: s, n };
+  return rec;
+}
+function isAuto(e) {
+  if (e.phase === 'db_read') return PB.autoCause && !!e.dupFirst;
+  if (e.phase === 'lease_rejected') return !!e.first;
+  return !!PH[e.phase].auto;
+}
+function computeStops() {
+  const rec = PB.rec; if (!rec) return;
+  const stops = [];
+  rec.all.filter(isAuto).forEach(e => {
+    const last = stops[stops.length - 1];
+    // 같은 종류·같은 설명(via·again)이 무대 1.4초 안에 이어지면 한 번만. 멈춤 위치 = 마지막 이벤트 시각 그대로(시계·코드 상자·설명이 같은 시각)
+    const same = last && last.phase === e.phase && last.events[0].via === e.via && !!last.events[0].again === !!e.again;
+    if (same && e.g - last.first <= 1400) { last.events.push(e); last.at = e.g; }
+    else stops.push({ phase: e.phase, first: e.g, at: e.g, events: [e] });
+  });
+  rec.stops = stops;
+}
+
+/* 타임라인 행: 필터 → 묶기. 핵심 phase는 같은 사람끼리만 묶는다(A 커밋 / B 커밋이 따로 보이게) */
+function buildRows() {
+  const rec = PB.rec; if (!rec) { PB.rows = []; return; }
+  const vis = e => { const g = PH[e.phase].grp; return !PB.off.has(g) && (PB.view === 'all' || KEY_GROUPS.has(g)); };
+  const rows = [];
+  rec.all.filter(vis).forEach(e => {
+    const last = rows[rows.length - 1];
+    const sameWho = !PH[e.phase].key || (last && last.events.every(x => x.a === e.a));
+    if (last && last.r === e.r && last.phase === e.phase && e.g - last.g <= 1400 && sameWho && !e.dupFirst) { last.events.push(e); last.gEnd = e.g; }
+    else rows.push({ r: e.r, phase: e.phase, g: e.g, gEnd: e.g, events: [e] });
+  });
+  PB.rows = rows;
+}
+
+/* ================================================================
+   4. 장면 상태 = f(P)
+   ================================================================ */
+const DESK = { x: 100, y: 96, w: 56 };
+const PX_PER_MS = 0.09;   // 걷는 속도 90 논리px/s(무대 시간)
+function homeX(i) { return (i % 2 === 0) ? -14 : W + 14; }
+function deskSpot(i, n) {
+  if (sid() === 'lease') return { x: 128, y: 134 };
+  const xs = { 2:[114,142], 3:[106,128,150], 4:[100,119,138,157] }[n];
+  return { x: xs[i], y: 136 };
+}
+function knockSpot(i) { return { x: i % 2 ? 156 : 100, y: 144 + (i >> 1) * 6 }; }
+function waitSpot(i) { return { x: i % 2 ? W - 30 - (i >> 1) * 16 : 30 + (i >> 1) * 16, y: 154 + (i >> 1) * 4 }; }
+function posAt(a, t) {
+  if (!a.dur) return { x: a.tx, y: a.ty };
+  const f = Math.min(1, Math.max(0, (t - a.t0) / a.dur));
+  return { x: a.fx + (a.tx - a.fx) * f, y: a.fy + (a.ty - a.fy) * f };
+}
+function moveTo(a, x, y, t) {
+  const p = posAt(a, t);
+  a.fx = p.x; a.fy = p.y; a.tx = x; a.ty = y; a.t0 = t;
+  a.dur = Math.hypot(x - p.x, y - p.y) / PX_PER_MS;
+}
+function roundAt(P) {
+  const rs = PB.rec.rounds;
+  for (let i = rs.length - 1; i >= 0; i--) if (P >= rs[i].start) return rs[i];
+  return rs[0];
+}
+function upper(all, P) { let lo = 0, hi = all.length; while (lo < hi) { const m = (lo + hi) >> 1; if (all[m].g <= P) lo = m + 1; else hi = m; } return lo; }
+
+function sceneAt(P) {
+  const n = PEOPLE[cfg.people], s = sid();
+  const actors = Array.from({ length: n }, (_, i) => ({
+    i, vis: false, fx: homeX(i), fy: 150, tx: homeX(i), ty: 150, t0: 0, dur: 0,
+    carry: false, cv: null, emote: null, emoteT: 0, emoteDur: 0, knockT: -1e9, lungeT: -1e9, leaving: false, arrT: 0,
+    editing: false, paused: false, db: null, waitRow: false, last: null, nextKnock: null,
+  }));
+  const S = { actors, doc: { lock: null, expired: false, writing: null, version: 7, content: '원본', flashT: -1e9 }, papers: [], pops: [], bubbles: [], lt: 0, rd: null, rowLock: null, lastSqlEv: null };
+  if (!PB.rec) return S;
+  const rd = roundAt(P), lt = P - rd.start;
+  S.rd = rd; S.lt = lt; S.doc.version = rd.baseVersion;
+  for (const e of rd.ev) {
+    if (e.t > lt) break;
+    const a = actors[e.a];
+    a.last = e;
+    if (stmtOf(e)) S.lastSqlEv = e;
+    switch (e.phase) {
+      case 'arrived': {
+        if (e.late) { a.paused = false; a.emote = 'bang'; a.emoteT = e.t; a.emoteDur = 400; }
+        if (!a.vis || a.leaving) {
+          a.vis = true; a.leaving = false; a.dur = 0; a.arrT = e.t;
+          a.fx = a.tx = homeX(e.a); a.fy = a.ty = 146 + (e.a > 1 ? 10 : 0);
+          const sp = s === 'lease' ? (e.req === 'acq' ? knockSpot(e.a) : deskSpot(e.a, n)) : deskSpot(e.a, n);
+          moveTo(a, sp.x, sp.y, e.t);
+        }
+        break;
+      }
+      case 'db_read': a.carry = true; a.cv = e.v; a.editing = false; a.db = { kind: 'select', t0: e.t, until: e.t + 160, ev: e }; break;
+      case 'editing': a.editing = true; a.emote = 'write'; a.emoteT = e.t; a.emoteDur = 1e9; break;
+      case 'db_write':
+        a.editing = false; a.emote = null; a.lungeT = e.t; S.doc.writing = e.a;
+        a.db = { kind: 'update', t0: e.t, until: Infinity, ev: e, tx: e.w === 'opt' };
+        if (e.w !== 'leaseFail' && S.rowLock === null) S.rowLock = e.a;   // UPDATE가 잡은 행 락은 commit까지(원장 INSERT 포함)
+        break;
+      case 'lock_wait':
+        a.waitRow = true; a.emote = 'wait'; a.emoteT = e.t; a.emoteDur = 1e9;
+        S.bubbles.push({ t: e.t, a: e.a, key: 'w' + e.i, text: `${L[e.owner]} 커밋 기다리는 중 (행 락)`, tone: 'wait', life: 1e9 });
+        break;
+      case 'committed':
+        a.carry = false; a.cv = e.v; a.emote = 'check'; a.emoteT = e.t; a.emoteDur = 900; a.db = null;
+        S.doc.writing = null; S.doc.content = L[e.a]; S.doc.flashT = e.t; S.doc.version = e.v;
+        if (S.rowLock === e.a) S.rowLock = null;
+        break;
+      case 'lost': S.papers.push({ t: e.t, a: e.a }); S.pops.push({ t: e.t, key: 'p' + e.i, text: '잃어버린 수정 +1', icon: 'cross' }); break;
+      case 'conflict':
+        a.carry = false; a.waitRow = false; a.db = null; a.emote = 'bang'; a.emoteT = e.t; a.emoteDur = 1500; a.knockT = e.t;
+        if (S.doc.writing === e.a) S.doc.writing = null;
+        S.bubbles = S.bubbles.filter(b => b.a !== e.a || b.tone !== 'wait');
+        S.bubbles.push({ t: e.t, a: e.a, key: 'b' + e.i, text: e.reason === 'lease_lost' ? '409 · 잠금을 잃었어요' : e.again ? `409 · 또 거절 (v${e.cur}) · 포기` : `409 · 먼저 고쳐졌어요 (v${e.cur})`, life: 1700 });
+        break;
+      case 'retry':
+        a.emote = 'retry'; a.emoteT = e.t; a.emoteDur = 450;
+        if (e.knock) { const k = knockSpot(e.a); moveTo(a, k.x, k.y, e.t); }
+        break;
+      case 'lock_acquired': {
+        S.doc.lock = e.a; S.doc.expired = false; S.doc.version = e.v; a.emote = null;
+        a.db = { kind: 'update', t0: e.t, until: e.t + 160, ev: e };
+        // 멈춘 옛 보유자가 책상 앞에 서 있으면 옆자리로
+        const sp = actors.some(o => o.paused && o.i !== e.a) ? { x: 154, y: 134 } : deskSpot(e.a, n);
+        moveTo(a, sp.x, sp.y, e.t);
+        break;
+      }
+      case 'lease_rejected': {
+        a.knockT = e.t; a.emote = 'wait'; a.emoteT = e.t; a.emoteDur = 1e9;
+        a.db = { kind: 'update', t0: e.t, until: e.t + 120, ev: e };
+        S.bubbles.push({ t: e.t, a: e.a, key: 'r' + e.i, text: '423 · 잠겨 있음', tone: 'wait', life: 900 });
+        const w = waitSpot(e.a); moveTo(a, w.x, w.y, e.t + 120);
+        break;
+      }
+      case 'lock_released': S.doc.lock = null; S.doc.version = e.v; a.db = { kind: 'update', t0: e.t, until: e.t + 140, ev: e }; break;
+      case 'holder_left':   // 클라이언트 이탈: release 없이 문 밖으로 → 잠금은 DB 칼럼에 남는다
+        a.leaving = true; a.carry = false; a.editing = false; a.emote = null; moveTo(a, homeX(e.a), 150, e.t);
+        S.pops.push({ t: e.t, key: 'g' + e.i, text: 'A 이탈 · release 없음 · 잠금은 남음', icon: 'out' });
+        break;
+      case 'holder_paused': // 같은 클라이언트가 멈춤(GC·네트워크 단절): 자리에서 굳는다. 사본(fence)은 든 채
+        a.paused = true; a.editing = false; a.emote = 'stop'; a.emoteT = e.t; a.emoteDur = 1e9;
+        S.pops.push({ t: e.t, key: 'g' + e.i, text: 'A 멈춤 (GC·네트워크 단절) · 잠금은 남음', icon: 'stop' });
+        break;
+      case 'lease_expired': S.doc.expired = true; S.pops.push({ t: e.t, key: 'x' + e.i, text: 'TTL 만료 · 누구나 회수 가능', icon: 'wait', tone: 'wait' }); break;
+      case 'responded': a.leaving = true; a.carry = false; a.editing = false; a.emote = null; moveTo(a, homeX(e.a), 150, e.t); break;
+    }
+  }
+  actors.forEach(a => {
+    const p = posAt(a, lt); a.x = p.x; a.y = p.y;
+    a.walking = a.dur > 0 && lt < a.t0 + a.dur;
+    if (a.leaving && !a.walking) a.vis = false;
+    if (a.emote && lt - a.emoteT > a.emoteDur) a.emote = a.editing ? 'write' : null;
+    if (a.db && lt > a.db.until) a.db = null;
+    const ka = lt - a.knockT; a.knock = ka >= 0 && ka < 420 ? 1 - ka / 420 : 0;
+    const la = lt - a.lungeT; a.lunge = la >= 0 && la < 330 ? 1 - la / 330 : 0;
+    a.flip = a.walking ? a.tx < a.fx : a.x > 128;
+  });
+  S.papers = S.papers.filter(p => lt - p.t < 1600);
+  S.pops = S.pops.filter(p => lt - p.t < 1800);
+  S.bubbles = S.bubbles.filter(b => lt - b.t < b.life);
+  return S;
+}
+
+/* ================================================================
+   5. 그리기
+   ================================================================ */
+const cv = document.getElementById('stage');
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+const bg = document.createElement('canvas'); bg.width = W; bg.height = H;
+(function paintBg() {
+  const g = bg.getContext('2d');
+  const R = (c, x, y, w, h) => { g.fillStyle = PAL[c]; g.fillRect(x, y, w, h); };
+  R('p', 0, 0, W, 64); R('n', 0, 38, W, 2); R('m', 0, 62, W, 2);
+  R('s', 20, 10, 44, 26); R('n', 22, 12, 40, 22); R('p', 41, 12, 2, 22);
+  for (let i = 0; i < 6; i++) { R('p', 26 + i, 30 - i, 1, 1); R('p', 47 + i, 28 - i, 1, 1); }
+  R('d', 150, 12, 40, 22); R('w', 151, 13, 38, 20);
+  R('p', 154, 16, 8, 7); R('p', 165, 15, 9, 8); R('p', 177, 17, 8, 7);
+  R('k', 155, 18, 6, 1); R('k', 166, 18, 7, 1); R('k', 178, 20, 6, 1);
+  R('r', 157, 15, 2, 2); R('b', 168, 14, 2, 2); R('y', 180, 16, 2, 2);
+  R('k', 102, 12, 12, 12); R('p', 103, 13, 10, 10); R('k', 107, 15, 1, 4); R('k', 108, 18, 3, 1);
+  R('s', 216, 22, 30, 42); R('m', 218, 24, 26, 12); R('m', 218, 38, 26, 12); R('m', 218, 52, 26, 10);
+  R('s', 228, 29, 6, 2); R('s', 228, 43, 6, 2); R('s', 228, 56, 6, 2);
+  R('h', 0, 64, W, H - 64);
+  g.fillStyle = PAL.n;
+  for (let y = 64; y < H; y += 16) for (let x = 0; x < W; x += 2) g.fillRect(x, y, 1, 1);
+  for (let x = 0; x < W; x += 32) for (let y = 64; y < H; y += 2) g.fillRect(x, y, 1, 1);
+  R('m', 0, 140, 10, 28); R('m', W - 10, 140, 10, 28);
+})();
+
+function drawDesk(g) {
+  const { x, y, w } = DESK;
+  g.fillStyle = PAL.m; g.fillRect(x + 2, y + 24, w - 4, 3);
+  g.fillStyle = PAL.d; g.fillRect(x, y + 6, w, 18);
+  g.fillStyle = PAL.w; g.fillRect(x, y, w, 8);
+  g.fillStyle = PAL.k; g.fillRect(x, y + 8, w, 1);
+  g.fillStyle = PAL.w; g.fillRect(x + 4, y + 12, w - 8, 1);
+  g.fillStyle = PAL.k; g.fillRect(x + 2, y + 24, 3, 2); g.fillRect(x + w - 5, y + 24, 3, 2);
+}
+function drawDoc(g, S) {
+  const x = 121, y = 84, d = S.doc;
+  const lift = (S.lt - d.flashT >= 0 && S.lt - d.flashT < 330) ? -1 : 0;
+  g.fillStyle = PAL.k; g.fillRect(x - 1, y - 1 + lift, 16, 18);
+  g.fillStyle = PAL.p; g.fillRect(x, y + lift, 14, 16);
+  g.fillStyle = PAL.b; g.fillRect(x + 2, y + 2 + lift, 10, 2);
+  g.fillStyle = PAL.s; for (let r = 0; r < 4; r++) g.fillRect(x + 2, y + 6 + r * 2 + lift, r === 3 ? 6 : 10, 1);
+  if (d.writing !== null) { g.fillStyle = PAL.k; g.fillRect(x + 9 + ((S.lt / 80) | 0) % 3, y + 12, 3, 1); }
+  if (d.lock !== null) {
+    if (d.expired) { blit(g, PADLOCK, x + 10, y - 6, { k:'s', m:'h' }); g.fillStyle = PAL.r; for (let i = 0; i < 7; i++) g.fillRect(x + 10 + i, y - 6 + i, 1, 1); }
+    else { blit(g, PADLOCK, x + 10, y - 6); g.fillStyle = PAL[SUITS[d.lock].S]; g.fillRect(x + 10, y + 3, 7, 1); }
+  }
+}
+function drawLeaseZone(g) {
+  if (sid() !== 'lease') return;
+  g.fillStyle = PAL.y;
+  for (let x = 14; x < 64; x += 6) g.fillRect(x, 166, 3, 1);
+  for (let x = W - 64; x < W - 14; x += 6) g.fillRect(x, 166, 3, 1);
+}
+const GHOST = { k:'s', f:'m', p:'h', S:'m', T:'m' };
+function drawActor(g, a, lt) {
+  if (!a.vis) return;
+  const step = ((lt / 140) | 0) % 2;
+  const legs = a.walking ? (step ? LEGS.a : LEGS.b) : LEGS.stand;
+  const bob = a.walking && step ? -1 : 0;
+  const kx = Math.round((a.i % 2 ? 1 : -1) * Math.sin(a.knock * Math.PI) * 10);
+  const ly = -Math.round(Math.sin(a.lunge * Math.PI) * 4);
+  const x = Math.round(a.x) - 6 + kx, y = Math.round(a.y) - 18 + bob + ly;
+  g.fillStyle = PAL.m; g.fillRect(x + 2, Math.round(a.y) - 1, 8, 2);
+  blit(g, BODY, x, y, a.paused ? GHOST : SUITS[a.i], a.flip);
+  blit(g, legs, x, y + 14, a.paused ? { k:'s' } : {}, a.flip);
+  if (a.carry) blit(g, COPY, x + (a.flip ? -4 : 9), y + 6);
+  if (a.emote) {
+    const ex = x + 1, ey = y - 14;
+    const col = { check: PAL.g, bang: PAL.r, retry: PAL.o, wait: PAL.k, write: PAL.s, cross: PAL.r, stop: PAL.s }[a.emote];
+    g.fillStyle = PAL.k; g.fillRect(ex - 1, ey - 1, 12, 12);
+    g.fillStyle = a.emote === 'wait' ? PAL.y : PAL.p; g.fillRect(ex, ey, 10, 10);
+    g.fillStyle = PAL.k; g.fillRect(ex + 4, ey + 11, 2, 1);
+    blitIcon(g, a.emote, ex + 1, ey + 1, col);
+  }
+}
+function paperPos(p, lt) {
+  const s = (lt - p.t) / 1000, dir = p.a % 2 ? 1 : -1;
+  return { x: 122 + dir * 34 * s, y: 84 - 46 * s + 15 * s * s, rot: s * 9, life: 1.6 - s };
+}
+function drawPapers(g, S) {
+  S.papers.forEach(p => {
+    const q = paperPos(p, S.lt);
+    g.globalAlpha = Math.max(0, Math.min(1, q.life / 0.8));
+    const x = Math.round(q.x), y = Math.round(q.y), tilt = Math.round(Math.sin(q.rot) * 2);
+    g.fillStyle = PAL.k; g.fillRect(x - 1, y - 1, 12, 14);
+    g.fillStyle = PAL.p; g.fillRect(x, y, 10, 12);
+    g.fillStyle = PAL[SUITS[p.a].S]; g.fillRect(x + 1, y + 1, 8, 2);
+    g.fillStyle = PAL.r; g.fillRect(x + 2 + tilt, y + 5, 6, 1); g.fillRect(x + 2 - tilt, y + 8, 6, 1);
+    g.globalAlpha = 1;
+  });
+}
+function render(S) {
+  ctx.drawImage(bg, 0, 0);
+  drawLeaseZone(ctx); drawDesk(ctx); drawDoc(ctx, S);
+  [...S.actors].sort((p, q) => p.y - q.y).forEach(a => drawActor(ctx, a, S.lt));
+  drawPapers(ctx, S);
+}
+
+/* ---------- HTML 레이어(글자는 캔버스에 그리지 않는다) ---------- */
+const overlay = document.getElementById('overlay');
+let K = 2;
+const ovPool = new Map();
+function ovEl(key, cls, html) {
+  let el = ovPool.get(key);
+  if (!el) { el = document.createElement('div'); el.className = 'ov ' + cls; overlay.appendChild(el); ovPool.set(key, el); el._html = null; }
+  if (el.className !== 'ov ' + cls) el.className = 'ov ' + cls;
+  if (el._html !== html) { el.innerHTML = html; el._html = html; }
+  el._seen = true; return el;
+}
+function ovSweep() { for (const [k, el] of ovPool) { if (!el._seen) { el.remove(); ovPool.delete(k); } else el._seen = false; } }
+function place(el, x, y, anchor = 'translate(-50%, -100%)') { el.style.transform = `translate(${Math.round(x * K)}px, ${Math.round(y * K)}px) ${anchor}`; }
+
+function calloutTarget(S, c) {
+  const e = c.events[c.events.length - 1];
+  if (e.phase === 'lost' || e.phase === 'lease_expired') return { x: 128, y: 86 };
+  const a = S.actors[e.a];
+  return { x: a.x, y: a.y - 10 };
+}
+const rms = e => realMs(e.t);
+function explain(c) {
+  const e = c.events[0], s = PB.rec.sid, who = [...new Set(c.events.map(x => L[x.a]))].join(', ');
+  switch (e.phase) {
+    case 'db_read': {
+      const first = PB.rec.rounds[e.r].ev.find(x => x.phase === 'db_read' && x.a === 0);
+      return `<b>${L[e.a]}도 같은 버전(v${e.v})을 받았다 — 아직 아무도 저장 전</b> A는 +${rms(first)}ms, ${L[e.a]}는 +${rms(e)}ms에 읽었다. 같은 버전을 들고 각자 편집을 시작한다. 이 순간이 원인이다.`;
+    }
+    case 'lost': {
+      if (e.blind) return `<b>${L[e.by]}가 버전만 바꿔 같은 본문을 다시 보냄 → ${L[e.a]}의 수정이 사라짐</b> 409를 "버전만 갱신하면 되는 오류"로 다룬 결과다. 버전 검사는 통과하므로 서버도 DB도 모른다.`;
+      return `<b>${L[e.by]}가 ${L[e.a]}의 수정을 덮어씀</b> — 잃어버린 수정 +1. ${L[e.by]}는 +${realMs(e.byRead)}ms에 읽었다 — ${L[e.a]}가 저장한 +${realMs(e.vSave)}ms보다 먼저. 둘 다 200 OK라 아무도 모른다.`;
+    }
+    case 'conflict':
+      if (e.via === 'recheck') return `<b>${L[e.a]}의 UPDATE가 0행</b> — B의 행 락을 기다렸다가, B 커밋 뒤 PostgreSQL이 최신 행으로 WHERE version = ${e.rv}를 다시 검사했다(현재 v${e.cur} — 거짓) → 0 rows → OptimisticLockError → rollback(원장도 안 남음) → 409, currentVersion ${e.cur}.`;
+      if (e.via === 'lease') return `<b>깨어난 A의 늦은 저장이 409 (lease_lost)</b> — A가 멈춘 사이 TTL이 지나 ${L[e.owner]}가 잠금을 가져갔다(fence ${e.curFence}). save의 WHERE locked_by = 'A' AND fence = ${e.fence} AND lease_until > clock_timestamp()가 0행 → 재조회(locked_by = '${L[e.owner]}') → rollback. currentVersion ${e.cur}은 ${L[e.owner]}의 acquire(+1)까지 반영된 값이다.`;
+      if (e.again) return `<b>${who}의 재시도도 409 — 여기서 실패로 끝남</b> 409 때 기억한 v${e.rv}로 다시 보냈지만, 그 사이 다른 사람의 재시도가 v${e.cur}로 올렸다. 클라이언트 코드는 if 한 번만 재시도하므로 더 보내지 않는다. 이 수정은 저장되지 않았고 본인은 실패를 안다.`;
+      return `<b>${who}의 저장이 409로 거절됨</b> — 들고 온 v${e.rv} ≠ 현재 v${e.cur}. UPDATE를 보내기 전에 lockVersion 메모리 비교에서 걸렸다. 응답 본문에 currentVersion ${e.cur}과 현재 내용이 실린다. 다음: ${s === 'blind' ? '(고장) 버전만 바꿔 같은 body로 다시 PUT' : '다시 GET → 내 변경을 최신본에 다시 적용 → 새 버전으로 PUT'}.`;
+    case 'lock_wait': return `<b>${L[e.a]}의 UPDATE가 B의 행 락을 기다린다</b> — 둘 다 WHERE version = ${e.rv}로 거의 동시에 도착했다. 먼저 잡은 B가 커밋할 때까지 DB 안에서 대기한다(커넥션을 쥔 채).`;
+    case 'lease_rejected': return `<b>${who}는 423을 받고 문 밖으로</b> — 서버는 줄을 세우지 않는다. 클라이언트가 Retry-After 뒤 다시 노크(폴링)하고, 먼저 온 순서는 보장되지 않는다. 기다리는 동안 DB 커넥션·트랜잭션은 없다.`;
+    case 'holder_left': return `<b>잠금을 쥔 A가 떠났다 — release를 보내지 않았다</b> 탭을 닫거나 이탈하면 DELETE /lease가 오지 않는다. locked_by = 'A'가 DB 칼럼에 남아, lease_until(DB 시계)이 지날 때까지 다른 사람은 423을 받는다. 회수는 TTL 만료로만 된다.`;
+    case 'holder_paused': return `<b>잠금을 쥔 A의 클라이언트가 멈췄다 (GC·네트워크 단절)</b> A는 아직 잠금을 쥐었다고 믿고 fence ${e.fence}를 들고 있다. 서버는 A가 살아 있는지 모르니 lease_until이 지나야 풀린다. 깨어나 늦게 저장하면 fence로 거른다.`;
+    case 'lease_expired': return `<b>TTL 만료</b> — lease_until ≤ clock_timestamp()라서 다음 acquire의 조건(만료된 잠금)에 맞는다. 다음에 노크하는 사람이 회수한다. 시각은 DB 시계로 잰다.`;
+  }
+  return '';
+}
+function calloutHtml(c) {
+  const tone = PH[c.phase].tone;
+  return `<span class="badge t-${tone}">${svgIcon('stop')}자동 멈춤</span><span>${explain(c)}</span><span class="hint"><span>Space 계속 · → 다음 단계</span><button type="button" class="go" data-act="continue">${svgIcon('play')}계속</button></span>`;
+}
+function useSheet() { return window.innerWidth < 760 || K < 2; }
+function syncOverlay(S) {
+  const s = sid();
+  S.actors.forEach((a, i) => {
+    const el = ovEl('tag' + i, `tag a${i}`, L[i]);
+    el.style.display = (a.vis && a.x > 4 && a.x < W - 4) ? '' : 'none';
+    const kx = Math.round((a.i % 2 ? 1 : -1) * Math.sin(a.knock * Math.PI) * 10);
+    place(el, Math.round(a.x) + kx, a.emote ? a.y - 34 : a.y - 20);
+    if (a.vis && a.carry && a.cv) {
+      // 받은 버전 표지는 발밑에(몸·사본과 안 겹침). 배율이 작아 이웃 표지와 닿으면 한 사람 건너 한 줄 내린다
+      const v = ovEl('cv' + i, 'vtag', `v${a.cv}`);
+      const gap = s === 'lease' ? 99 : { 2: 28, 3: 22, 4: 19 }[S.actors.length];
+      place(v, Math.round(a.x) + kx, a.y + 2 + (gap * K < 30 && i % 2 ? 11 : 0), 'translate(-50%, 0)');
+    }
+  });
+  if (PB.rec) {
+    const d = S.doc;
+    const lk = d.lock !== null ? ` ${svgIcon('lock')}${L[d.lock]}${d.expired ? ' 만료' : ''}` : '';
+    place(ovEl('docv', `vtag doc${d.expired ? ' x' : ''}`, `DB v${d.version}${lk}`), 128, 76);
+    if (s === 'lease') place(ovEl('zone', 'zone', '문 밖 · 각자 다시 노크 (줄 아님)'), 3, 176, 'translate(0, -50%)');
+  }
+  S.bubbles.forEach(b => {
+    const a = S.actors[b.a]; if (!a.vis) return;
+    const el = ovEl(b.key, `bubble${b.tone ? ' ' + b.tone : ''}`, b.text);
+    place(el, Math.max(64, Math.min(W - 64, a.x)), a.y - 40);
+    el.style.opacity = b.life > 1e8 ? 1 : Math.min(1, (b.life - (S.lt - b.t)) / 300);
+  });
+  S.pops.forEach(p => {
+    const age = S.lt - p.t, el = ovEl(p.key, `pop${p.tone ? ' ' + p.tone : ''}`, `${svgIcon(p.icon || 'cross')}${p.text}`);
+    place(el, 128, 66 - (age / 1800) * 14);
+    el.style.opacity = Math.min(1, (1800 - age) / 300);
+  });
+  const sheet = $('sheet');
+  if (PB.callout && PB.rec) {
+    const t = calloutTarget(S, PB.callout), sz = 44;
+    const sp = ovEl('spot', 'spot', '');
+    sp.style.width = sz * K + 'px'; sp.style.height = sz * K + 'px';
+    place(sp, t.x, t.y, 'translate(-50%, -50%)');
+    const html = calloutHtml(PB.callout);
+    if (useSheet()) {
+      if (sheet._html !== html) { sheet.innerHTML = `<div class="callout">${html}</div>`; sheet._html = html; }
+      sheet.hidden = false;
+    } else {
+      place(ovEl('callout', 'callout', html), 128, 188, 'translate(-50%, -100%)');
+      sheet.hidden = true; sheet._html = '';
+    }
+  } else { sheet.hidden = true; sheet._html = ''; }
+  renderTxSum(S);
+  ovSweep();
+}
+
+/* 자동 멈춤 때 무대 바로 아래에 트랜잭션 띠 요약(라운드 시작 → 지금). 타임라인이 첫 화면 밖이어도 설명과 같이 본다 */
+const TX_WORD = { 'bd-rd': '읽기(자동 커밋)', 'bd-ed': '편집(사람 시간)', 'bd-wt': '행 락 대기', 'bd-ac': '자동 커밋 UPDATE' };
+const TXSUM_H = 58;   // 머리줄 + 2줄(멈춘 사람 + 관련된 사람) — CSS와 같은 고정 높이, 배율 계산에서 미리 비워 둔다
+function renderTxSum(S) {
+  const el = $('txSum');
+  if (!PB.callout || !PB.rec || !S.rd) { if (!el.hidden) { el.hidden = true; el._k = ''; } return; }
+  const rd = S.rd, lt = Math.max(1, S.lt), ce = PB.callout.events[PB.callout.events.length - 1], who = ce.a;
+  const rel = ce.owner ?? ce.by ?? (who === 0 ? 1 : 0);   // 관련된 사람: 행 락·잠금 보유자, 덮어쓴 사람, 아니면 A(또는 B)
+  const pick = [...new Set([who, rel])].sort((p, q) => p - q);
+  const k = `${PB.runNo}|${rd.idx}|${lt}`;
+  if (el._k === k && !el.hidden) return;
+  el._k = k; el.hidden = false;
+  const words = [];
+  const lanes = pick.map(i => {
+    const bs = bandsFor(rd, i).filter(b => (b.mark ? b.t : Math.max(0, b.start)) <= lt);
+    if (i === who) bs.filter(b => !b.mark && b.cls !== 'bd-ls').sort((p, q) => p.start - q.start).forEach(b => {
+      words.push(b.cls.startsWith('bd-tx') ? (/rb/.test(b.cls) ? 'begin…rollback' : b.end > lt ? 'begin…(진행 중)' : 'begin…commit') : TX_WORD[b.cls]);
+    });
+    const pct = x => Math.max(0, Math.min(100, x / lt * 100));
+    const inner = bs.map(b => b.mark
+      ? `<i class="mark ${b.mark}" style="left:${pct(b.t)}%" title="${esc(b.tip)}"></i>`
+      : `<i class="bd ${b.cls}" style="left:${pct(Math.max(0, b.start))}%;width:${Math.max(0.6, pct(Math.min(b.end, lt)) - pct(Math.max(0, b.start)))}%" title="${esc(b.tip)}"></i>`).join('');
+    return `<div class="lane${i === who ? ' is-who' : ''}"><span class="chip a${i}">${L[i]}</span><div class="lane__track">${inner}</div></div>`;
+  }).join('');
+  el.innerHTML = `<div class="txsum__h"><b>트랜잭션 띠</b><span>R${rd.idx + 1} 시작 → +${realMs(lt)}ms</span><span class="txsum__w" title="${esc(words.join(' → '))}">${L[who]}: ${esc(words.join(' → '))}</span></div>${lanes}`;
+}
+
+/* ================================================================
+   6. 재생
+   ================================================================ */
+let last = performance.now();
+function frame(now) {
+  const rdt = Math.min(64, now - last); last = now;
+  if (PB.playing && PB.rec) {
+    let np = advance(PB.P, rdt);
+    if (PB.auto) {
+      const st = PB.rec.stops.find(s => s.at > PB.P && s.at <= np);
+      if (st) { np = st.at; PB.playing = false; PB.callout = st; }
+    }
+    if (np >= PB.rec.total) { np = PB.rec.total; PB.playing = false; }
+    PB.P = np; PB.dirty = true;
+    if (!PB.playing) syncTransport();
+  }
+  if (PB.dirty) { draw(); PB.dirty = false; }
+  requestAnimationFrame(frame);
+}
+function draw() {
+  const S = sceneAt(PB.P);
+  render(S); syncOverlay(S);
+  renderResult(S); updateServerPanel(S); updateLanes(S); updateLog(S); updateClock(S); updateCode(S); syncCta();
+}
+function gapAt(P) {
+  if (!PB.ff || !PB.rec) return null;
+  const g = PB.rec.gaps.find(x => P >= x.a && P < x.b);
+  return g && (g.b - g.a) / PB.speed > FF_MAX_WALL ? g : null;
+}
+function advance(P, wall) {
+  const rec = PB.rec; let p = P, w = wall;
+  for (let guard = 0; w > 1e-4 && p < rec.total && guard < 64; guard++) {
+    const g = gapAt(p);
+    if (g) { const rate = (g.b - g.a) / FF_MAX_WALL, np = Math.min(g.b, p + w * rate); w -= (np - p) / rate; p = np; }
+    else {
+      const nx = PB.ff ? rec.gaps.find(x => x.a > p && (x.b - x.a) / PB.speed > FF_MAX_WALL) : null;
+      const lim = nx ? nx.a : rec.total, np = Math.min(lim, p + w * PB.speed);
+      w -= (np - p) / PB.speed; p = np;
+    }
+  }
+  return p;
+}
+function play() {
+  if (!PB.rec) return;   // 재생 바는 실행하지 않는다(실행 진입점은 하나: 실행하기)
+  if (PB.P >= PB.rec.total) PB.P = 0;
+  PB.callout = null; PB.playing = true; PB.dirty = true; syncTransport();
+}
+function pause() { PB.playing = false; PB.dirty = true; syncTransport(); }
+function togglePlay() { PB.playing ? pause() : play(); }
+function seek(P, callout = null) {
+  if (!PB.rec) return;
+  PB.P = Math.max(0, Math.min(PB.rec.total, P)); PB.playing = false; PB.callout = callout; PB.dirty = true; syncTransport();
+}
+const stopAt = r => r.gEnd;   // 단계 이동도 행의 마지막 이벤트 시각에 선다(자동 멈춤과 같은 규칙)
+function stopFor(row) { return row && PB.rec.stops.find(s => s.events.some(e => row.events.includes(e))) || null; }
+function stepNext() {
+  if (!PB.rec) return;
+  const row = PB.rows.find(r => stopAt(r) > PB.P + 0.5);
+  if (row) seek(stopAt(row), stopFor(row)); else seek(PB.rec.total);
+}
+function stepPrev() {
+  if (!PB.rec) return;
+  const target = PB.P - 2;
+  let row = null; for (const r of PB.rows) { if (stopAt(r) <= target) row = r; else break; }
+  if (row) seek(stopAt(row), stopFor(row)); else seek(0);
+}
+/* 실행 = 기록 만들기. 시안은 라운드마다 잠깐씩 "실행 중"을 보여 주고 기록을 만든다. 실행 중에만 "실행 중단"이 켜진다. */
+function run() {
+  if (PB.running) return;
+  PB.playing = false; PB.callout = null;
+  let step = 0;
+  PB.runMsg = '';
+  PB.running = { step: 0, timer: 0 };
+  const tick = () => {
+    if (!PB.running) return;
+    step++; PB.running.step = step; PB.dirty = true; syncTransport();
+    if (step >= ROUNDS) { PB.running = null; finishRun(); return; }
+    PB.running.timer = setTimeout(tick, 260);
+  };
+  PB.running.timer = setTimeout(tick, 260);
+  PB.dirty = true; syncTransport();
+}
+function abortRun() {
+  if (!PB.running) return;
+  clearTimeout(PB.running.timer); PB.running = null;
+  PB.runMsg = '실행 중단됨 — 기록을 만들지 않았다'; PB.dirty = true; syncTransport();
+}
+function finishRun() {
+  PB.runNo++; PB.rec = buildRecording(); computeStops(); PB.P = 0; PB.callout = null; PB.lastViol = 0;
+  buildRows(); buildScrubTicks(); PB.laneRound = -1; PB.logKey = ''; PB.codeKey = '';
+  PB.playing = true; PB.dirty = true; syncTransport();
+}
+function rebuildIfRecorded() {
+  if (!PB.rec) { PB.dirty = true; return; }
+  PB.runNo++; PB.rec = buildRecording(); computeStops(); PB.P = 0; PB.callout = null; PB.lastViol = 0;
+  buildRows(); buildScrubTicks(); PB.laneRound = -1; PB.logKey = ''; PB.codeKey = '';
+  PB.playing = false; PB.dirty = true; syncTransport();
+}
+
+/* ================================================================
+   7. UI
+   ================================================================ */
+const $ = id => document.getElementById(id);
+$('icoPlay').innerHTML = svgIcon('play'); $('icoStop').innerHTML = svgIcon('stop'); $('icoCta').innerHTML = svgIcon('play');
+$('icoFake').innerHTML = svgIcon('bang');
+const ICON_PREV = svgIcon('play').replace('<svg', '<svg style="transform:scaleX(-1)"');
+$('pbStart').innerHTML = `<span style="display:inline-flex">${svgIcon('stop').replace('<svg', '<svg style="width:3px;margin-right:-1px"')}${ICON_PREV}</span>`;
+$('pbPrev').innerHTML = ICON_PREV;
+$('pbNext').innerHTML = svgIcon('play');
+
+const tagIcon = t => svgIcon(t === 'bad' ? 'cross' : t === 'ok' ? 'check' : 'lock');
+function buildControls() {
+  seg('segStrat', STRATS, v => `<span class="badge t-${v.tone} tag">${tagIcon(v.tone)}${v.tag}</span>${v.name}${v.soon ? ' <span class="soon">준비 중</span>' : ''}`, i => setCfg('strat', i), () => cfg.strat, v => v.soon);
+  seg('segPeople', PEOPLE, v => `${v}명`, i => setCfg('people', i), () => cfg.people);
+  seg('segShape', SHAPES, v => `<span class="shape" aria-hidden="true">${v.bars.map(h => `<i style="height:${h + 1}px"></i>`).join('')}</span>${v.name}`, i => setCfg('shape', i), () => cfg.shape);
+  seg('segSpeed', SPEEDS, v => v.name, i => setSpeed(SPEEDS[i].v), () => SPEEDS.findIndex(x => x.v === PB.speed), null, v => `실제의 1/${Math.round(SLOW / v.v)} 속도`);
+  seg('segView', ['key', 'all'], v => v === 'key' ? '핵심만' : '전체', i => setView(i ? 'all' : 'key'), () => PB.view === 'key' ? 0 : 1);
+  $('filters').innerHTML = GROUPS.map(g => `<button type="button" class="fchip t-${g.tone}" data-g="${g.id}" aria-pressed="true">${svgIcon(g.icon)}${g.label}</button>`).join('');
+  $('filters').addEventListener('click', e => {
+    const b = e.target.closest('.fchip'); if (!b || b.disabled) return;
+    const g = b.dataset.g; PB.off.has(g) ? PB.off.delete(g) : PB.off.add(g);
+    refreshRows();
+  });
+  $('editRange').addEventListener('input', e => setCfg('edit', +e.target.value));
+  $('pred').addEventListener('input', e => { const v = e.target.value.trim(); PB.pred = v === '' ? null : Math.max(0, Math.min(99, Math.round(+v))); PB.dirty = true; });
+  $('ctlSum').addEventListener('click', () => { const b = $('ctlSum'); b.setAttribute('aria-expanded', b.getAttribute('aria-expanded') !== 'true'); });
+  syncControls();
+}
+const segs = [];
+function seg(id, list, label, onPick, cur, isOff = null, tip = null) {
+  const el = $(id);
+  el.innerHTML = list.map((v, i) => {
+    const off = isOff && isOff(v);
+    return `<button type="button" role="radio" data-i="${i}"${off ? ' aria-disabled="true" title="시안에서는 준비 중 — 바뀐 필드만 조건부 UPDATE, 같은 필드 충돌만 409"' : tip ? ` title="${tip(v)}"` : ''}>${label(v)}</button>`;
+  }).join('');
+  const ok = i => !(isOff && isOff(list[i]));
+  el.addEventListener('click', e => { const b = e.target.closest('button'); if (b && ok(+b.dataset.i)) onPick(+b.dataset.i); });
+  el.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault(); e.stopPropagation();
+    const n = list.length, d = e.key === 'ArrowRight' ? 1 : -1;
+    let i = cur(); do { i = (i + d + n) % n; } while (!ok(i));
+    onPick(i); el.querySelector(`[data-i="${i}"]`).focus();
+  });
+  segs.push({ el, cur });
+}
+function syncControls() {
+  segs.forEach(({ el, cur }) => el.querySelectorAll('button').forEach(b => {
+    const on = +b.dataset.i === cur(); b.setAttribute('aria-checked', on); b.tabIndex = on ? 0 : -1;
+  }));
+  document.querySelectorAll('.fchip').forEach(b => {
+    const g = b.dataset.g, dis = PB.view === 'key' && !KEY_GROUPS.has(g);
+    b.disabled = dis; b.setAttribute('aria-pressed', !PB.off.has(g) && !dis);
+    b.title = dis ? '"전체"에서만 보이는 종류' : '';
+  });
+  $('pbAuto').setAttribute('aria-pressed', PB.auto);
+  $('pbCause').checked = PB.autoCause; $('pbCause').disabled = !PB.auto;
+  const lease = sid() === 'lease';
+  $('editRange').value = cfg.edit; $('editOut').textContent = EDITS[cfg.edit].name;
+  $('fEdit').classList.toggle('is-off', !lease);
+  $('editHint').textContent = lease
+    ? (cfg.edit ? `잠금을 ${EDITS[cfg.edit].name} 쥔다 · TTL 30s보다 길면 클라이언트가 연장한다고 가정` : '실험실 think time(압축). 오른쪽으로 갈수록 실제 사람 시간')
+    : '편집 잠금에서만 대가가 달라진다 — 다른 방식은 편집 중 아무것도 잡지 않는다';
+  $('editHint').title = $('editHint').textContent; $('fEdit').title = $('editHint').textContent;
+  const st = STRATS[cfg.strat];
+  $('ctlSumTxt').innerHTML = `<b>설정</b> · ${st.name} · ${PEOPLE[cfg.people]}명 · ${SHAPES[cfg.shape].name}${lease ? ` · 편집 ${EDITS[cfg.edit].name}` : ''}`;
+}
+function setCfg(key, v) {
+  if (cfg[key] === v) return;
+  cfg[key] = v; syncControls(); updateHeader(); renderLegend(); renderCode(); rebuildIfRecorded(); 
+}
+function setSpeed(s) { PB.speed = s; syncControls(); if (PB.rec) buildScrubTicks(); PB.dirty = true; }
+function toggleFF() { PB.ff = !PB.ff; $('pbFF').setAttribute('aria-pressed', PB.ff); if (PB.rec) buildScrubTicks(); PB.dirty = true; }
+function setView(v) { PB.view = v; refreshRows(); }
+function refreshRows() { syncControls(); buildRows(); PB.logKey = ''; PB.dirty = true; }
+function toggleAuto() { PB.auto = !PB.auto; if (!PB.auto) PB.callout = null; syncControls(); PB.dirty = true; }
+function toggleCause() { PB.autoCause = $('pbCause').checked; computeStops(); if (PB.callout && PB.callout.phase === 'db_read' && !PB.autoCause) PB.callout = null; PB.dirty = true; }
+
+function updateHeader() {
+  const st = STRATS[cfg.strat], n = PEOPLE[cfg.people];
+  $('hudStrat').textContent = `${st.name} (${st.code}) · ${n}명`;
+  $('fsSample').textContent = `대표 ${n}명 표시 / 전체 ${n * 10}명 · 문서 10개`;
+  $('sampleMeta').textContent = `샘플: 대표 ${n}명분`;
+  $('lockMode').textContent = SCN.ent;
+  $('isoTxt').innerHTML = `<span class="badge t-neutral">${T('rc', 'READ COMMITTED')}</span> PostgreSQL 기본값 · 처리 방식이 바꾸지 않음`;
+  cv.setAttribute('aria-label', `무대: ${SCN.doc} 하나를 ${n}명이 동시에 수정 · 처리 방식 ${st.name}`);
+}
+function syncTransport() {
+  const has = !!PB.rec, running = !!PB.running;
+  ['pbStart', 'pbPrev', 'pbNext'].forEach(id => $(id).disabled = !has || running);
+  const atEnd = has && PB.P >= PB.rec.total;
+  let label;
+  if (running) label = `${svgIcon('wait')}실행 중`;
+  else if (!has) label = `${svgIcon('play')}재생`;   // 기록이 없으면 비활성 — 실행 진입점은 설정의 실행하기(Enter)·무대 CTA
+  else if (PB.playing) label = `${svgIcon('stop')}일시정지`;
+  else if (PB.callout) label = `${svgIcon('play')}계속`;
+  else if (atEnd) label = `${svgIcon('retry')}다시 보기`;
+  else label = `${svgIcon('play')}재생`;
+  $('pbPlay').innerHTML = label; $('pbPlay').disabled = running || !has;
+  $('pbPlay').setAttribute('aria-label', (PB.playing ? '일시정지' : PB.callout ? '계속' : atEnd ? '다시 보기' : '재생') + ' (Space)');
+  $('pbPlay').title = has ? '' : '재생할 기록이 없다 — 먼저 실행하기(Enter)';
+  $('btnRun').disabled = running;
+  $('btnStop').disabled = !running;
+  const sc = $('scrub'); sc.disabled = !has || running;
+  if (has) sc.max = Math.round(PB.rec.total);
+}
+function syncCta() {
+  const show = !PB.rec || !!PB.running;
+  $('cta').hidden = !show;
+  if (!show) return;
+  $('ctaBtn').hidden = !!PB.running;
+  $('ctaTxt').textContent = PB.running ? `실행 중 · 기록 만드는 중 R${PB.running.step}/${ROUNDS} (Esc 실행 중단)` : (PB.runMsg || '두 사람이 같은 문서를 동시에 고치면?');
+}
+function buildScrubTicks() {
+  const rec = PB.rec, tot = rec.total;
+  let h = '';
+  rec.rounds.forEach(r => { if (r.idx) h += `<i class="rd" style="left:${r.start / tot * 100}%"></i>`; h += `<span class="rl" style="left:${r.start / tot * 100}%">R${r.idx + 1}</span>`; });
+  rec.all.forEach(e => {
+    const c = e.phase === 'lost' || e.phase === 'conflict' || e.phase === 'holder_left' || e.phase === 'holder_paused' ? 'bad' : e.phase === 'lock_wait' || e.phase === 'lease_rejected' && e.first || e.phase === 'lease_expired' ? 'wait' : e.phase === 'retry' && !e.knock ? 'retry' : e.dupFirst ? 'read' : null;
+    if (c) h += `<i class="tk ${c}" style="left:${e.g / tot * 100}%"></i>`;
+  });
+  if (PB.ff) rec.gaps.forEach(g => { if ((g.b - g.a) / PB.speed > FF_MAX_WALL) h = `<i class="gz" style="left:${g.a / tot * 100}%;width:${(g.b - g.a) / tot * 100}%"></i>` + h; });
+  $('scrubTicks').innerHTML = h;
+}
+function realMs(stageMs) { return (stageMs / SLOW).toFixed(1); }
+function updateClock(S) {
+  const slow = Math.round(SLOW / PB.speed);
+  const base = `실제의 1/${slow} 속도로 재생${PB.ff ? ' · 빈 구간 접음' : ' · 실제 시간 비율 그대로'}`;
+  if (!PB.rec) {
+    $('clockPos').textContent = PB.running ? `실행 중 R${PB.running.step}/${ROUNDS}` : '기록 없음'; $('clockPos').title = '';
+    $('clockNote').textContent = base;
+    $('fsReal').textContent = PB.running ? '실행 중 · 기록 만드는 중' : '실행 전'; $('scrubFill').style.width = '0'; return;
+  }
+  const rd = S.rd, rec = PB.rec;
+  $('clockPos').textContent = `R${rd.idx + 1}/${ROUNDS} · +${realMs(S.lt)}ms / ${realMs(rd.span)}ms`;
+  $('clockPos').title = `라운드 시작부터 실제 경과 · 기록 전체 ${realMs(PB.P)} / ${realMs(rec.total)}ms · 실제의 1/${slow} 속도로 재생 · 편집 구간은 사람 시간을 압축한 것`;
+  if (PB.P >= rec.total) {
+    const s = rec.sum;
+    $('clockNote').innerHTML = `<span class="end">${ROUNDS}라운드 중 위반 ${s.viol}건 · 409 ${s.conf} · 423 ${s.r423}</span>`;
+  } else $('clockNote').textContent = base;
+  const gz = PB.playing ? gapAt(PB.P) : null;
+  $('fsReal').innerHTML = gz
+    ? `<span class="real ff-on">${svgIcon('play')}${svgIcon('play')} 빈 구간 빨리 감기 · 실제 ${realMs(gz.b - gz.a)}ms를 0.3초로</span>`
+    : `<span class="real">${svgIcon(PB.playing ? 'play' : 'stop')}실제 ${realMs(rd.span)}ms 라운드를 1/${slow} 속도로 ${PB.playing ? '재생 중' : '멈춤'}</span>`;
+  const sc = $('scrub'); if (document.activeElement !== sc || !sc._drag) sc.value = Math.round(PB.P);
+  $('scrubFill').style.width = `${PB.P / rec.total * 100}%`;
+  $('roundTxt').textContent = `라운드 ${rd.idx + 1}/${ROUNDS}`;
+  $('roundBar').style.width = `${(rd.idx + Math.min(1, S.lt / rd.span)) / ROUNDS * 100}%`;
+}
+
+function renderResult(S) {
+  const s = sid(), prim = $('resPrimary');
+  const idx = PB.rec ? upper(PB.rec.all, PB.P) - 1 : -1;
+  const pred = PB.pred;
+  if (!PB.rec || idx < 0) {
+    $('mViol').textContent = '—'; prim.className = 'res__primary';
+    $('mVerdict').innerHTML = `<span class="badge t-neutral">${PB.rec ? '재생 전' : PB.running ? '실행 중' : '실행 전'}</span>${pred !== null ? `<span class="badge t-neutral">예측 ${pred}건</span>` : ''}`;
+    $('mInvSub').textContent = '불변식: 원장의 성공 수정 토큰이 모두 최종 이력에 있다';
+    $('icoInv').innerHTML = '';
+    $('hudInv').className = 'badge t-neutral'; $('hudInv').textContent = '정합성 —';
+    if (!PB.rec) ['mTput', 'mP95', 'mFail'].forEach((id, i) => $(id).innerHTML = `—<small>${['req/s', 'ms', '%'][i]}</small>`);
+    else fillSummary();
+    $('mState').textContent = PB.running ? '실행 중' : PB.rec ? '처음 위치' : '대기 중';
+    PB.lastViol = 0;
+    return;
+  }
+  const c = PB.rec.all[idx].cum, bad = c.viol > 0;
+  if (c.viol > PB.lastViol) {
+    prim.classList.remove('is-flash'); void prim.offsetWidth; prim.classList.add('is-flash');
+    const hb = $('hudInv'); hb.classList.remove('pulse'); void hb.offsetWidth; hb.classList.add('pulse');
+  }
+  PB.lastViol = c.viol;
+  $('mViol').textContent = c.viol;
+  prim.className = `res__primary ${bad ? 'is-bad' : 'is-ok'}${prim.classList.contains('is-flash') ? ' is-flash' : ''}`;
+  $('icoInv').innerHTML = svgIcon(bad ? 'cross' : 'check');
+  const end = PB.P >= PB.rec.total;
+  const predB = pred === null ? '' : `<span class="badge t-neutral">예측 ${pred} · ${end ? '실제' : '지금'} ${c.viol}${end ? (pred === c.viol ? ' ✓ 적중' : ' ✕ 빗나감') : ''}</span>`;
+  $('mVerdict').innerHTML = (bad ? `<span class="badge t-bad">${svgIcon('cross')}빠르지만 틀림 · 순위 제외</span>` : `<span class="badge t-ok">${svgIcon('check')}정합성 통과</span>`) + predB;
+  $('mInvSub').textContent = s === 'naive' ? '원장엔 커밋된 토큰이 최종 이력엔 없음 · 응답은 전부 200' : s === 'blind' ? '409 뒤 맹목 재시도가 앞사람 토큰을 이력에서 지움' : '원장의 성공 수정 토큰 = 최종 이력 (일치)';
+  $('hudInv').className = `badge ${bad ? 't-bad' : 't-ok'}${$('hudInv').classList.contains('pulse') ? ' pulse' : ''}`;
+  $('hudInv').innerHTML = `${svgIcon(bad ? 'cross' : 'check')}${bad ? `위반 ${c.viol}` : '정합성 OK'}`;
+  fillSummary();
+  $('mState').textContent = PB.playing ? `재생 중 · ${STRATS[cfg.strat].code}` : end ? `기록 끝 · ${ROUNDS}라운드` : PB.callout ? '자동 멈춤' : '일시정지';
+}
+function fillSummary() {
+  const m = PB.rec.sum, bad = m.viol > 0;
+  const tp = m.tput >= 10 ? Math.round(m.tput) : m.tput >= 1 ? m.tput.toFixed(1) : m.tput.toFixed(2);
+  $('mTput').innerHTML = `${tp}<small>req/s</small>`;
+  $('mTputSub').textContent = bad ? '빠름 — 하지만 틀림' : sid() === 'lease' && cfg.edit ? `문서 하나에 ${EDITS[cfg.edit].name}마다 1건` : '성공 기준';
+  const p = fmtMs(m.p95);
+  $('mP95Lbl').textContent = m.p95Label + ' · 전체'; $('mP95Lbl').title = '기록 전체 요약 · 재생 위치와 무관';
+  $('mP95').innerHTML = `${p.n}<small>${p.u}</small>`;
+  $('mP95Sub').textContent = m.p95Sub;
+  $('mFail').innerHTML = `${m.fail.toFixed(1)}<small>%</small>`;
+  $('mFailSub').textContent = `409 ${m.conf} · 423 ${m.r423} · 재시도 ${m.retr}`; $('mFailSub').title = `409 ${m.conf}회 · 423 ${m.r423}회 · 재시도 ${m.retr}회 (기록 전체)`;
+}
+
+/* ---------- 서버 속 ---------- */
+function updateServerPanel(S) {
+  const s = sid(), on = !!PB.rec && S.rd;
+  let h = '';
+  const chip = i => `<span class="chip a${i}">${L[i]}</span>`;
+  if (s === 'lease') {
+    $('lockTitle').innerHTML = `편집 잠금 (${T('lease', 'lease')} · DB 칼럼) → 문 밖 재시도 → DB 행 락`;
+    h += `<div class="row h">편집 잠금 · locked_by / lease_until</div>`;
+    if (on && S.doc.lock !== null) {
+      const own = S.doc.lock;
+      h += `<div class="row">${chip(own)}${S.doc.expired ? `<span class="badge t-wait">${svgIcon('wait')}만료</span><span>칼럼엔 ${L[own]}가 남았지만 다음 acquire가 가져감</span>` : `<span class="badge t-info">${svgIcon('lock')}보유</span><span>lease_until = DB clock_timestamp() + 30s</span>`}</div>`;
+      const gone = S.actors[own];
+      if (gone.paused) h += `<div class="row child">${chip(own)}<span class="badge t-bad">${svgIcon('stop')}멈춤</span><span class="mute">GC·네트워크 단절 · 서버는 살아 있는지 모름 → TTL까지 잠금 유지</span></div>`;
+      else if (!gone.vis && gone.last && gone.last.phase === 'holder_left') h += `<div class="row child">${chip(own)}<span class="badge t-bad">${svgIcon('out')}이탈</span><span class="mute">release 없음 → TTL 만료로만 회수</span></div>`;
+    } else h += `<div class="row mute">${on ? '보유자 없음' : '실행 전'}</div>`;
+    const ws = on ? S.actors.filter(a => a.vis && a.emote === 'wait') : [];
+    h += `<div class="row h">문 밖 · 클라이언트 쪽 재시도 (서버 큐 아님 · 순서 보장 없음)</div>`;
+    h += ws.length ? ws.map(a => `<div class="row">${chip(a.i)}<span class="badge t-wait">${svgIcon('lock')}423</span><span class="mute">${T('retryafter', 'Retry-After')} 뒤 다시 노크 · 커넥션 없음</span></div>`).join('') : `<div class="row mute">없음</div>`;
+    const pz = on ? S.actors.find(a => a.paused && a.i !== S.doc.lock) : null;
+    if (pz) h += `<div class="row">${chip(pz.i)}<span class="badge t-bad">${svgIcon('stop')}멈춤</span><span class="mute">잠금을 잃은 줄 모름 · 옛 fence를 든 채</span></div>`;
+    h += `<div class="row h">DB 행 락</div><div class="row mute">acquire·release는 한 문장(자동 커밋), save는 원장·이력 INSERT 뒤 commit까지 — 모두 ms 단위</div>`;
+  } else {
+    $('lockTitle').innerHTML = `DB ${T('rowlock', '행 락')}`;
+    const hold = on ? S.rowLock : null;
+    const waiter = on ? S.actors.find(a => a.waitRow) : null;
+    if (hold !== null && hold !== undefined) {
+      h += `<div class="row">${chip(hold)}<span class="badge t-info">${svgIcon('lock')}보유</span><span>UPDATE 실행됨 · 원장·이력 INSERT 뒤 commit 전</span></div>`;
+      if (waiter) h += `<div class="row child">${chip(waiter.i)}<span class="badge t-wait">${svgIcon('wait')}대기</span><span class="mute">${L[hold]} 커밋 → ${T('epq', 'WHERE 재평가')} → 0행</span></div>`;
+    } else h += `<div class="row mute">${on ? '보유 중인 행 락 없음' : '실행 전'}</div>`;
+    h += `<div class="row mute">${s === 'naive' ? '편집 중엔 아무 락도 없고, 저장 트랜잭션도 버전을 확인하지 않는다' : '편집 중엔 락이 없다 — 저장 트랜잭션의 version 비교가 늦은 쪽을 거절'}</div>`;
+  }
+  $('tree').innerHTML = h;
+  const sess = on ? S.actors.filter(a => a.db) : [];
+  const crowd = on ? 1 + (S.rd.idx % 2) : 0;
+  const act = Math.min(10, sess.length + crowd);
+  $('pool').innerHTML = Array.from({ length: 10 }, (_, i) => `<i class="${i < sess.filter(a => a.waitRow).length ? 'lk' : i < act ? 'on' : ''}"></i>`).join('');
+  $('poolTxt').textContent = `${act}/10`;
+  $('poolWait').textContent = on ? `대표 ${sess.length} + 다른 문서 ${crowd} · 풀 대기 0` : '대기 0';
+  const sql = $('sql'), se = on ? S.lastSqlEv : null;
+  if (se) { const q = stmtOf(se); sql.title = q; sql.innerHTML = highlightSql(q); $('sqlWho').innerHTML = chip(se.a); }
+  else { sql.textContent = '—'; sql.title = ''; $('sqlWho').innerHTML = ''; }
+  $('txCount').textContent = on ? `active ${sess.length} · idle ${10 - act}` : '';
+  $('tx').innerHTML = sess.length ? sess.map(a => {
+    const q = stmtOf(a.db.ev) || '';
+    const st = a.waitRow ? `<span class="badge t-wait">${svgIcon('wait')}active · Lock</span>` : `<span class="badge t-info">active</span>`;
+    return `<li><span class="pid">${chip(a.i)}${4100 + a.i}</span>${st}<span class="st" title="${esc(q)}">${esc(q)}</span></li>`;
+  }).join('') : `<li><span class="empty">${on ? '대표 세션 없음 — 지금은 아무도 DB에 있지 않다 (편집·대기는 DB 밖)' : '실행 전'}</span></li>`;
+  const eld = on ? PB.rec.eld.filter(x => x.g <= PB.P).slice(-24) : [];
+  const mx = Math.max(20, ...eld.map(x => x.v));
+  $('spark').innerHTML = eld.map(x => `<i class="${x.v > 12 ? 'hot' : ''}" style="height:${Math.round(x.v / mx * 100)}%"></i>`).join('');
+  $('eldTxt').textContent = eld.length ? `${eld[eld.length - 1].v}ms` : '—';
+}
+function highlightSql(s) {
+  const re = /("version" = \$\d+|"locked_by" = \$\d+|"fence" = \$\d+|"lease_until" &gt; clock_timestamp\(\)|"lease_until" &lt;= clock_timestamp\(\))|\b(select|update|set|from|where|and|or|is|null|as|limit|returning|begin|commit|rollback|interval|insert|into|values)\b/g;
+  const e = String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return e.replace(re, (m, hl) => hl ? `<span class="hl">${m}</span>` : `<span class="kw">${m}</span>`);
+}
+
+/* ---------- 레인: 요청별 트랜잭션 경계 띠 ---------- */
+function bandsFor(rd, i) {
+  const mine = rd.ev.filter(e => e.a === i), out = [];
+  let tx = null, ed = null, wt = null, ls = null;
+  const close = (b, t, extra = '') => { if (b) out.push({ ...b, end: t, cls: b.cls + extra }); };
+  mine.forEach(e => {
+    if (ed && e.phase !== 'editing') { close(ed, e.t); ed = null; }
+    switch (e.phase) {
+      case 'db_read': out.push({ cls: 'bd-rd', start: e.t - 50, end: e.t + 70, tip: `읽기 · 자동 커밋 SELECT (v${e.v})` }); break;
+      case 'editing': ed = { cls: 'bd-ed', start: e.t, tip: e.merge ? '최신본에 다시 적용 · 사람 시간(압축)' : '편집 · 사람 시간(압축) · DB 세션 없음' }; break;
+      case 'db_write':   // 모든 저장 경로는 em.transactional: begin → UPDATE → 원장·이력 INSERT → commit
+        tx = { cls: 'bd-tx', start: e.t, tip: e.w === 'opt' ? 'begin … SELECT · UPDATE(WHERE version) · 원장·이력 INSERT … commit' : e.w === 'naive' ? 'begin … UPDATE(WHERE id만) · 원장·이력 INSERT … commit' : 'begin … 조건부 UPDATE(locked_by·fence·lease) · 원장·이력 INSERT … commit' };
+        break;
+      case 'lock_wait': wt = { cls: 'bd-wt', start: e.t, tip: '행 락 대기 (트랜잭션 안)' }; break;
+      case 'committed': close(tx, e.t); tx = null; out.push({ mark: 'ok', t: e.t, tip: `commit v${e.v} (원장·이력 포함)` }); break;
+      case 'conflict':
+        close(wt, e.t); wt = null;
+        if (tx) { close(tx, e.t, ' rb'); tx = null; }
+        else out.push({ cls: 'bd-tx rb', start: e.t - 120, end: e.t, tip: 'begin … SELECT · lockVersion 메모리 비교 실패 … rollback (UPDATE 없음)' });
+        out.push({ mark: 'bad', t: e.t, tip: `409 ${e.reason}` }); break;
+      case 'lost': out.push({ mark: 'bad', t: e.t, tip: '잃어버린 수정' }); break;
+      case 'lock_acquired': ls = { cls: 'bd-ls', start: e.t, tip: '편집 잠금 보유' }; out.push({ cls: 'bd-ac', start: e.t - 40, end: e.t + 60, tip: 'acquire 조건부 UPDATE (자동 커밋 한 문장)' }); break;
+      case 'lock_released': out.push({ cls: 'bd-ac', start: e.t - 40, end: e.t + 60, tip: 'release 조건부 UPDATE (자동 커밋 한 문장)' }); close(ls, e.t); ls = null; break;
+      case 'lease_expired': close(ls, e.t); ls = null; break;
+      case 'holder_left': close(ed, e.t); ed = null; out.push({ mark: 'bad', t: e.t, tip: '보유자 이탈 · release 없음' }); break;
+      case 'holder_paused': close(ed, e.t); ed = null; out.push({ mark: 'bad', t: e.t, tip: '보유자 멈춤 (GC·네트워크 단절)' }); break;
+      case 'lease_rejected': out.push({ mark: 'wait', t: e.t, tip: '423 거절' }); break;
+    }
+  });
+  [ed, tx, wt, ls].forEach(b => b && out.push({ ...b, end: rd.span }));
+  return out;
+}
+function updateLanes(S) {
+  const n = PEOPLE[cfg.people];
+  if (!PB.rec) {
+    if (PB.laneRound !== 'none') { $('lanes').innerHTML = Array.from({ length: n }, (_, i) => `<div class="lane"><span class="chip a${i}">${L[i]}</span><div class="lane__track"></div></div>`).join(''); PB.laneRound = 'none'; }
+    return;
+  }
+  const rd = S.rd;
+  if (PB.laneRound !== rd.idx) {
+    PB.laneRound = rd.idx; PB.segs = [];
+    $('lanes').innerHTML = Array.from({ length: n }, (_, i) => `<div class="lane"><span class="chip a${i}">${L[i]}</span><div class="lane__track" id="lane${i}"><i class="ph"></i></div></div>`).join('');
+    for (let i = 0; i < n; i++) {
+      const tr = $('lane' + i);
+      bandsFor(rd, i).forEach(b => {
+        const el = document.createElement('i');
+        if (b.mark) { el.className = `mark ${b.mark}`; el.style.left = b.t / rd.span * 100 + '%'; PB.segs.push({ el, start: b.t, mark: true }); }
+        else { el.className = `bd ${b.cls}`; el.style.left = Math.max(0, b.start) / rd.span * 100 + '%'; PB.segs.push({ el, start: Math.max(0, b.start), end: b.end }); }
+        el.title = b.tip; tr.appendChild(el);
+      });
+    }
+  }
+  const lt = S.lt, span = rd.span;
+  PB.segs.forEach(s => {
+    if (s.start > lt) { s.el.style.display = 'none'; return; }
+    s.el.style.display = '';
+    if (!s.mark) s.el.style.width = Math.max(0.4, (Math.min(s.end, lt) - s.start) / span * 100) + '%';
+  });
+  document.querySelectorAll('.lane__track .ph').forEach(p => p.style.left = Math.min(99.5, lt / span * 100) + '%');
+}
+function renderLegend() {
+  const lease = sid() === 'lease';
+  const items = [
+    ['bd-rd', '읽기 = 자동 커밋 SELECT'], ['bd-ed', '편집 = 사람 시간(압축)'],
+    ['bd-tx', '저장 = begin…commit (원장·이력 포함, 빨강 = rollback)'],
+  ].concat(lease ? [['bd-ac', 'acquire·release = 자동 커밋 UPDATE'], ['bd-ls', '편집 잠금 보유']] : [['bd-wt', '행 락 대기']]);
+  $('legend').innerHTML = items.map(([c, t]) => `<span><i class="bd ${c}"></i>${t}</span>`).join('') +
+    `<span><i class="mark ok" style="position:relative;display:inline-block;height:10px"></i>커밋</span><span><i class="mark bad" style="position:relative;display:inline-block;height:10px"></i>409·위반</span>${lease ? '<span><i class="mark wait" style="position:relative;display:inline-block;height:10px;top:0"></i>423</span>' : ''}`;
+}
+
+/* ---------- 로그(라운드 단위 · 묶음 · 현재 위치) ---------- */
+function updateLog(S) {
+  const logEl = $('log');
+  if (!PB.rec) { if (PB.logKey !== 'none') { logEl.innerHTML = '<li class="is-future"><span class="ts">—</span><span></span><span></span><span class="d">실행하면 기록이 여기에 쌓입니다</span></li>'; PB.logKey = 'none'; } return; }
+  const r = S.rd.idx, key = `${PB.runNo}|${r}|${PB.view}|${[...PB.off].join()}`;
+  if (PB.logKey !== key) {
+    PB.logKey = key; PB.curRow = -2; PB.causeKey = '';
+    PB.vrows = PB.rows.filter(x => x.r === r);
+    logEl.innerHTML = PB.vrows.length ? PB.vrows.map((row, k) => {
+      const ph = PH[row.phase], e0 = row.events[0], N = row.events.length;
+      const t0 = realMs(row.g - S.rd.start), t1 = realMs(row.gEnd - S.rd.start);
+      const who = [...new Set(row.events.map(e => e.a))].map(a => `<span class="chip a${a}">${L[a]}</span>`).join('');
+      const d = N > 1 ? `${e0.d || ''} 외 ${N - 1}건` : (e0.d || '');
+      return `<li data-k="${k}" class="${ph.key ? 'is-key' : ''}" title="${esc(d)} — 누르면 이 시점으로 이동"><span class="ts">+${t0}${N > 1 ? `–${t1}` : ''}ms</span><span class="who">${who}</span><span class="badge t-${ph.tone}">${svgIcon(ph.icon)}${ph.label}${N > 1 ? ` ×${N}` : ''}</span><span class="d">${esc(d)}</span></li>`;
+    }).join('') : '<li class="is-future"><span class="ts">—</span><span></span><span></span><span class="d">필터에 맞는 이벤트 없음</span></li>';
+  }
+  let cur = -1;
+  PB.vrows.forEach((row, k) => { if (row.g <= PB.P) cur = k; });
+  // 잃어버린 수정 설명 중이면 덮어쓴 사람의 "읽기" 행도 강조(원인)
+  let cause = -1;
+  const c = PB.callout;
+  if (c && c.phase === 'lost' && !c.events[0].blind) {
+    const by = c.events[0].by;
+    cause = PB.vrows.findIndex(row => row.events.some(e => e.phase === 'db_read' && e.a === by && e.open));
+  } else if (c && c.phase === 'db_read') cause = PB.vrows.findIndex(row => row.events.some(e => e.phase === 'db_read' && e.a === 0 && e.open));
+  const ck = `${cur}|${cause}`;
+  if (ck !== PB.causeKey) {
+    PB.causeKey = ck; PB.curRow = cur;
+    logEl.querySelectorAll('li[data-k]').forEach(li => {
+      const k = +li.dataset.k;
+      li.classList.toggle('is-now', k === cur); li.classList.toggle('is-future', k > cur && k !== cause);
+      li.classList.toggle('is-cause', k === cause);
+      li.setAttribute('aria-current', k === cur ? 'step' : 'false');
+    });
+    const now = logEl.querySelector('.is-now');
+    if (now) {
+      const top = now.offsetTop - logEl.offsetTop, h = logEl.clientHeight;
+      if (top < logEl.scrollTop || top + now.offsetHeight > logEl.scrollTop + h) logEl.scrollTop = top - h / 3;
+    }
+  }
+}
+$('log').addEventListener('click', e => {
+  const li = e.target.closest('li[data-k]'); if (!li) return;
+  const row = PB.vrows[+li.dataset.k];
+  seek(stopAt(row), stopFor(row));
+});
+
+/* ================================================================
+   7-1. 코드 패널 — 처리 방식별 서버 코드(+ k6 클라이언트)와 이벤트 → 코드 줄 매핑
+        서버 코드는 @mikro-orm/core·postgresql·decorators 7.1.4 + @nestjs/common 11.1.27 +
+        TypeScript 5.9.3 strict로 tsc --noEmit 통과 확인(2026-10-07). 클라이언트 줄은 k6 의사 코드.
+        줄 끝의 ⟦tag⟧는 화면에 나오지 않고, 이벤트가 가리킬 줄 표시로만 쓴다.
+   ================================================================ */
+const ENTITY_SRC = `import { ArrayType, BigIntType } from '@mikro-orm/core';
+import { Entity, PrimaryKey, Property } from '@mikro-orm/decorators/legacy';
+
+// 5개 처리 방식이 함께 쓰는 문서 엔티티 하나 (같은 테이블에 클래스 여러 개 금지 — checkDuplicateTableNames)
+@Entity({ tableName: 'document' })
+export class Document {
+  @PrimaryKey() id!: number;
+  @Property({ type: 'text' }) body!: string;
+  @Property({ type: ArrayType }) tokens!: string[]; // 이 본문에 반영된 수정 토큰 — 클라이언트가 본문과 함께 고쳐 보낸다
+  @Property({ default: 0 }) editCount!: number; // 불변식: edit_count = 원장 성공 행 수
+  @Property({ version: true }) version!: number; // flush가 WHERE version = ? 를 붙인다
+  @Property({ type: 'string', nullable: true }) lockedBy?: string | null; // edit-lease 전용
+  @Property({ type: 'datetime', nullable: true }) leaseUntil?: Date | null; // edit-lease 전용
+  @Property({ type: new BigIntType('number'), default: 0 }) fence!: number; // edit-lease 전용 · acquire마다 +1
+}
+
+// 원장: 서버가 성공 처리한 수정마다 한 행 — 저장과 같은 트랜잭션에 쓴다
+@Entity({ tableName: 'edit_ledger' })
+export class EditLedger {
+  @PrimaryKey() id!: number;
+  @Property() documentId!: number;
+  @Property() requestId!: string;
+  @Property() editToken!: string;
+  @Property({ type: new BigIntType('string') }) txid!: string;
+}
+
+// 문서 이력(append-only): 저장된 본문의 수정 토큰 목록. lost update = 원장엔 있는데 최종 이력에 없는 토큰
+@Entity({ tableName: 'document_revision' })
+export class DocumentRevision {
+  @PrimaryKey() id!: number;
+  @Property() documentId!: number;
+  @Property({ type: ArrayType }) tokens!: string[];
+}
+// 7.1.4 소스 확인: 버전 칼럼이 있으면 MikroORM의 모든 UPDATE(nativeUpdate 포함)에 "version" = "version" + 1이 붙는다.
+// 즉 nativeUpdate는 버전 조건 없이 쓰는 경로다 — 버전 칼럼은 올라가지만 아무도 비교하지 않는다.
+
+// ── dto.ts ──
+export interface EditMeta { requestId: string; editToken: string; tokens: string[]; }
+export interface UpdateDocumentDto extends EditMeta { body: string; version: number; }
+export interface LeaseSaveDto extends EditMeta { body: string; fence: number; }
+
+// ── record-edit.ts · 모든 저장 경로가 같은 트랜잭션 안에서 부른다 ──
+import { EntityManager, raw } from '@mikro-orm/postgresql';
+import { DocumentRevision, EditLedger } from './document.entity';
+import { EditMeta } from './dto';
+
+// 원장(요청 ID·수정 토큰·txid) + 이력 INSERT. em은 em.transactional 콜백의 em — 롤백되면 함께 사라진다
+export async function recordEdit(em: EntityManager, documentId: number, m: EditMeta) {
+  await em.insert(EditLedger, { documentId, requestId: m.requestId, editToken: m.editToken, txid: raw('txid_current()') });
+  await em.insert(DocumentRevision, { documentId, tokens: m.tokens });
+}`;
+
+const OPT_SERVER = `import { ConflictException, Injectable } from '@nestjs/common';
+import { EntityManager, LockMode, OptimisticLockError } from '@mikro-orm/postgresql';
+import { Document } from '../document.entity';
+import { UpdateDocumentDto } from '../dto';
+import { recordEdit } from '../record-edit';
+
+@Injectable()
+export class OptimisticVersionStrategy {
+  constructor(private readonly em: EntityManager) {}
+
+  async open(id: number) {⟦open⟧
+    const doc = await this.em.fork().findOneOrFail(Document, id); // 자동 커밋 SELECT⟦read⟧
+    return { body: doc.body, tokens: doc.tokens, version: doc.version }; // 화면이 v를 받아 간다 (요청 본문 version으로 돌려준다)⟦openret⟧
+  }
+
+  // dto.version은 컨트롤러가 검증한다: 없으면 428, number가 아니면 400 (undefined면 lockVersion 검사가 생략되기 때문)
+  async update(id: number, dto: UpdateDocumentDto) {⟦entry⟧
+    try {
+      return await this.em.fork().transactional(async (em) => { // begin — 원장·이력을 저장과 한 트랜잭션에⟦begin⟧
+        // 실패 지점 ①: 읽어 온 엔티티 version과 메모리 비교(락 SQL 아님) → OptimisticLockError → rollback
+        const doc = await em.findOneOrFail(Document, id, { lockMode: LockMode.OPTIMISTIC, lockVersion: dto.version });⟦check⟧
+        em.assign(doc, { body: dto.body, tokens: dto.tokens, editCount: doc.editCount + 1 });⟦assign⟧
+        await em.flush(); // 실패 지점 ②(진짜 동시성 보장): UPDATE … WHERE version = ? 0행 → OptimisticLockError → rollback⟦flush⟧
+        await recordEdit(em, id, dto); // 원장 + 이력 INSERT (같은 트랜잭션)⟦ledger⟧
+        return { version: doc.version };⟦return⟧
+      }); // commit⟦commit⟧
+    } catch (e) {
+      if (e instanceof OptimisticLockError) { // ①② 모두 409 version_mismatch, currentVersion은 다시 조회⟦catch⟧
+        const cur = await this.em.fork().findOneOrFail(Document, id);⟦reread⟧
+        throw new ConflictException({ reason: 'version_mismatch', currentVersion: cur.version, current: cur.body });⟦409⟧
+      }
+      throw e;
+    }
+  }
+}
+`;
+const CLIENT_HEAD = `const doc0 = http.get(url).json(); // 화면 열기: body + tokens + version⟦cget⟧
+sleep(editTime); // 편집 — 사람 시간 (실험실은 압축)⟦cedit⟧
+const mine = edit(doc0); // 본문 수정 + tokens에 내 수정 토큰 추가 (+ requestId·editToken)`;
+const CODE_SRC = {
+  naive: { file: 'strategies/naive-overwrite.ts', client: 'k6/naive-overwrite.js', cls: 'NaiveOverwriteStrategy', src: `import { Injectable } from '@nestjs/common';
+import { EntityManager, raw } from '@mikro-orm/postgresql';
+import { Document } from '../document.entity';
+import { UpdateDocumentDto } from '../dto';
+import { recordEdit } from '../record-edit';
+
+@Injectable()
+export class NaiveOverwriteStrategy {
+  constructor(private readonly em: EntityManager) {}
+
+  async open(id: number) {⟦open⟧
+    const doc = await this.em.fork().findOneOrFail(Document, id); // 자동 커밋 SELECT⟦read⟧
+    return { body: doc.body, tokens: doc.tokens, version: doc.version }; // 화면이 v를 받아 간다⟦openret⟧
+  }
+
+  async update(id: number, dto: UpdateDocumentDto) {⟦entry⟧
+    // dto.version을 보지 않는다. 원장·이력과 한 트랜잭션이지만 UPDATE의 WHERE에 version이 없다
+    return this.em.fork().transactional(async (em) => { // begin⟦begin⟧
+      await em.nativeUpdate(Document, { id }, { body: dto.body, tokens: dto.tokens, editCount: raw('edit_count + 1') }); // WHERE id만⟦write⟧
+      await recordEdit(em, id, dto); // 원장(요청 ID·수정 토큰·txid) + 이력 INSERT⟦ledger⟧
+      return { ok: true }; // 늦게 쓴 쪽이 이긴다 — 둘 다 200 OK⟦return⟧
+    }); // commit⟦commit⟧
+  }
+}
+
+// ── 클라이언트 (k6 · 사람 한 명 = VU 하나) ──
+${CLIENT_HEAD}
+http.put(url, JSON.stringify({ ...mine, version: doc0.version }));⟦cput⟧` },
+  opt: { file: 'strategies/optimistic-version.ts', client: 'k6/optimistic-version.js', cls: 'OptimisticVersionStrategy', src: `${OPT_SERVER}
+// ── 클라이언트 (k6) · 올바른 재시도 ──
+${CLIENT_HEAD}
+let res = http.put(url, JSON.stringify({ ...mine, version: doc0.version }));⟦cput⟧
+if (res.status === 409) {⟦c409⟧
+  const doc = http.get(url).json(); // 최신본 다시 받기⟦cregget⟧
+  const merged = reapply(mine, doc); // 내 변경을 최신본에 다시 적용 (병합·사용자 결정)⟦creapply⟧
+  res = http.put(url, JSON.stringify({ ...merged, version: doc.version })); // 새 버전으로⟦cretry⟧
+}` },
+  blind: { file: 'strategies/optimistic-version.ts (서버는 버전 감지와 같음)', client: 'k6/blind-retry.js', cls: 'OptimisticVersionStrategy', src: `${OPT_SERVER}
+// ── 클라이언트 (k6) · 맹목 재시도 (고장) ──
+${CLIENT_HEAD}
+let res = http.put(url, JSON.stringify({ ...mine, version: doc0.version }));⟦cput⟧
+if (res.status === 409) { // 재시도는 이 if 한 번뿐 — 두 번째 409면 그대로 실패⟦c409⟧
+  const { currentVersion } = res.json(); // 버전만 꺼낸다 — 최신 내용은 보지 않음⟦cregget⟧
+  res = http.put(url, JSON.stringify({ ...mine, version: currentVersion })); // 같은 body⟦cretry⟧
+}` },
+  lease: { file: 'strategies/edit-lease.ts', client: 'k6/edit-lease.js', cls: 'EditLeaseStrategy', src: `import { ConflictException, HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { EntityManager, raw } from '@mikro-orm/postgresql';
+import { Document } from '../document.entity';
+import { LeaseSaveDto } from '../dto';
+import { recordEdit } from '../record-edit';
+
+@Injectable()
+export class EditLeaseStrategy {
+  constructor(private readonly em: EntityManager) {}
+
+  async acquire(id: number, user: string) {⟦acquire⟧
+    // 조건부 UPDATE 한 번(자동 커밋): 비었거나 · 내 것이거나 · 만료된 잠금만 가져간다. version도 +1
+    // 시각은 DB 시계 clock_timestamp() (now()는 트랜잭션 시작 시각이라 쓰지 않는다)
+    const em = this.em.fork();
+    const n = await em.nativeUpdate(Document,
+      { id, $or: [{ lockedBy: null }, { lockedBy: user }, { leaseUntil: { $lte: raw('clock_timestamp()') } }] },⟦acqwhere⟧
+      { lockedBy: user, leaseUntil: raw(\`clock_timestamp() + interval '30 seconds'\`), fence: raw('fence + 1') });⟦take⟧
+    if (n === 0) { // 남이 쥐고 있음 → 서버는 줄을 세우지 않고 바로 거절⟦held⟧
+      // 423은 WebDAV(RFC 4918) 코드를 일부러 빌려 쓴다. 컨트롤러가 Retry-After 헤더를 붙인다
+      throw new HttpException({ reason: 'lease_held', retryAfterMs: 1000 }, HttpStatus.LOCKED);⟦423⟧
+    }
+    const doc = await em.findOneOrFail(Document, id);
+    return { fence: doc.fence }; // fencing 토큰: 클라이언트가 save·release에 들고 온다⟦fenceret⟧
+  }
+
+  async save(id: number, user: string, dto: LeaseSaveDto) {⟦save⟧
+    return this.em.fork().transactional(async (em) => { // begin⟦begin⟧
+      // fence가 맞아야 저장된다 → 잠금을 잃은 옛 세션(멈췄다 깨어난 같은 클라이언트 포함)의 늦은 저장을 거른다
+      const n = await em.nativeUpdate(Document,
+        { id, lockedBy: user, fence: dto.fence, leaseUntil: { $gt: raw('clock_timestamp()') } },
+        { body: dto.body, tokens: dto.tokens, editCount: raw('edit_count + 1') });⟦write⟧
+      if (n === 0) { // 뺏겼거나 만료 → 409로 통일. 예외라 rollback되어 원장도 남지 않는다⟦lost⟧
+        const cur = await em.findOneOrFail(Document, id); // 재조회: 새 보유자의 acquire(+1)까지 반영된 version⟦reread⟧
+        const reason = cur.lockedBy !== user || cur.fence !== dto.fence ? 'lease_lost' : 'lease_expired';
+        throw new ConflictException({ reason, currentVersion: cur.version, current: cur.body });⟦409⟧
+      }
+      await recordEdit(em, id, dto); // 원장 + 이력 INSERT (같은 트랜잭션)⟦ledger⟧
+    }); // commit⟦commit⟧
+  }
+
+  async release(id: number, user: string, fence: number) {⟦relentry⟧
+    // 내 잠금·내 fence일 때만 푼다 — 잠금을 잃은 옛 세션이 새 보유자의 잠금을 풀지 못하게
+    await this.em.fork().nativeUpdate(Document, { id, lockedBy: user, fence }, { lockedBy: null, leaseUntil: null });⟦release⟧
+  }
+}
+
+// ── 클라이언트 (k6) ──
+let lease; while ((lease = http.post(\`\${url}/lease\`)).status === 423) sleep(retryAfter); // 다시 노크 — 서버 큐 없음 · 순서 보장 없음⟦cpoll⟧
+const { fence } = lease.json();
+${CLIENT_HEAD}
+const res = http.put(url, JSON.stringify({ ...mine, fence })); // 409면 reason = lease_lost | lease_expired⟦cput⟧
+http.del(\`\${url}/lease\`, JSON.stringify({ fence })); // 해제도 fence를 들고 간다 (이탈하면 이 줄이 실행되지 않는다)⟦crel⟧` },
+};
+const parseSrc = src => {
+  const tags = {}, lines = src.split('\n').map((ln, i) => ln.replace(/⟦(\w+)⟧$/, (_, t) => { tags[t] = i + 1; return ''; }));
+  return { lines, tags, clientFrom: lines.findIndex(l => l.startsWith('// ── 클라이언트')) + 1 };
+};
+const CODE = {};
+for (const [k, v] of Object.entries(CODE_SRC)) CODE[k] = { ...v, ...parseSrc(v.src) };
+const ENTITY = parseSrc(ENTITY_SRC);
+
+/* 실제 MikroORM 7.1.4 + PostgreSQL SQL (드라이버가 만든 문장을 그대로 옮김, 파라미터는 $n으로 마스킹) */
+const SQL = {
+  sel:   'select "d0".* from "document" as "d0" where "d0"."id" = $1 limit $2',
+  naive: 'update "document" set "body" = $1, "tokens" = $2, "edit_count" = edit_count + 1, "version" = "version" + 1 where "id" = $3 returning "version"',
+  opt:   'update "document" set "body" = $1, "tokens" = $2, "edit_count" = $3, "version" = "version" + 1 where "id" = $4 and "version" = $5 returning "version"',
+  led:   'insert into "edit_ledger" ("document_id", "request_id", "edit_token", "txid") values ($1, $2, $3, txid_current()) returning "id"',
+  rev:   'insert into "document_revision" ("document_id", "tokens") values ($1, $2) returning "id"',
+  acq:   'update "document" set "locked_by" = $1, "lease_until" = clock_timestamp() + interval \'30 seconds\', "fence" = fence + 1, "version" = "version" + 1 where "id" = $2 and ("locked_by" is null or "locked_by" = $3 or "lease_until" <= clock_timestamp()) returning "version"',
+  save:  'update "document" set "body" = $1, "tokens" = $2, "edit_count" = edit_count + 1, "version" = "version" + 1 where "id" = $3 and "locked_by" = $4 and "fence" = $5 and "lease_until" > clock_timestamp() returning "version"',
+  rel:   'update "document" set "locked_by" = $1, "lease_until" = $2, "version" = "version" + 1 where "id" = $3 and "locked_by" = $4 and "fence" = $5 returning "version"',
+};
+const LEDGER_SQL = [SQL.led, '→ 1 row', SQL.rev, '→ 1 row'];
+const LEASE_VER = '버전 칼럼이 매핑돼 있어 acquire·save·release가 각각 version +1 → 한 차례에 +3. 그래서 같은 문서를 낙관 락으로 고치는 클라이언트는 내용이 안 바뀌어도 잠금 조작만으로 409를 받을 수 있다.';
+function codeMap(s, e) {
+  const who = L[e.a], P = e.phase, lease = s === 'lease';
+  switch (P) {
+    case 'arrived':
+      if (e.req === 'get') return { tag:'cget', also:['open'], sql:[], note:`${who}가 문서 화면을 연다(GET). 응답에 본문·수정 토큰 목록과 version이 함께 온다.` };
+      if (e.req === 'acq') return { tag:'cpoll', also:['acquire'], sql:[], note:`${who}가 고치기 전에 편집 잠금부터 요청한다(POST /lease).` };
+      if (e.retry) return s === 'blind'
+        ? { tag:'cretry', also:['entry'], sql:[], note:`${who}가 409 때 받은 currentVersion ${e.rv}만 바꿔 <b>처음 본문 그대로</b> 다시 PUT. 서버가 볼 땐 정상 요청이다. 재시도는 if 한 번뿐이다.`, tone:'bad' }
+        : { tag:'cretry', also:['entry'], sql:[], note:`${who}가 병합본을 새 버전 v${e.rv}로 PUT.` };
+      if (e.late) return { tag:'cput', also:['save'], sql:[], note:`멈췄던 A가 깨어나 원래 보내려던 저장(fence ${e.fence})을 이제 보낸다. A는 그사이 잠금을 잃은 줄 모른다.` };
+      return { tag:'cput', also: lease ? ['save'] : ['entry'], sql:[], note: lease ? `${who}가 잠금을 쥔 채 저장한다(PUT, fence ${e.fence}).` : s === 'naive' ? `${who}가 저장한다(PUT). version ${e.rv}을 보내지만 서버가 보지 않는다.` : `${who}가 저장한다(PUT, 화면을 열 때 받은 version ${e.rv}).` };
+    case 'db_read':
+      if (lease) return { tag:'cget', also:['cpoll'], sql:[SQL.sel, `→ 1 row (version = ${e.v})`], note:`잠금을 쥔 ${who}만 본문을 받는다. ${T('autocommit', '자동 커밋')} SELECT.` };
+      if (!e.open) return { tag:'cregget', also: s === 'opt' ? ['read'] : [], sql:[SQL.sel, `→ 1 row (version = ${e.v})`], note:`409를 받은 ${who}가 최신본(v${e.v})을 다시 받는다. 이제 내 변경을 이 위에 다시 적용한다.` };
+      return { tag:'read', also:['open', 'openret'], sql:[SQL.sel, `→ 1 row (version = ${e.v})`, '-- 자동 커밋: 이 읽기 트랜잭션은 여기서 끝난다'], note:`${who}는 v${e.v}을 받아 화면에 둔다. 읽기 트랜잭션은 이미 끝났고, 이후 편집은 서버 밖(사람 시간)이다.${e.dup ? ' <b>앞사람과 같은 버전이다.</b>' : ''}` };
+    case 'editing':
+      if (e.merge) return { tag:'creapply', sql:[], note:`${who}가 최신본에 자기 변경을 다시 적용한다(자동 병합이 안 되면 사람이 고른다). 이 동안에도 서버는 아무것도 잡지 않는다.` };
+      return { tag:'cedit', sql:[], note: lease ? `${who}가 편집한다(사람 시간 ${EDITS[cfg.edit].name}). 그동안 잠금을 쥐고 있어서 다른 사람은 423을 받는다. DB 세션은 없다.` : `${who}가 편집한다. 편집은 브라우저에서 일어나고 서버·DB는 아무것도 쥐고 있지 않다(트랜잭션·커넥션 없음).` };
+    case 'db_write':
+      if (e.w === 'naive') return { tag:'write', also:['begin'], sql:['begin', SQL.naive], note:`${T('native', 'nativeUpdate')}는 버전 검사 없이 바로 UPDATE한다. 원장·이력 INSERT와 한 트랜잭션(begin … commit)이지만 WHERE에 version이 없어서 앞사람 본문 위에 그대로 쓴다.` };
+      if (e.w === 'lease') return { tag:'write', also:['begin', 'save'], sql:['begin', SQL.save + `  -- $4 = '${who}', $5 = ${e.fence}`], note:`보유자이고 fence가 같고 lease가 아직 유효할 때만 1행이 바뀐다. 조건은 DB 시계(clock_timestamp())로 판단한다. 같은 트랜잭션에서 원장·이력을 쓴 뒤 commit.` };
+      if (e.w === 'leaseFail') return { tag:'write', also:['begin', 'save'], sql:['begin', SQL.save + `  -- $4 = 'A', $5 = ${e.fence}`, `→ 0 rows (지금 locked_by = '${L[e.owner]}', fence = ${e.curFence})`], note:`잠금이 이미 ${L[e.owner]}에게 넘어가 locked_by·fence가 둘 다 다르다 → ${T('rows0', '0행')}.`, tone:'bad' };
+      return { tag:'flush', also:['begin', 'check', 'assign'], sql:['begin', SQL.sel, `→ 1 row (version = ${e.rv}, lockVersion ${e.rv}과 같음)`, SQL.opt + `  -- $5 = ${e.rv}`].concat(e.blocked ? ['⧗ 같은 행을 B가 갱신 중 → 행 락 대기'] : []), note:`트랜잭션을 연 뒤(원장을 같이 쓰려고) ${T('lockVersion', 'lockVersion')} 비교(메모리)를 통과하고, ${T('flush', 'flush')}가 WHERE version = ${e.rv}로 UPDATE한다.` };
+    case 'lock_wait':
+      return { tag:'flush', sql:[SQL.opt + `  -- $5 = ${e.rv}`, `⧗ ${L[e.owner]}의 트랜잭션이 이 행을 갱신 중 → 행 락 대기 (커넥션을 쥔 채)`], note:`READ COMMITTED에서 같은 행을 고치는 두 번째 UPDATE는 ${T('rowlock', '행 락')}을 기다린다. ${L[e.owner]}가 원장까지 쓰고 커밋하면 WHERE를 다시 평가한다.`, tone:'wait' };
+    case 'committed':
+      if (lease) return { tag:'commit', also:['write', 'ledger'], sql:[`→ 1 row · returning version = ${e.v}`].concat(LEDGER_SQL, ['commit']), note:`${who}의 저장 성공. 원장·이력이 같은 트랜잭션에 들어가 함께 커밋됐다. 이 시점 내용 = ${who}안.`, tone:'ok' };
+      if (s === 'naive') return { tag:'commit', also:['write', 'ledger'], sql:[`→ 1 row · returning version = ${e.v}`].concat(LEDGER_SQL, ['commit']), note:`${who}의 저장 성공. 원장엔 ${who}의 수정 토큰이 남았다. 이 시점 내용 = ${who}안. (version은 올랐지만 아무도 확인하지 않았다)`, tone:'ok' };
+      return { tag:'commit', also:['flush', 'ledger', 'return'], sql:[`→ 1 row · returning version = ${e.v}`].concat(LEDGER_SQL, ['commit']), note:`v${e.v} 저장 성공. UPDATE와 원장·이력 INSERT가 한 트랜잭션으로 커밋됐다.`, tone:'ok' };
+    case 'lost':
+      if (e.blind) return { tag:'cretry', also:['flush'], sql:[SQL.opt + `  -- version 비교는 통과`, '→ 1 row (앞사람 수정 위에 옛 본문)', '-- 원장엔 두 토큰 모두 커밋 · 최종 이력엔 덮인 쪽 토큰이 없다'], note:`${L[e.by]}의 재시도가 버전 검사를 통과해 ${who}의 수정을 지웠다. 409를 "버전만 갱신하면 되는 오류"로 다룬 결과다.`, tone:'bad' };
+      return { tag:'write', sql:[SQL.naive, `→ 1 row (${who}가 쓴 본문 위에 그대로)`, '-- 원장엔 두 토큰 모두 커밋 · 최종 이력엔 덮인 쪽 토큰이 없다'], note:`${L[e.by]}의 UPDATE가 ${who}가 방금 쓴 본문을 덮었다. DB 입장에선 정상 갱신이라 에러가 나지 않는다.`, tone:'bad' };
+    case 'conflict':
+      if (e.via === 'recheck') return { tag:'409', also:['flush', 'catch', 'reread'], sql:[`-- ${L[e.owner]} commit → 최신 행으로 WHERE 재평가: version ${e.cur} ≠ ${e.rv}`, '→ 0 rows', 'rollback', SQL.sel + '  -- 재조회 (트랜잭션 밖)', `→ HTTP 409 { reason: "version_mismatch", currentVersion: ${e.cur}, current: "…" }`], note:`${T('epq', 'WHERE 재평가')} 결과 ${T('rows0', '0행')}. MikroORM이 영향 행 수 0을 보고 OptimisticLockError를 던지고(실패 지점 ②) 트랜잭션은 rollback(원장 INSERT 전이라 남는 것 없음). 서비스가 currentVersion을 다시 조회해 ${T('s409', '409')} version_mismatch로 바꾼다.`, tone:'bad' };
+      if (e.via === 'lease') return { tag:'409', also:['lost', 'reread'], sql:[SQL.sel + '  -- 재조회 (같은 트랜잭션)', `→ 1 row (locked_by = '${L[e.owner]}', fence = ${e.curFence}, version = ${e.cur})`, 'rollback', `→ HTTP 409 { reason: "lease_lost", currentVersion: ${e.cur}, current: "…" }`], note:`locked_by·fence가 다르니 lease_lost. currentVersion ${e.cur}은 ${L[e.owner]}의 acquire(+1) 뒤의 값이다. 저장 실패는 ${T('s409', '409')}로 통일하고 reason으로 구분한다. 예외로 rollback되어 원장은 남지 않는다.`, tone:'bad' };
+      return { tag:'409', also: e.again ? ['check', 'catch', 'reread', 'cretry'] : ['check', 'catch', 'reread'], sql:['begin', SQL.sel, `→ 1 row (version = ${e.cur})`, `-- 메모리 비교: lockVersion ${e.rv} ≠ 엔티티 version ${e.cur} → OptimisticLockError (UPDATE 없음)`, 'rollback', `→ HTTP 409 { reason: "version_mismatch", currentVersion: ${e.cur}, current: "…" }`], note: e.again ? `${who}의 재시도가 기억한 v${e.rv}는 이미 낡았다(현재 v${e.cur}). 클라이언트는 if 한 번만 재시도하므로 이 409로 끝난다.` : `${T('lockVersion', 'lockVersion')} 비교(실패 지점 ①, 메모리 비교)에서 걸렸다. UPDATE 없이 rollback. 응답에 currentVersion과 현재 내용을 싣는다. 동시에 도착했다면 둘 다 여기를 통과하고 ②(flush 0행)에서 갈린다.`, tone:'bad' };
+    case 'retry':
+      if (lease) return { tag:'cpoll', sql:[], note:`${who}가 ${T('retryafter', 'Retry-After')}만큼 쉬었다가 다시 노크한다. 서버는 누가 먼저 왔는지 기억하지 않는다.`, tone:'retry' };
+      if (e.blind) return { tag:'cregget', also:['c409'], sql:[], note:`${who}는 409 본문에서 currentVersion(${e.rv})만 꺼낸다. 최신 내용은 보지 않는다 — 여기가 고장이다.`, tone:'bad' };
+      return { tag:'c409', also:['cregget', 'creapply'], sql:[], note:`올바른 재시도: 다시 GET → 내 변경을 최신본에 다시 적용(병합 또는 사용자 결정) → 새 버전으로 PUT.`, tone:'retry' };
+    case 'lock_acquired':
+      return { tag:'take', also:['acqwhere'], sql:[SQL.acq, `→ 1 row · returning version = ${e.v}`, `-- fence = ${e.fence}`], note:`${e.take === 'expired' ? '만료된 잠금을 회수했다. ' : ''}조건부 UPDATE 한 번(${T('autocommit', '자동 커밋')})이 확인과 기록을 같이 한다. fence가 ${e.fence}로 오르고, 이 번호를 클라이언트가 save·release에 들고 온다. 만료 시각은 DB 시계(clock_timestamp() + 30s). ${LEASE_VER}` };
+    case 'lease_rejected':
+      return { tag:'423', also:['held', 'acqwhere'], sql:[SQL.acq, `→ 0 rows (locked_by = '${L[e.owner]}', lease 유효)`, '→ HTTP 423 Locked · Retry-After: 1'], note:`${T('rows0', '0행')} → ${T('s423', '423')}. 서버는 대기열을 만들지 않고 바로 응답을 끝낸다. 커넥션·트랜잭션은 남지 않는다.`, tone:'wait' };
+    case 'lock_released':
+      return { tag:'release', also:['crel'], sql:[SQL.rel + `  -- $4 = '${who}', $5 = ${e.fence}`, '→ 1 row'], note:`내 잠금·내 fence일 때만 푼다(자동 커밋 한 문장). 잠금을 잃은 옛 세션은 새 보유자의 잠금을 풀 수 없다. 해제 없이 떠나면 lease_until이 지나야 풀린다.` };
+    case 'holder_left':
+      return { tag:'crel', sql:[], note:`A가 떠나 이 줄(release)이 실행되지 않았다. locked_by = 'A'가 남고, lease_until이 지나야 다음 acquire가 가져간다(TTL 회수). 서버 인스턴스와는 상관없다 — 잠금은 DB 칼럼이다.`, tone:'bad' };
+    case 'holder_paused':
+      return { tag:'cput', sql:[], note:`A의 클라이언트가 이 줄(저장)을 보내기 직전에 멈췄다(GC·네트워크 단절). A가 든 fence ${e.fence}는 잠금이 다른 사람에게 넘어가면 무효가 된다.`, tone:'bad' };
+    case 'lease_expired':
+      return { tag:'acqwhere', sql:['-- lease_until ≤ clock_timestamp() : 다음 acquire의 WHERE("lease_until" <= clock_timestamp())에 맞는다'], note:`TTL이 지나 잠금이 효력을 잃었다. 칼럼 값은 그대로지만 다음 acquire가 덮어쓰고 fence를 올린다.`, tone:'wait' };
+    case 'responded':
+      if (/^409/.test(e.d || '')) return lease
+        ? { tag:'cput', sql:[], note:`${who}에게 409 lease_lost. 클라이언트는 다시 잠금부터 얻어야 한다.`, tone:'bad' }
+        : { tag:'cretry', also:['c409'], sql:[], note:`${who}에게 두 번째 409. 재시도는 if 한 번뿐이라 여기서 실패로 끝난다(수정은 저장되지 않음).`, tone:'bad' };
+      return lease ? { tag:'crel', sql:[], note:`${who}에게 응답.` } : { tag:'return', also:['cput'], sql:[], note: s === 'naive' ? `${who}에게 200 OK. 클라이언트는 덮어쓰였는지 알 수 없다.` : `${who}에게 응답.` };
+  }
+  return null;
+}
+function stmtOf(e) {
+  const m = codeMap(PB.rec ? PB.rec.sid : sid(), e);
+  return m && m.sql.find(x => /^(select|update|insert)/.test(x)) || null;
+}
+
+function hlCode(line) {
+  const KW = /^(import|from|export|class|extends|const|let|async|await|return|new|throw|try|catch|if|while|private|readonly|constructor|this|null|true|false|void|instanceof)$/;
+  let out = '';
+  const re = /(\/\/.*$)|('(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(@\w+)|([A-Za-z_$][\w$]*)|(\s+)|(.)/g;
+  let m;
+  while ((m = re.exec(line))) {
+    if (m[1]) out += `<span class="c-cm">${esc(m[1])}</span>`;
+    else if (m[2]) out += `<span class="c-st">${esc(m[2])}</span>`;
+    else if (m[3]) out += `<span class="c-dc">${esc(m[3])}</span>`;
+    else if (m[4]) out += KW.test(m[4]) ? `<span class="c-kw">${m[4]}</span>` : /^[A-Z]/.test(m[4]) ? `<span class="c-ty">${m[4]}</span>` : m[4];
+    else out += esc(m[0]);
+  }
+  return out || ' ';
+}
+function lcsDiff(a, b) {
+  const n = a.length, m = b.length, dp = Array.from({ length: n + 1 }, () => new Int16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const ra = new Array(n).fill(false), rb = new Array(m).fill(false);
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) ra[i++] = true;
+    else rb[j++] = true;
+  }
+  while (i < n) ra[i++] = true;
+  while (j < m) rb[j++] = true;
+  return { a: ra, b: rb };
+}
+const lineHtml = (code, idx, cls, mark) => `<div class="cl ${cls}" data-n="${idx + 1}"><span class="ln">${idx + 1}</span><span class="cur"></span><span class="mk">${mark}</span><code>${hlCode(code.lines[idx])}</code></div>`;
+/* 비교: 바뀐 줄만 펼치고 공통 줄은 접는다(앞뒤 1줄은 남김) */
+function colHtml(side, code, changed, tone, mark) {
+  let h = '', i = 0;
+  const N = code.lines.length;
+  while (i < N) {
+    if (changed[i]) { h += lineHtml(code, i, `dl-${tone}`, mark); i++; continue; }
+    let j = i; while (j < N && !changed[j]) j++;
+    const run = j - i, key = `${side}:${i}`;
+    if (run > 3 && !PB.unfold.has(key)) {
+      const keepHead = i > 0 ? 1 : 0, keepTail = j < N ? 1 : 0;
+      for (let k = i; k < i + keepHead; k++) h += lineHtml(code, k, '', '');
+      const a = i + keepHead, b = j - keepTail;
+      h += `<button type="button" class="fold" data-fold="${key}">⋯ 공통 ${b - a}줄 접음 (${a + 1}–${b}) · 펼치기</button>`;
+      for (let k = a; k < b; k++) h += lineHtml(code, k, 'folded', '').replace('class="cl folded"', 'class="cl folded" hidden');
+      for (let k = b; k < j; k++) h += lineHtml(code, k, '', '');
+    } else for (let k = i; k < j; k++) h += lineHtml(code, k, '', '');
+    i = j;
+  }
+  return h;
+}
+function renderEntity() { $('entWrap').innerHTML = `<div class="code-col">${ENTITY.lines.map((_, i) => lineHtml(ENTITY, i, '', '')).join('')}</div>`; }
+function renderCode() {
+  const st = STRATS[cfg.strat], cur = st.id, code = CODE[cur], wrap = $('codeWrap');
+  $('codeFile').innerHTML = `<span class="badge t-${st.tone}">${tagIcon(st.tone)}${st.tag}</span><span class="badge t-neutral">시안 예시 코드</span>packs/generic/g01-shared-document/${code.file} + ${code.client}`;
+  $('cmpWith').hidden = !PB.cmp;
+  if (!PB.cmp) {
+    wrap.className = 'code-wrap';
+    wrap.innerHTML = `<div class="code-col" data-side="cur">${code.lines.map((_, i) => lineHtml(code, i, '', '')).join('')}</div>`;
+  } else {
+    const opts = STRATS.filter(s => s.id !== cur && !s.soon);
+    if (!opts.some(s => s.id === PB.cmpWith)) PB.cmpWith = opts[0].id;
+    $('cmpWith').innerHTML = opts.map(s => `<option value="${s.id}"${s.id === PB.cmpWith ? ' selected' : ''}>비교 대상: ${s.name}</option>`).join('');
+    const sO = STRATS.find(s => s.id === PB.cmpWith), other = CODE[sO.id];
+    const d = lcsDiff(other.lines, code.lines);
+    const nAdd = d.b.filter(Boolean).length, nDel = d.a.filter(Boolean).length;
+    const head = (s, c, badge) => `<div class="code-col__h"><span class="badge t-${s.tone}">${tagIcon(s.tone)}${s.tag}</span>${s.name} · ${c.client}${badge}</div>`;
+    wrap.className = 'code-wrap two';
+    wrap.innerHTML =
+      `<div class="code-col" data-side="cur">${head(st, code, ` · <span class="badge t-${st.tone}">+ ${nAdd}줄</span> · 지금 재생 중`)}${colHtml('cur', code, d.b, st.tone, '+')}</div>` +
+      `<div class="code-col" data-side="other">${head(sO, other, ` · <span class="badge t-${sO.tone}">− ${nDel}줄</span> · 비교 대상`)}${colHtml('other', other, d.a, sO.tone, '−')}</div>`;
+  }
+  PB.codeKey = '';
+  layout();
+}
+$('codeWrap').addEventListener('click', e => {
+  const b = e.target.closest('.fold'); if (!b) return;
+  PB.unfold.add(b.dataset.fold); renderCode(); PB.dirty = true;
+});
+function codeEventAt() {
+  if (!PB.rec) return null;
+  if (PB.callout) return PB.callout.events[PB.callout.events.length - 1];
+  const idx = upper(PB.rec.all, PB.P) - 1;
+  if (idx < 0) return null;
+  const e = PB.rec.all[idx], rd = roundAt(PB.P);
+  return e.r === rd.idx ? e : null;
+}
+function isMini() { return window.innerWidth < 760 && PB.mini; }
+function updateCode(S) {
+  const cur = sid(), e = codeEventAt(), code = CODE[cur];
+  const curs = S && S.rd ? S.actors.filter(a => (a.vis || (a.last && a.last.phase === 'holder_left')) && a.last).map(a => `${a.i}:${a.last.i}`).join(',') : '';
+  const key = `${cur}|${PB.cmp}|${e ? e.i : -1}|${PB.runNo}|${curs}|${isMini()}|${PB.unfold.size}`;
+  if (key === PB.codeKey) return;
+  PB.codeKey = key;
+  const wrap = $('codeWrap'), col = wrap.querySelector('[data-side="cur"]');
+  col.querySelectorAll('.is-hit, .is-hit2').forEach(el => el.classList.remove('is-hit', 'is-hit2', 'tone-bad', 'tone-ok', 'tone-wait', 'tone-retry'));
+  col.querySelectorAll('.cur').forEach(el => { el.innerHTML = ''; });
+  const lineEl = n => col.querySelector(`.cl[data-n="${n}"]`);
+  // 행위자별 커서 (A▶, B▶ …): 각자 마지막 이벤트가 가리키는 줄
+  if (S && S.rd) S.actors.forEach(a => {
+    if (!(a.vis || a.last && a.last.phase === 'holder_left') || !a.last) return;
+    const m = codeMap(cur, a.last); if (!m) return;
+    const el = lineEl(code.tags[m.tag]); if (el) el.querySelector('.cur').insertAdjacentHTML('beforeend', `<i class="a${a.i}" title="${L[a.i]}의 현재 줄">${L[a.i]}</i>`);
+  });
+  const box = $('codeEv');
+  const map = e && codeMap(cur, e);
+  wrap.classList.toggle('mini', false);
+  wrap.querySelectorAll('.far').forEach(el => el.classList.remove('far'));
+  if (!map) {
+    box.innerHTML = `<p class="idle">${PB.rec ? '재생하면 이벤트를 낸 코드 줄과 그 순간의 SQL이 여기에 나옵니다. 거터의 A▶ B▶는 각자 지금 있는 줄입니다.' : '실행하면 기록을 만들고, 재생 중 이벤트마다 해당 코드 줄을 강조합니다.'}</p>`;
+    applyMini(wrap, col, code.tags.entry || code.tags.acquire);
+    return;
+  }
+  const ln = code.tags[map.tag];
+  const hit = lineEl(ln);
+  (map.also || []).forEach(t => { const el = lineEl(code.tags[t]); if (el) el.classList.add('is-hit2'); });
+  if (hit) {
+    if (hit.hidden) { const f = hit.previousElementSibling; let p = hit; while (p && !p.classList.contains('fold')) p = p.previousElementSibling; if (p) { PB.unfold.add(p.dataset.fold); renderCode(); PB.codeKey = ''; return updateCode(S); } }
+    hit.classList.add('is-hit'); if (map.tone) hit.classList.add('tone-' + map.tone);
+    applyMini(wrap, col, ln);
+    if (!isMini() && wrap.scrollHeight > wrap.clientHeight) {
+      const top = hit.offsetTop - wrap.clientHeight / 2 + hit.offsetHeight / 2;
+      wrap.scrollTop = Math.max(0, top);
+    }
+  }
+  const ph = PH[e.phase], sql = map.sql;
+  const inClient = ln > code.clientFrom && code.clientFrom > 0;
+  const method = inClient ? 'k6 스크립트' : (() => { for (let i = ln - 1; i >= 0; i--) { const m = code.lines[i].match(/^\s+(?:async\s+)?(\w+)\(/); if (m && !/^(if|while)$/.test(m[1])) return `${code.cls}.${m[1]}()`; } return code.cls; })();
+  box.innerHTML = `<div class="code-ev__h"><span class="chip a${e.a}">${L[e.a]}</span><span class="badge t-${ph.tone}">${svgIcon(ph.icon)}${ph.label}</span><b>${method} · ${ln}번 줄</b><span>· 실제 +${realMs(e.t)}ms</span></div>` +
+    (sql.length ? `<pre class="sqlbox">${sql.map(fmtSqlLine).join('\n')}</pre>` : '') +
+    `<p>${map.note}</p>`;
+}
+function fmtSqlLine(s) {
+  if (/^→/.test(s)) return `<span class="out ${/0 rows|423|409/.test(s) ? 'bad' : 'ok'}">${esc(s)}</span>`;
+  if (/^⧗/.test(s)) return `<span class="hl">${esc(s)}</span>`;
+  if (/^--/.test(s)) return `<span class="cm">${esc(s)}</span>`;
+  if (/^(begin|commit|rollback)$/.test(s)) return `<span class="out ${s === 'rollback' ? 'bad' : ''}">${s}</span>`;
+  const m = s.match(/^(.*?)(\s+--.*)$/);
+  return m ? highlightSql(m[1]) + `<span class="cm">${esc(m[2])}</span>` : highlightSql(s);
+}
+function applyMini(wrap, col, ln) {
+  const mini = isMini();
+  wrap.classList.toggle('mini', mini);
+  $('miniMore').textContent = PB.mini ? '전체 코드 보기' : '강조 줄 주변만 보기';
+  if (!mini || !ln) return;
+  col.querySelectorAll('.cl').forEach(el => { if (Math.abs(+el.dataset.n - ln) > 5) el.classList.add('far'); });
+  col.querySelectorAll('.fold, .code-col__h').forEach(el => el.classList.add('far'));
+  wrap.querySelectorAll('[data-side="other"]').forEach(el => el.classList.add('far'));
+}
+$('miniMore').addEventListener('click', () => { PB.mini = !PB.mini; PB.codeKey = ''; PB.dirty = true; });
+function setTab(which) {
+  const code = which === 'code';
+  $('tabCode').setAttribute('aria-selected', code); $('tabSrv').setAttribute('aria-selected', !code);
+  $('tabCode').tabIndex = code ? 0 : -1; $('tabSrv').tabIndex = code ? -1 : 0;
+  $('pnCode').hidden = !code; $('pnSrv').hidden = code;
+  layout();
+}
+$('icoCode').innerHTML = svgIcon('write'); $('icoSrv').innerHTML = svgIcon('read');
+$('tabCode').addEventListener('click', () => setTab('code'));
+$('tabSrv').addEventListener('click', () => setTab('srv'));
+document.querySelector('.tabs').addEventListener('keydown', e => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  e.preventDefault(); e.stopPropagation();
+  const toCode = $('tabSrv').getAttribute('aria-selected') === 'true';
+  setTab(toCode ? 'code' : 'srv'); (toCode ? $('tabCode') : $('tabSrv')).focus();
+});
+function toggleCompare() { PB.cmp = !PB.cmp; PB.unfold.clear(); $('cmpToggle').setAttribute('aria-pressed', PB.cmp); if (PB.cmp) setTab('code'); renderCode(); PB.dirty = true; }
+$('cmpToggle').addEventListener('click', toggleCompare);
+$('cmpWith').addEventListener('change', e => { PB.cmpWith = e.target.value; PB.unfold.clear(); renderCode(); PB.dirty = true; });
+$('codeCopy').addEventListener('click', async () => {
+  const text = CODE[sid()].lines.join('\n'), b = $('codeCopy');
+  try { await navigator.clipboard.writeText(text); b.textContent = '복사됨 ✓'; }
+  catch (_) {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); b.textContent = '복사됨 ✓'; } catch (__) { b.textContent = '복사 실패'; }
+    ta.remove();
+  }
+  setTimeout(() => { b.textContent = '복사'; }, 1400);
+});
+
+/* ================================================================
+   8. 입력
+   ================================================================ */
+function pulse(id) { const el = $(id); el.classList.add('is-pressed'); setTimeout(() => el.classList.remove('is-pressed'), 120); }
+$('btnRun').addEventListener('click', run);
+$('ctaBtn').addEventListener('click', run);
+$('btnStop').addEventListener('click', abortRun);
+$('btnTheme').addEventListener('click', toggleTheme);
+$('pbPlay').addEventListener('click', togglePlay);
+$('pbNext').addEventListener('click', stepNext);
+$('pbPrev').addEventListener('click', stepPrev);
+$('pbStart').addEventListener('click', () => seek(0));
+$('pbAuto').addEventListener('click', toggleAuto);
+$('pbCause').addEventListener('change', toggleCause);
+$('pbFF').addEventListener('click', toggleFF);
+$('tlToggle').addEventListener('click', () => { const b = $('tlToggle'), open = b.getAttribute('aria-expanded') !== 'true'; b.setAttribute('aria-expanded', open); $('tlBody').hidden = !open; });
+[$('stageBox'), $('sheet')].forEach(el => el.addEventListener('click', e => { if (e.target.closest('[data-act="continue"]')) play(); }));
+const sc = $('scrub');
+sc.addEventListener('pointerdown', () => { sc._drag = true; pause(); });
+window.addEventListener('pointerup', () => { sc._drag = false; });
+sc.addEventListener('input', () => seek(+sc.value));
+sc.addEventListener('mousemove', e => {
+  if (!PB.rec) return;
+  const r = sc.getBoundingClientRect(), P = (e.clientX - r.left) / r.width * PB.rec.total;
+  const g = PB.ff ? PB.rec.gaps.find(x => P >= x.a && P < x.b && (x.b - x.a) / PB.speed > FF_MAX_WALL) : null;
+  const rd = roundAt(Math.max(0, P));
+  sc.title = g ? `실제 ${realMs(g.b - g.a)}ms 압축 (빈 구간 빨리 감기)` : `R${rd.idx + 1} · 실제 +${realMs(P - rd.start)}ms`;
+});
+let keysReturn = null;
+function openKeys() { keysReturn = document.activeElement; $('kbdOv').hidden = false; $('kbdClose').focus(); }
+function closeKeys() { $('kbdOv').hidden = true; if (keysReturn && keysReturn.focus) keysReturn.focus(); }
+$('btnKeys').addEventListener('click', openKeys);
+$('kbdClose').addEventListener('click', closeKeys);
+$('kbdOv').addEventListener('click', e => { if (e.target === $('kbdOv')) closeKeys(); });
+document.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (!$('kbdOv').hidden) { if (e.key === 'Escape' || e.key === '?') { e.preventDefault(); closeKeys(); } return; }
+  const tag = e.target.tagName;
+  if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') return;
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.closest && e.target.closest('button, summary, a, .term')) return;
+  switch (e.key) {
+    case ' ':          e.preventDefault(); if (!PB.running) { pulse('pbPlay'); togglePlay(); } break;
+    case 'ArrowRight': e.preventDefault(); pulse('pbNext'); stepNext(); break;
+    case 'ArrowLeft':  e.preventDefault(); pulse('pbPrev'); stepPrev(); break;
+    case 'Home':       e.preventDefault(); seek(0); break;
+    case 'Enter':      e.preventDefault(); pulse('btnRun'); run(); break;
+    case 'Escape':     abortRun(); break;
+    case '1': case '2': case '3': case '4': setSpeed(SPEEDS[+e.key - 1].v); break;
+    case 'a': case 'A': toggleAuto(); break;
+    case 'f': case 'F': toggleFF(); break;
+    case 'c': case 'C': toggleCompare(); break;
+    case 's': case 'S': { let i = cfg.strat; do { i = (i + 1) % STRATS.length; } while (STRATS[i].soon); setCfg('strat', i); break; }
+    case 't': case 'T': toggleTheme(); break;
+    case '?': e.preventDefault(); openKeys(); break;
+  }
+});
+
+/* ---------- 테마 ---------- */
+function currentDark() { const a = document.documentElement.dataset.theme; return a ? a === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; }
+function toggleTheme() {
+  const next = currentDark() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('nul-theme', next); } catch (_) {}
+}
+
+/* ================================================================
+   9. 정수 배율 — 논리 1px = 기기 픽셀 n개(정수).
+      ≥1120px에서는 무대+재생 바가 한 화면에 들어오도록 높이로도 제한하고, 코드 패널 높이를 남은 화면에 맞춘다.
+   ================================================================ */
+const box = $('stageBox');
+const wide = () => matchMedia('(min-width: 1120px)').matches;
+function fit() {
+  const dpr = window.devicePixelRatio || 1;
+  let n = Math.max(1, Math.min(4 * dpr, Math.floor(box.clientWidth * dpr / W)));
+  if (wide()) {
+    const top = box.getBoundingClientRect().top + window.scrollY;
+    // 시트 높이는 넣지 않는다(시트는 배율 < 2일 때만 뜨므로, 넣으면 배율이 ×1에 갇히는 순환이 생긴다).
+    // 자동 멈춤 때 뜨는 트랜잭션 띠 요약은 높이가 고정이라 늘 미리 비워 둔다(멈출 때 배율이 바뀌지 않게).
+    const below = 30 + document.querySelector('.a-transport').offsetHeight + TXSUM_H;   // 하단 줄(30 고정) + 재생 바 + 트랜잭션 띠 자리
+    const nh = Math.floor((window.innerHeight - top - below - 4) * dpr / H);
+    n = Math.max(Math.min(dpr, n), Math.min(n, nh));
+  }
+  K = n / dpr;
+  cv.style.width = W * K + 'px'; cv.style.height = H * K + 'px';
+  overlay.style.width = W * K + 'px'; overlay.style.height = H * K + 'px';
+  overlay.style.marginLeft = -(W * K) / 2 + 'px';
+  overlay.classList.toggle('small-k', K < 2);
+  $('fsScale').textContent = `256×192 ×${+K.toFixed(2)}`;
+  layout();
+  PB.dirty = true;
+}
+function layout() {
+  const cw = $('codeWrap');
+  if (wide() && !$('pnCode').hidden) {
+    const top = cw.getBoundingClientRect().top + window.scrollY;
+    cw.style.maxHeight = Math.max(240, window.innerHeight - top - 132 - 20) + 'px';
+  } else cw.style.maxHeight = '';
+}
+new ResizeObserver(fit).observe(box);
+window.addEventListener('resize', () => { PB.codeKey = ''; fit(); });
+
+document.fonts.ready.then(() => {
+  const ok = document.fonts.check('12px "Galmuri11"');
+  $('fontState').textContent = ok ? '현재: Galmuri 로드됨.' : '현재: Galmuri 로드 실패 → 시스템 대체 폰트 사용 중.';
+  fit();
+});
+
+/* ---------- 시작: 덮어쓰기 · 느리게(1/160) · 자동 멈춤 ON ---------- */
+buildControls(); updateHeader(); renderLegend(); renderEntity(); renderCode(); syncTransport(); fit();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

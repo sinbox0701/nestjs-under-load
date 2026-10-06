@@ -1,0 +1,21 @@
+{
+  "name": "nestjs-under-load",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@10.30.2",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "pnpm --filter @under-load/app... run build",
+    "typecheck": "pnpm --filter @under-load/app... run typecheck",
+    "test": "node --test \"scripts/*.test.mjs\"",
+    "run:lab": "node scripts/run.mjs",
+    "run:dry": "node scripts/run.mjs --dry-run",
+    "compose:config": "docker compose -f infra/compose/docker-compose.yml config -q"
+  },
+  "devDependencies": {
+    "libpg-query": "^17.7.4",
+    "yaml": "^2.8.1"
+  }
+}

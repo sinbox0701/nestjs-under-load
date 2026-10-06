@@ -1,0 +1,141 @@
+# nestjs-under-load — docker compose (0단계)
+#
+# 프로필 없이 뜨는 서비스 집합(app×2, nginx, postgres, k6)이 DESIGN §4.1의 `minimal` 프로필 원형이다.
+# 실행 메타데이터에는 `profile: minimal`로 남는다. prometheus/grafana는 `--profile obs`일 때만 뜬다(0단계 선택).
+#
+#   docker compose -f infra/compose/docker-compose.yml up -d --build
+#   docker compose -f infra/compose/docker-compose.yml --profile obs up -d
+#
+# 보안(DESIGN §13): 호스트 포트는 전부 127.0.0.1 바인딩. lab-net·obs-net은 internal(egress 없음).
+# 0단계 단순화: cpuset 고정 없음(메타데이터 cpuset: none), socket-proxy·orchestrator 없음(호스트의 run.mjs가 docker CLI로 제어).
+name: nestjs-under-load
+
+x-limits:
+  app: &app-limits
+    cpus: 1.0
+    mem_limit: 512m
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: apps/app/Dockerfile
+    image: nestjs-under-load/app:dev
+    # 여러 인스턴스(`--scale app=N`). 활성 수는 run.mjs가 조절한다. container_name을 두지 않는다.
+    scale: 2
+    init: true
+    restart: "no"
+    <<: *app-limits
+    environment:
+      PORT: "3000"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: lab_run
+      POSTGRES_USER: lab_app
+      POSTGRES_PASSWORD: ${LAB_APP_PASSWORD:-lab_app_local}
+      RUN_CONFIG_PATH: /lab/active/run-config.json
+      # 힙 한도는 mem_limit보다 작게(DESIGN §4.1)
+      NODE_OPTIONS: --max-old-space-size=384
+    volumes:
+      # RunConfig: run.mjs가 runs/_active/run-config.json을 쓰고, app은 재시작 때 읽는다.
+      # 파일이 아니라 디렉터리를 마운트한다(파일 교체 시 inode가 바뀌어도 새 내용이 보이도록).
+      - ../../runs/_active:/lab/active:ro
+    networks: [lab-net]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/_lab/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  nginx:
+    image: nginx:1.28-alpine
+    cpus: 0.5
+    mem_limit: 128m
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:8081:80"   # 수동 호출·run.mjs readiness 확인용
+    networks: [lab-net, ctl-net]
+    depends_on: [app]
+
+  postgres:
+    image: postgres:17
+    cpus: 2.0
+    mem_limit: 2g
+    shm_size: 256m
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres_local}
+      POSTGRES_DB: postgres
+      LAB_APP_PASSWORD: ${LAB_APP_PASSWORD:-lab_app_local}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ../postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:55432:5432"   # 수동 psql 확인용(선택)
+    networks: [lab-net, ctl-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  k6:
+    # 상주 컨테이너: run.mjs가 `docker compose exec k6 k6 run ...`으로 실행한다(컨테이너 생성 불필요, DESIGN §4.1).
+    image: grafana/k6:1.3.0
+    entrypoint: ["tail", "-f", "/dev/null"]
+    cpus: 2.0
+    mem_limit: 1g
+    volumes:
+      - ../../packs:/packs:ro
+      - ../../runs:/runs
+    networks: [lab-net, obs-net]
+
+  # ── 선택(0단계는 파일만 준비): --profile obs ──
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [obs]
+    cpus: 1.0
+    mem_limit: 1g
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver
+      - --enable-feature=exemplar-storage,native-histograms
+    volumes:
+      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    networks: [obs-net]
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    profiles: [obs]
+    cpus: 0.5
+    mem_limit: 512m
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-grafana_local}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "127.0.0.1:3001:3000"
+    networks: [obs-net, ctl-net]
+    depends_on: [prometheus]
+
+networks:
+  lab-net:
+    internal: true
+  obs-net:
+    internal: true
+  ctl-net: {}
+
+volumes:
+  pgdata: {}
+  promdata: {}

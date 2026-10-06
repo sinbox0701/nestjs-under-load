@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "ES2023",
+    "lib": [
+      "ES2023"
+    ],
+    "types": [
+      "node"
+    ],
+    "outDir": "dist",
+    "rootDir": ".",
+    "declaration": true,
+    "sourceMap": true,
+    "strict": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "incremental": false
+  },
+  "include": [
+    "index.ts",
+    "module.ts",
+    "strategy-registry.ts",
+    "entities/**/*.ts",
+    "migrations/**/*.ts",
+    "seed/**/*.ts",
+    "api/**/*.ts",
+    "support/**/*.ts",
+    "strategies/**/*.ts"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "k6"
+  ]
+}

@@ -1,0 +1,346 @@
+# 학습 화면용 예시(fixture). packs/generic/g02-stock-decrement/learn.yaml 이 생기면 화면은 그쪽을 쓴다.
+# expected = 예상, measured = 실측(run id·수치). fixture에는 실측이 없다.
+scenario: g02-stock-decrement
+title: 재고 차감 경합
+
+concepts:
+  - id: lost-update
+    label: 잃어버린 갱신
+    body: >-
+      두 요청이 같은 값을 읽고 각자 계산한 값을 쓰면, 나중에 쓴 쪽이 먼저 쓴 쪽의 변경을 덮는다.
+      둘 다 성공 응답을 받기 때문에 아무도 모른다. 재고에서는 원장 판매량이 실제 차감량보다 많아지는
+      초과 판매로 드러난다. 읽기와 쓰기 사이가 길수록, 동시에 들어오는 요청이 많을수록 자주 생긴다.
+  - id: eval-plan-qual
+    label: 잠금 대기 뒤 재검사
+    body: >-
+      READ COMMITTED에서 UPDATE가 다른 트랜잭션이 잡은 행을 만나면 커밋을 기다린 뒤, 최신 행 버전으로
+      WHERE를 다시 평가한다(PostgreSQL EvalPlanQual). 그래서 WHERE에 조건(stock >= qty)을 넣고
+      SET을 stock - qty로 쓰면 별도 락 없이도 맞다. SET이 앱이 계산한 상수이면 재검사가 아무것도 막지 못한다.
+  - id: row-lock
+    label: 행 잠금 (FOR UPDATE)
+    body: >-
+      SELECT ... FOR UPDATE는 읽는 순간 행에 쓰기 잠금을 건다. 같은 행을 원하는 다음 트랜잭션은 커밋까지
+      기다린다. 맞게 만들기 쉽지만, 잠금을 쥔 동안 하는 일(앱 계산, 지연, 다른 쿼리)이 모두 대기열 앞에 쌓인다.
+  - id: process-local
+    label: 프로세스 메모리 락
+    body: >-
+      앱 메모리의 mutex·Map은 그 프로세스 안에서만 보인다. 서버가 1대면 맞게 보이지만 2대가 되면
+      각자 자기 락만 보고 DB에 동시에 들어간다. 테스트를 1대로만 돌리면 이 결함을 놓친다.
+  - id: hot-row
+    label: 핫 로우
+    body: >-
+      요청이 한 행(인기 상품 하나)에 몰리면 그 행의 잠금이 직렬화 지점이 된다. 처리량 상한은 대략
+      1 / (잠금 보유 시간)이다. 보유 시간을 줄이는 쪽(한 문장 UPDATE)이 잠금을 늘리는 쪽보다 효과가 크다.
+  - id: lock-timeout
+    label: 잠금 대기 상한
+    body: >-
+      lock_timeout을 넘겨 기다린 트랜잭션은 55P03 오류로 끝난다. 무한 대기 대신 빨리 실패시키는 장치지만,
+      줄이 길어지면 정상 요청이 대량으로 거절된다. 상한 값은 보유 시간 × 예상 대기 인원으로 가늠한다.
+
+situations:
+  - id: two-users-one-instance
+    label: 동시 2명 · 서버 1대
+    load: { model: closed, vus: 2, shape: constant }
+    instances: 1
+    chaos: none
+    note: 가장 작은 경합. 깨지는 방식도 운이 좋으면 통과한다 — 여러 번 돌려 봐야 하는 이유.
+  - id: hundred-one-instance
+    label: 동시 100명 · 서버 1대
+    load: { model: closed, vus: 100, shape: constant }
+    instances: 1
+    chaos: none
+    note: 한 대 안에서 줄이 길어진다. 메모리 락은 맞지만 대기가 쌓인다.
+  - id: spike-200-two-instances
+    label: 마감 직전 몰림 200 req/s · 서버 2대
+    load: { model: open, rate: 200, shape: spike }
+    instances: 2
+    chaos: none
+    note: 서버를 늘리는 순간 프로세스 메모리 락은 의미를 잃는다.
+  - id: db-slow
+    label: DB 지연 50ms · 서버 2대
+    load: { model: open, rate: 100, shape: constant }
+    instances: 2
+    chaos: { toxiproxy: { latencyMs: 50 } }
+    note: DB 왕복마다 50ms. 잠금을 쥔 채 왕복을 여러 번 하는 코드가 먼저 무너진다.
+  - id: small-pool
+    label: 커넥션 풀 5 · 200 req/s · 서버 2대
+    load: { model: open, rate: 200, shape: constant }
+    instances: 2
+    chaos: none
+    note: 잠금 대기 중인 트랜잭션도 커넥션을 쥐고 있다. 풀이 작으면 대기가 풀 대기로 번진다.
+
+outcomes:
+  # ── no-lock ───────────────────────────────────────────────
+  - strategy: no-lock
+    situation: two-users-one-instance
+    verdict: broken
+    expected: 초과 판매 발생 가능(여러 번 중 일부)
+    measured: null
+    why: 읽은 값으로 앱이 계산한 상수를 쓴다. 두 요청의 읽기-쓰기가 겹치면 한쪽 차감이 덮인다. 2명이면 겹칠 확률이 낮아 통과하는 회차도 있다.
+    focus:
+      - { file: strategies/no-lock.strategy.ts, marker: read-without-lock }
+      - { file: strategies/no-lock.strategy.ts, marker: read-then-write }
+    sql:
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1
+      - update g02_product set stock = $1 where id = $2
+    concepts: [lost-update]
+  - strategy: no-lock
+    situation: hundred-one-instance
+    verdict: broken
+    expected: 초과 판매 다수
+    measured: null
+    why: 동시 100명이면 같은 stock 값을 읽는 요청이 수십 개씩 겹친다. 모두 성공 응답을 받고 차감은 하나만 남는다.
+    focus:
+      - { file: strategies/no-lock.strategy.ts, marker: read-then-write }
+      - { file: strategies/no-lock.strategy.ts, marker: flush-constant }
+    sql:
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1
+      - update g02_product set stock = $1 where id = $2
+    concepts: [lost-update, eval-plan-qual]
+  - strategy: no-lock
+    situation: spike-200-two-instances
+    verdict: broken
+    expected: 초과 판매 다수, 서버 대수와 무관
+    measured: null
+    why: 락이 아예 없으므로 서버 대수는 상관없다. 몰림 순간에 겹침이 최대가 된다.
+    focus:
+      - { file: strategies/no-lock.strategy.ts, marker: read-then-write }
+    sql:
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1
+      - update g02_product set stock = $1 where id = $2
+    concepts: [lost-update]
+  - strategy: no-lock
+    situation: db-slow
+    verdict: broken
+    expected: 초과 판매가 지연 없을 때보다 늘어남
+    measured: null
+    why: 읽기와 쓰기 사이에 DB 왕복이 더 걸리므로 경합 창이 넓어진다. 같은 부하에서도 겹치는 요청 수가 늘어난다.
+    focus:
+      - { file: strategies/no-lock.strategy.ts, marker: contention-window }
+      - { file: strategies/no-lock.strategy.ts, marker: read-then-write }
+    sql:
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1
+      - update g02_product set stock = $1 where id = $2
+    concepts: [lost-update]
+  - strategy: no-lock
+    situation: small-pool
+    verdict: broken
+    expected: 초과 판매. 풀은 문제를 가리지도 고치지도 않는다
+    measured: null
+    why: 풀이 작으면 동시에 DB에 들어가는 수가 줄어 겹침이 조금 줄 뿐, 읽고-계산하고-쓰는 구조가 그대로라 여전히 덮인다.
+    focus:
+      - { file: strategies/no-lock.strategy.ts, marker: read-then-write }
+    sql:
+      - update g02_product set stock = $1 where id = $2
+    concepts: [lost-update]
+
+  # ── app-memory-lock ───────────────────────────────────────
+  - strategy: app-memory-lock
+    situation: two-users-one-instance
+    verdict: ok
+    expected: 위반 0
+    measured: null
+    why: 서버가 1대면 모든 요청이 같은 Map을 본다. 같은 상품 요청은 프로세스 안에서 한 줄로 선다.
+    focus:
+      - { file: strategies/app-memory-lock.strategy.ts, marker: memory-mutex }
+    sql:
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1
+      - update g02_product set stock = $1 where id = $2
+    concepts: [process-local]
+  - strategy: app-memory-lock
+    situation: hundred-one-instance
+    verdict: slow
+    expected: 위반 0, p95 증가(앱 안 대기열)
+    measured: null
+    why: 맞지만 같은 상품 요청이 앱 메모리에서 한 줄로 기다린다. 대기는 DB가 아니라 Node 프로세스 안에 쌓여 pg_locks에 보이지 않는다.
+    focus:
+      - { file: strategies/app-memory-lock.strategy.ts, marker: wait-in-process }
+    sql:
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1
+      - update g02_product set stock = $1 where id = $2
+    concepts: [process-local, hot-row]
+  - strategy: app-memory-lock
+    situation: spike-200-two-instances
+    verdict: broken
+    expected: 초과 판매 발생(서버 2대)
+    measured: null
+    why: 서버마다 Map이 따로 있다. A 서버와 B 서버의 요청은 서로의 락을 모른 채 같은 행을 읽고 상수를 쓴다.
+    focus:
+      - { file: strategies/app-memory-lock.strategy.ts, marker: per-instance-map }
+      - { file: strategies/app-memory-lock.strategy.ts, marker: write-computed }
+    sql:
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1
+      - update g02_product set stock = $1 where id = $2
+    concepts: [process-local, lost-update]
+  - strategy: app-memory-lock
+    situation: db-slow
+    verdict: broken
+    expected: 초과 판매 + 앱 안 대기 증가
+    measured: null
+    why: 서버 2대라 깨지는 건 같고, 지연 때문에 서버 안 대기열도 길어진다. 느리면서 틀린 최악의 조합.
+    focus:
+      - { file: strategies/app-memory-lock.strategy.ts, marker: per-instance-map }
+      - { file: strategies/app-memory-lock.strategy.ts, marker: read-inside-mutex }
+    sql:
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1
+      - update g02_product set stock = $1 where id = $2
+    concepts: [process-local]
+  - strategy: app-memory-lock
+    situation: small-pool
+    verdict: broken
+    expected: 초과 판매(서버 2대)
+    measured: null
+    why: 풀 크기와 무관하게 서버 간 락이 없다.
+    focus:
+      - { file: strategies/app-memory-lock.strategy.ts, marker: per-instance-map }
+    sql:
+      - update g02_product set stock = $1 where id = $2
+    concepts: [process-local]
+
+  # ── row-lock ──────────────────────────────────────────────
+  - strategy: row-lock
+    situation: two-users-one-instance
+    verdict: ok
+    expected: 위반 0
+    measured: null
+    why: 두 번째 요청은 FOR UPDATE에서 첫 번째의 커밋을 기다린 뒤 최신 재고를 읽는다.
+    focus:
+      - { file: strategies/row-lock.strategy.ts, marker: for-update }
+    sql:
+      - set local lock_timeout = '1000ms'
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1 for update
+      - update g02_product set stock = $1 where id = $2
+    concepts: [row-lock]
+  - strategy: row-lock
+    situation: hundred-one-instance
+    verdict: ok
+    expected: 위반 0, 잠금 대기로 p95 증가
+    measured: null
+    why: DB가 서버 대수와 상관없이 한 줄로 세운다. 대기는 pg_locks / wait_event=Lock 으로 보인다.
+    focus:
+      - { file: strategies/row-lock.strategy.ts, marker: for-update }
+      - { file: strategies/row-lock.strategy.ts, marker: hold-while-thinking }
+    sql:
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1 for update
+      - update g02_product set stock = $1 where id = $2
+    concepts: [row-lock, hot-row]
+  - strategy: row-lock
+    situation: spike-200-two-instances
+    verdict: slow
+    expected: 위반 0, 몰림 구간 p95 급증
+    measured: null
+    why: 맞지만 한 행에 몰리면 처리량 상한이 1/(보유 시간)이 된다. 잠금을 쥔 채 SELECT 왕복·계산·UPDATE·원장 INSERT를 모두 하므로 보유 시간이 길다.
+    focus:
+      - { file: strategies/row-lock.strategy.ts, marker: hold-while-thinking }
+      - { file: strategies/row-lock.strategy.ts, marker: release-at-commit }
+    sql:
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1 for update
+      - update g02_product set stock = $1 where id = $2
+      - insert into g02_order_ledger (...) values (...)
+    concepts: [row-lock, hot-row]
+  - strategy: row-lock
+    situation: db-slow
+    verdict: rejects
+    expected: 위반 0, lock_timeout(55P03) 실패 다수
+    measured: null
+    why: 잠금 보유 중 DB 왕복이 4번(SET, SELECT FOR UPDATE, UPDATE, INSERT+COMMIT)이라 보유 시간이 200ms를 넘는다. 줄에 선 요청이 1초 상한을 넘겨 거절된다.
+    focus:
+      - { file: strategies/row-lock.strategy.ts, marker: lock-timeout }
+      - { file: strategies/row-lock.strategy.ts, marker: release-at-commit }
+    sql:
+      - set local lock_timeout = '1000ms'
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1 for update
+      - "-- ERROR 55P03: canceling statement due to lock timeout"
+    concepts: [lock-timeout, hot-row]
+  - strategy: row-lock
+    situation: small-pool
+    verdict: slow
+    expected: 위반 0, 풀 대기 증가
+    measured: null
+    why: 잠금을 기다리는 트랜잭션도 커넥션을 쥔다. 풀 5개가 모두 같은 행 대기에 묶이면 다른 상품 요청까지 풀 앞에서 기다린다.
+    focus:
+      - { file: strategies/row-lock.strategy.ts, marker: for-update }
+    sql:
+      - select p0.* from g02_product as p0 where p0.id = $1 limit 1 for update
+    concepts: [row-lock, hot-row]
+
+  # ── conditional-update ────────────────────────────────────
+  - strategy: conditional-update
+    situation: two-users-one-instance
+    verdict: ok
+    expected: 위반 0
+    measured: null
+    why: 검사와 차감이 한 문장이다. 두 번째 UPDATE는 첫 번째 커밋을 기다린 뒤 최신 재고로 WHERE를 다시 평가한다.
+    focus:
+      - { file: strategies/conditional-update.strategy.ts, marker: atomic-decrement }
+      - { file: strategies/conditional-update.strategy.ts, marker: guard-in-where }
+    sql:
+      - update g02_product set stock = stock - $1 where id = $2 and stock >= $3
+    concepts: [eval-plan-qual]
+  - strategy: conditional-update
+    situation: hundred-one-instance
+    verdict: ok
+    expected: 위반 0, row-lock보다 낮은 p95
+    measured: null
+    why: SELECT 왕복이 없고 잠금은 UPDATE부터 COMMIT까지만 쥔다. 같은 행 대기열이 row-lock보다 빨리 빠진다.
+    focus:
+      - { file: strategies/conditional-update.strategy.ts, marker: atomic-decrement }
+      - { file: strategies/conditional-update.strategy.ts, marker: short-hold }
+    sql:
+      - update g02_product set stock = stock - $1 where id = $2 and stock >= $3
+      - insert into g02_order_ledger (...) values (...)
+    concepts: [eval-plan-qual, hot-row]
+  - strategy: conditional-update
+    situation: spike-200-two-instances
+    verdict: ok
+    expected: 위반 0, 소진 뒤 영향 행 0 → 품절 응답
+    measured: null
+    why: 서버 대수와 무관하게 DB가 행 단위로 직렬화한다. 재고가 바닥나면 WHERE가 거짓이 되어 영향 행 0 → 품절로 끝난다.
+    focus:
+      - { file: strategies/conditional-update.strategy.ts, marker: guard-in-where }
+      - { file: strategies/conditional-update.strategy.ts, marker: affected-rows }
+    sql:
+      - update g02_product set stock = stock - $1 where id = $2 and stock >= $3
+      - "-- 재고 소진 뒤: UPDATE 0"
+    concepts: [eval-plan-qual]
+  - strategy: conditional-update
+    situation: db-slow
+    verdict: ok
+    expected: 위반 0, 거절 없음(보유 시간이 왕복 2번)
+    measured: null
+    why: 잠금을 쥔 동안 왕복은 UPDATE와 INSERT+COMMIT 두 번뿐이다. 지연이 들어가도 row-lock의 절반 수준이라 lock_timeout까지 가지 않는다.
+    focus:
+      - { file: strategies/conditional-update.strategy.ts, marker: short-hold }
+    sql:
+      - update g02_product set stock = stock - $1 where id = $2 and stock >= $3
+      - insert into g02_order_ledger (...) values (...)
+    concepts: [hot-row]
+  - strategy: conditional-update
+    situation: small-pool
+    verdict: ok
+    expected: 위반 0, 풀 대기 짧음
+    measured: null
+    why: 트랜잭션이 짧아 커넥션을 빨리 돌려준다. 같은 풀에서 row-lock보다 많은 요청을 처리한다.
+    focus:
+      - { file: strategies/conditional-update.strategy.ts, marker: short-hold }
+    sql:
+      - update g02_product set stock = stock - $1 where id = $2 and stock >= $3
+    concepts: [hot-row]
+
+choose:
+  - when: 재고 숫자 하나만 원자적으로 줄이면 된다
+    pick: conditional-update
+    because: 검사와 차감을 한 문장에 넣으면 DB가 잠금 대기 뒤 최신 값으로 다시 평가해 준다. 가장 짧게 잠근다.
+    avoid: [no-lock, app-memory-lock]
+  - when: 읽은 값으로 여러 규칙(한도·쿠폰·옵션 재고)을 검사한 뒤 써야 한다
+    pick: row-lock
+    because: 조건을 WHERE 한 줄로 못 담으면 읽는 순간 잠가야 한다. 대신 잠금 안에서 하는 일을 최소로 줄인다.
+    avoid: [no-lock]
+  - when: 인기 상품 하나에 순간 몰림 + DB가 느릴 수 있다
+    pick: conditional-update
+    because: 처리량 상한이 잠금 보유 시간에 달려 있다. 왕복이 적은 쪽이 지연에 덜 무너진다.
+    avoid: [row-lock, app-memory-lock]
+  - when: 지금은 서버 1대지만 늘릴 수 있다
+    pick: conditional-update
+    because: 프로세스 메모리 락은 대수를 늘리는 순간 조용히 깨진다. 처음부터 DB가 보장하게 둔다.
+    avoid: [app-memory-lock]

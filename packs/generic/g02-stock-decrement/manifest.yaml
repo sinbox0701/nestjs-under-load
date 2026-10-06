@@ -1,0 +1,86 @@
+# G02 재고·좌석 차감 경합 — 시나리오 manifest (DESIGN §6.2)
+# 0단계: strategy 4개(no-lock, app-memory-lock, row-lock, conditional-update). redis-lock·advisory-xact-lock은 1단계.
+id: g02-stock-decrement
+pack: generic
+title: 재고·좌석 차감 경합
+summary: 같은 상품 재고를 여러 요청이 동시에 차감할 때 음수/초과 판매가 생기는 조건과 고치는 방법
+tags: [lock, contention]
+minAppInstances: 2              # 1대면 메모리 락도 맞게 보이므로 최소 2
+
+data:
+  entities: [Product, OrderLedger]
+  seed:
+    generator: seed/index.ts
+    defaults: { products: 5, warmupProducts: 5, stockPerProduct: 100 }
+    distribution: { kind: uniform }   # 0단계는 균등만. Zipf는 1단계 loadtest/lib
+
+api:
+  - { method: POST, path: /g02/orders, body: OrderCreateDto, idempotent: false, headers: [X-Request-Id] }
+  - { method: GET,  path: /g02/products/:id/stock }
+
+strategies:
+  - id: no-lock
+    label: 락 없음 (읽고-계산하고-쓰기)
+    kind: broken
+    bypassesOrm: false
+    params: {}
+  - id: app-memory-lock
+    label: 인스턴스 메모리 mutex (1대 통과, 2대 위반 시연)
+    kind: broken
+    bypassesOrm: false
+    params: {}
+  - id: row-lock
+    label: 행 잠금 SELECT ... FOR UPDATE
+    kind: fixed
+    bypassesOrm: false
+    params:
+      lockTimeoutMs: { type: integer, default: 1000 }
+  - id: conditional-update
+    label: 조건부 UPDATE (stock >= qty)
+    kind: fixed
+    bypassesOrm: true
+    params: {}
+
+invariants:
+  - id: no-negative-stock
+    severity: critical
+    sql: invariants.sql#no_negative_stock
+  - id: sold-equals-decrement
+    severity: critical
+    sql: invariants.sql#sold_equals_decrement
+  - id: no-oversell
+    severity: critical
+    sql: invariants.sql#no_oversell
+  - id: no-duplicate-request-id
+    severity: critical
+    sql: invariants.sql#no_duplicate_request_id
+  - id: ledger-matches-k6
+    severity: info
+    sql: invariants.sql#ledger_counts      # 원장 결과별 행 수. k6 카운트와의 대조는 run.mjs가 한다
+
+load:
+  # 0단계 run.mjs는 open model(constant-arrival-rate)로 돌린다. closed 버전은 1단계.
+  model: open
+  executor: constant-arrival-rate
+  defaults: { rate: 100, timeUnit: 1s, duration: 30s, preAllocatedVUs: 50, maxVUs: 200 }
+  warmup: { duration: 10s }     # 별도 k6 실행, 웜업 전용 상품만 대상으로 함
+  allowedProfiles: [constant]
+
+chaosHooks:
+  - contention-window-delay     # strategy 안 ctx.contentionWindow('after-read') 지점
+
+stage:
+  sceneType: queue-at-counter
+  entityLabel: 상품
+  representativeActors: 8
+
+k6:
+  template: k6/template.js
+  paramsSchema: k6/params.schema.json
+
+checklist:
+  - 락 없음에서 불변식 위반이 몇 회 반복 중 몇 회 나왔고, 왜 매번 다른가
+  - 행 잠금에서 대기 시간이 어디(pg_locks / wait_event)에서 보이는가
+  - 조건부 UPDATE가 행 잠금보다 짧게 잠그는 이유
+  - READ COMMITTED에서 FOR UPDATE·UPDATE가 잠금 대기 후 최신 행 버전으로 WHERE를 다시 검사하는 동작(EvalPlanQual)이 conditional-update를 왜 맞게 만드는가
+  - 앱 1대에서 app-memory-lock은 통과하고 2대에서 깨지는 이유

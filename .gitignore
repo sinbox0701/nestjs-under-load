@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# env / secrets (keep the example)
+.env
+.env.*
+!.env.example
+
+# experiment run artifacts and local metadata
+runs/
+*.sqlite
+*.sqlite3
+*.db
+
+# test / coverage
+coverage/
+.nyc_output/
+
+# logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# tooling caches
+.turbo/
+.vite/
+.eslintcache
+.cache/
+
+# editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
