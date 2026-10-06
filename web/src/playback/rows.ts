@@ -1,4 +1,4 @@
-import { phaseInfo, type PhaseGroup } from '../events/phases';
+import { phaseInfo, type PhaseGroup, type PhaseInfo } from '../events/phases';
 import type { Phase, RunEvent } from '../events/types';
 import { AUTO_STOP_DELAY, MERGE_WINDOW, STEP_EPS } from './constants';
 import type { AutoStop } from './stops';
@@ -17,23 +17,51 @@ export interface Row {
   t: number;
   tEnd: number;
   events: RunEvent[];
+  /** 단계 이동 착지점(기록 설정을 반영해 buildRows가 정한 값). 없으면 rowTarget의 기본 규칙. */
+  target?: number;
 }
 
-export function isVisible(e: RunEvent, f: RowFilter): boolean {
-  const info = phaseInfo(e.phase);
-  return !f.off.has(info.group) && (f.view === 'all' || info.key);
+export function isVisible(
+  e: RunEvent,
+  f: RowFilter,
+  info: (p: Phase) => PhaseInfo = phaseInfo,
+): boolean {
+  const i = info(e.phase);
+  return !f.off.has(i.group) && (f.view === 'all' || i.key);
 }
 
-export function buildRows(events: readonly RunEvent[], f: RowFilter): Row[] {
+export interface RowOptions {
+  info?: (p: Phase) => PhaseInfo;
+  /** 자동 멈춤 대상 판정(있으면 행 착지점을 이 기준으로 정한다). */
+  isAuto?: (phase: Phase, e: RunEvent) => boolean;
+  /** 자동 멈춤 지연(isAuto와 함께). */
+  delay?: number;
+}
+
+/** 같은 phase·같은 mergeKey가 MERGE_WINDOW 안에 이어지면 한 행(×N)으로 묶는다. */
+export function buildRows(events: readonly RunEvent[], f: RowFilter, o: RowOptions = {}): Row[] {
+  const info = o.info ?? phaseInfo;
   const rows: Row[] = [];
   for (const e of events) {
-    if (!isVisible(e, f)) continue;
+    if (!isVisible(e, f, info)) continue;
     const last = rows[rows.length - 1];
-    if (last && last.phase === e.phase && e.t - last.t <= MERGE_WINDOW) {
+    if (
+      last &&
+      last.phase === e.phase &&
+      (last.events[0]!.mergeKey ?? '') === (e.mergeKey ?? '') &&
+      e.t - last.t <= MERGE_WINDOW
+    ) {
       last.events.push(e);
       last.tEnd = e.t;
     } else {
       rows.push({ phase: e.phase, t: e.t, tEnd: e.t, events: [e] });
+    }
+  }
+  if (o.isAuto) {
+    const isAuto = o.isAuto;
+    const delay = o.delay ?? AUTO_STOP_DELAY;
+    for (const r of rows) {
+      r.target = r.events.some((e) => isAuto(e.phase, e)) ? r.tEnd + delay : r.tEnd + STEP_EPS;
     }
   }
   return rows;
@@ -41,6 +69,7 @@ export function buildRows(events: readonly RunEvent[], f: RowFilter): Row[] {
 
 /** 행에 도착하는 재생 위치. 자동 멈춤 종류면 자동 멈춤과 같은 지점에 선다. */
 export function rowTarget(row: Row): number {
+  if (row.target !== undefined) return row.target;
   return phaseInfo(row.phase).autoStop ? row.tEnd + AUTO_STOP_DELAY : row.tEnd + STEP_EPS;
 }
 

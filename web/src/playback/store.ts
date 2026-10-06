@@ -3,7 +3,7 @@ import type { PhaseGroup } from '../events/phases';
 import type { Recording } from '../events/types';
 import { advance, buildCompressionMap, type CompressionMap } from './compression';
 import { DEFAULT_SPEED, type Speed } from './constants';
-import { prepare, type Prepared } from './prepare';
+import { autoTest, prepare, withCause, type Prepared } from './prepare';
 import { buildRows, stepNext, stepPrev, stopForRow, type Row, type RowView } from './rows';
 import { firstStopBetween, type AutoStop } from './stops';
 
@@ -18,6 +18,8 @@ export interface PlaybackState {
   speed: Speed;
   ff: boolean;
   auto: boolean;
+  /** 원인 장면(같은 버전 수신 등)에서도 자동 멈춤. 기본 켬. */
+  autoCause: boolean;
   /** 자동 멈춤(또는 단계 이동으로 핵심 이벤트에 도착)한 지점의 설명 대상. */
   callout: AutoStop | null;
   view: RowView;
@@ -37,6 +39,8 @@ export interface PlaybackActions {
   setSpeed(speed: Speed): void;
   toggleFF(): void;
   toggleAuto(): void;
+  /** 원인 멈춤 켬/끔. 끄면 원인 설명 중이던 callout도 닫는다. */
+  toggleCause(): void;
   setView(view: RowView): void;
   toggleGroup(group: PhaseGroup): void;
   /** 벽시계 wallMs만큼 진행. 자동 멈춤 지점을 넘지 않는다. */
@@ -48,7 +52,11 @@ export type PlaybackStore = PlaybackState & PlaybackActions;
 function derive(s: Pick<PlaybackState, 'prepared' | 'speed' | 'ff' | 'view' | 'off'>) {
   return {
     map: buildCompressionMap(s.prepared.gaps, s.prepared.total, s.speed, s.ff),
-    rows: buildRows(s.prepared.events, { view: s.view, off: s.off }),
+    rows: buildRows(
+      s.prepared.events,
+      { view: s.view, off: s.off },
+      { info: s.prepared.info, isAuto: autoTest(s.prepared), delay: s.prepared.delay },
+    ),
   };
 }
 
@@ -68,10 +76,11 @@ export function createPlaybackStore(recording: Recording) {
       P: 0,
       playing: false,
       auto: true,
+      autoCause: true,
       callout: null,
 
       load(rec) {
-        const prepared = prepare(rec);
+        const prepared = prepare(rec, { cause: get().autoCause });
         set({ prepared, P: 0, playing: false, callout: null, ...derive({ ...get(), prepared }) });
       },
       play() {
@@ -108,6 +117,13 @@ export function createPlaybackStore(recording: Recording) {
       toggleAuto() {
         const auto = !get().auto;
         set(auto ? { auto } : { auto, callout: null });
+      },
+      toggleCause() {
+        const autoCause = !get().autoCause;
+        const prepared = withCause(get().prepared, autoCause);
+        const c = get().callout;
+        const keep = c && (autoCause || !c.events.some((e) => e.cause));
+        set({ autoCause, prepared, callout: keep ? c : null, ...derive({ ...get(), prepared }) });
       },
       setView(view) {
         set({ view, ...derive({ ...get(), view }) });
