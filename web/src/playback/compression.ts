@@ -113,9 +113,14 @@ export function positionAtWall(map: CompressionMap, wall: number): number {
   return Math.min(seg.b, seg.a + (wall - seg.wall0) * seg.rate);
 }
 
-/** 벽시계 wallMs만큼 재생 위치를 옮긴다. */
+/**
+ * 벽시계 wallMs만큼 재생 위치를 옮긴다. 재생은 앞으로만 간다: wallMs ≤ 0(rAF 첫 프레임 시각이
+ * 효과에서 잰 시각보다 앞서는 경우 등)이면 그대로, 왕복 변환 오차로도 P 아래로 내려가지 않는다.
+ * 그래야 자동 멈춤 지점에서 `계속`했을 때 그 지점(at === P)에 다시 걸리지 않는다.
+ */
 export function advance(map: CompressionMap, P: number, wallMs: number): number {
-  return positionAtWall(map, wallAt(map, P) + wallMs);
+  if (!(wallMs > 0)) return P;
+  return Math.max(P, positionAtWall(map, wallAt(map, P) + wallMs));
 }
 
 /** P가 접히는 빈 구간 안이면 그 구간. */
