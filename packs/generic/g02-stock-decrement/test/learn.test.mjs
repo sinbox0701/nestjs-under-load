@@ -95,14 +95,23 @@ describe('outcomes', () => {
     assert.equal(learn.outcomes.length, strategyIds.length * situationIds.length);
   });
 
-  it('필드: verdict 값, expected·why 채움, measured는 실측 전 null', () => {
+  it('필드: verdict 값, expected·why 채움, measured는 null(실측 전) 또는 run id·요약·측정 조건이 있는 실측', () => {
     for (const o of learn.outcomes) {
       const k = `${o.strategy}×${o.situation}`;
       assert.ok(VERDICTS.has(o.verdict), `${k}: verdict ${o.verdict}`);
       assert.ok(typeof o.expected === 'string' && o.expected.length > 0, `${k}: expected`);
       assert.ok(typeof o.why === 'string' && o.why.length > 0, `${k}: why`);
       assert.ok('measured' in o, `${k}: measured 키 필요`);
-      assert.equal(o.measured, null, `${k}: 실측 전에는 measured: null`);
+      if (o.measured !== null) {
+        // scripts/measured.mjs가 채운 형태(DESIGN §5.4: 사람이 임의로 쓰지 않는다)
+        const m = o.measured;
+        assert.ok(typeof m.run === 'string' && m.run.includes(`_${o.strategy}_i`), `${k}: measured.run은 이 strategy의 batch id`);
+        assert.ok(Array.isArray(m.runs) && m.runs.length > 0 && m.runs.every((r) => r.startsWith(m.run)), `${k}: measured.runs`);
+        assert.ok(typeof m.summary === 'string' && m.summary.includes('p95'), `${k}: measured.summary`);
+        assert.ok(typeof m.conditions === 'string' && m.conditions.includes('상대 비교'), `${k}: measured.conditions`);
+        const s = learn.situations.find((x) => x.id === o.situation);
+        assert.ok(m.run.endsWith(`_i${s.instances}`), `${k}: 앱 대수가 situation(${s.instances}대)과 같아야 함`);
+      }
       assert.ok(Array.isArray(o.sql) && o.sql.length > 0, `${k}: sql`);
     }
   });

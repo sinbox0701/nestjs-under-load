@@ -13,7 +13,8 @@
 // DESIGN과 다른 0단계 단순화:
 // - RunConfig는 오케스트레이터 HTTP(`/internal/run-config`)가 아니라 runs/_active/run-config.json 파일로 전달한다.
 // - app 활성 수 조절은 `docker compose up --scale`(축소 시 컨테이너 제거)로 한다. 오케스트레이터는 stop/start만 쓸 예정.
-// - k6 CPU 포화·스크레이프 누락 기반 무효 판정은 cAdvisor/Prometheus가 없어 하지 않는다(validity.checks에 미측정으로 남김).
+// - k6 CPU는 cAdvisor 대신 k6 컨테이너 cgroup v2의 cpu.stat을 본 실행 전후로 읽어 평균 사용률(limit 대비)·스로틀 비율로 판정한다.
+//   순간 최대값이 아니라 본 실행 구간 평균이다. 스크레이프 누락 판정은 Prometheus가 없어 하지 않는다(validity.checks에 미측정).
 
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -304,6 +305,13 @@ export function k6ScriptHash(templateText, opts) {
   return sha256(templateText + '\n' + JSON.stringify(env));
 }
 
+/** manifest load.warmup.discardSql의 {{products}}를 본 실행 상품 수로 채운다. 없으면 null. */
+export function warmupDiscardSql(manifest, opts) {
+  const sql = manifest.load?.warmup?.discardSql;
+  if (!sql) return null;
+  return sql.replace(/\{\{products\}\}/g, String(Number(opts.products))).trim();
+}
+
 // ─────────────────────────────── 불변식·k6 결과 해석 ───────────────────────────────
 
 /** `-- name: <id>` 구간으로 나눈다. 각 구간의 SQL에서 주석·빈 줄은 유지하되 앞뒤 공백은 자른다. */
@@ -393,9 +401,58 @@ export function compareLedgerWithClient(ledger, k6) {
   };
 }
 
-/** 유효성 판정(DESIGN §7.2 중 0단계에서 가능한 것만). */
-export function judgeValidity(opts, k6) {
+/** k6 CPU 포화 임계(limit 대비 평균 사용률, 스로틀된 CFS 주기 비율). DESIGN §7.2 "임계 이상이면 무효". */
+export const K6_CPU_LIMITS = Object.freeze({ avgRatio: 0.8, throttledPeriodRatio: 0.2 });
+
+/** cgroup v2 cpu.stat 텍스트 → { usageUsec, nrPeriods, nrThrottled, throttledUsec } */
+export function parseCpuStat(text) {
+  const kv = Object.fromEntries(
+    text
+      .trim()
+      .split('\n')
+      .map((l) => l.trim().split(/\s+/))
+      .filter((p) => p.length === 2)
+      .map(([k, v]) => [k, Number(v)]),
+  );
+  if (!Number.isFinite(kv.usage_usec)) return null;
+  return { usageUsec: kv.usage_usec, nrPeriods: kv.nr_periods ?? 0, nrThrottled: kv.nr_throttled ?? 0, throttledUsec: kv.throttled_usec ?? 0 };
+}
+
+/** cgroup v2 cpu.max("200000 100000" → 2코어, "max 100000" → null) */
+export function parseCpuMax(text) {
+  const [quota, period] = text.trim().split(/\s+/);
+  if (!quota || quota === 'max' || !Number(period)) return null;
+  return Number(quota) / Number(period);
+}
+
+/** 본 실행 전후 cpu.stat 차이 → 평균 사용률(limit 대비)·스로틀 비율 */
+export function k6CpuUsage(before, after, wallMs, cores) {
+  if (!before || !after || !(wallMs > 0)) return null;
+  const usageSec = (after.usageUsec - before.usageUsec) / 1e6;
+  const periods = after.nrPeriods - before.nrPeriods;
+  const round = (x) => Math.round(x * 1000) / 1000;
+  return {
+    method: 'cgroup-v2 cpu.stat delta(본 실행 구간 평균, k6 기동 포함)',
+    cores,
+    wallSec: round(wallMs / 1000),
+    usageSec: round(usageSec),
+    avgRatio: cores ? round(usageSec / (wallMs / 1000) / cores) : null,
+    throttledPeriodRatio: periods > 0 ? round((after.nrThrottled - before.nrThrottled) / periods) : 0,
+  };
+}
+
+/** 유효성 판정(DESIGN §7.2 중 0단계에서 가능한 것만). k6Cpu: k6CpuUsage() 결과(없으면 미측정). */
+export function judgeValidity(opts, k6, k6Cpu = null) {
   const reasons = [];
+  if (k6Cpu) {
+    const saturated =
+      (k6Cpu.avgRatio !== null && k6Cpu.avgRatio >= K6_CPU_LIMITS.avgRatio) || k6Cpu.throttledPeriodRatio >= K6_CPU_LIMITS.throttledPeriodRatio;
+    if (saturated) {
+      reasons.push(
+        `k6 CPU 포화: 평균 ${k6Cpu.avgRatio}×limit(임계 ${K6_CPU_LIMITS.avgRatio}), 스로틀 주기 ${k6Cpu.throttledPeriodRatio}(임계 ${K6_CPU_LIMITS.throttledPeriodRatio}) → 측정 대상이 SUT가 아니라 k6`,
+      );
+    }
+  }
   const timeoutSec = durationToSeconds(opts.timeout);
   const maxVusEnough = opts.maxVus >= opts.rate * timeoutSec;
   if (k6 && k6.droppedIterations > 0 && !maxVusEnough) {
@@ -406,7 +463,8 @@ export function judgeValidity(opts, k6) {
     valid: reasons.length === 0,
     reasons,
     droppedCountedAsFailure: maxVusEnough,
-    checks: { k6Cpu: 'not-measured(0단계: cAdvisor 없음)', scrapeGaps: 'not-measured(0단계)' },
+    k6CpuAvgRatio: k6Cpu?.avgRatio ?? null,
+    checks: { k6Cpu: k6Cpu ?? 'not-measured', scrapeGaps: 'not-measured(0단계)' },
   };
 }
 
@@ -635,6 +693,9 @@ export async function runSession(opts, { log = console.log } = {}) {
   stepLog('스택 준비: app 이미지 빌드, postgres·k6·nginx 기동');
   if (!opts.dryRun) mkdirSync(ACTIVE_DIR, { recursive: true });
   compose(exec, ['build', 'app']);
+  // 실행마다 `up --no-recreate`로 재시작만 하므로, 기존 app 컨테이너가 있으면 방금 빌드한 이미지가 반영되지 않는다.
+  // 세션 시작 때 한 번 지워 첫 실행에서 새 이미지로 만들어지게 한다.
+  compose(exec, ['rm', '--stop', '--force', 'app']);
   compose(exec, ['up', '-d', '--wait', 'postgres', 'k6']);
 
   // 2) 템플릿 DB (없을 때만: 마이그레이션 + 시드)
@@ -699,12 +760,21 @@ export async function runSession(opts, { log = console.log } = {}) {
     if (opts.warmup !== '0s') {
       step(`k6 웜업 ${opts.warmup} (상품 ${opts.products + 1}..${opts.products + opts.warmupProducts})`);
       compose(exec, ['exec', '-T', 'k6', 'k6', 'run', '--quiet', ...envArgs(k6Env(opts, 'warmup', null)), `/${packRel}/k6/template.js`], { allowFail: true });
+      const discard = warmupDiscardSql(manifest, opts);
+      if (discard) {
+        step('웜업 흔적 제거(원장·불변식에서 제외)');
+        psql(exec, RUN_DB, discard);
+      }
     }
 
     // 6) 본 실행
     step(`k6 본 실행 ${opts.duration} @ ${opts.rate}/s (open, constant-arrival-rate)`);
     const summaryInContainer = `/runs/${runId}/summary.json`;
+    const readK6Cgroup = (file) => compose(exec, ['exec', '-T', 'k6', 'cat', `/sys/fs/cgroup/${file}`], { capture: true, allowFail: true, dryStdout: '' }).stdout;
+    const cpuBefore = parseCpuStat(readK6Cgroup('cpu.stat'));
+    const k6Started = Date.now();
     const k6Run = compose(exec, ['exec', '-T', 'k6', 'k6', 'run', ...envArgs(k6Env(opts, 'main', summaryInContainer)), `/${packRel}/k6/template.js`], { allowFail: true });
+    const k6Cpu = k6CpuUsage(cpuBefore, parseCpuStat(readK6Cgroup('cpu.stat')), Date.now() - k6Started, parseCpuMax(readK6Cgroup('cpu.max') || 'max'));
 
     // 7) 불변식
     step('불변식 검사(invariants.sql, DB 원장 기준)');
@@ -727,7 +797,7 @@ export async function runSession(opts, { log = console.log } = {}) {
       strategy: p.strategy,
       strategyParams,
       appInstances: p.appInstances,
-      validity: opts.dryRun ? null : judgeValidity(opts, k6),
+      validity: opts.dryRun ? null : judgeValidity(opts, k6, k6Cpu),
       invariants,
       ledgerVsClient: compareLedgerWithClient(sqlResults.ledger_counts, k6),
       k6,
@@ -740,7 +810,7 @@ export async function runSession(opts, { log = console.log } = {}) {
     } else {
       writeJsonAtomic(path.join(runDir, 'metadata.json'), metadata);
       const failed = (invariants ?? []).filter((i) => i.severity !== 'info' && !i.passed).map((i) => `${i.id}=${i.violations}`);
-      log(`    불변식: ${failed.length ? `위반 ${failed.join(', ')}` : '모두 통과'} | k6 성공 ${k6?.success ?? '?'} 품절 ${k6?.soldOut ?? '?'} 실패 ${k6?.failed ?? '?'} 드롭 ${k6?.droppedIterations ?? '?'}`);
+      log(`    불변식: ${failed.length ? `위반 ${failed.join(', ')}` : '모두 통과'} | k6 성공 ${k6?.success ?? '?'} 품절 ${k6?.soldOut ?? '?'} 실패 ${k6?.failed ?? '?'} 드롭 ${k6?.droppedIterations ?? '?'} | k6 CPU ${k6Cpu?.avgRatio ?? '?'}×limit | ${metadata.validity.valid ? '유효' : `무효: ${metadata.validity.reasons.join('; ')}`}`);
     }
     results.push({ runId, batchId, strategy: p.strategy, appInstances: p.appInstances, repetition: p.repetition, invariants, validity: metadata.validity });
   }

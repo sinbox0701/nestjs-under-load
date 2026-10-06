@@ -20,17 +20,21 @@ import {
   extractComposeFacts,
   judgeInvariants,
   judgeValidity,
+  k6CpuUsage,
   k6Env,
   loadManifest,
   makeBatchId,
   makeRunId,
   parseCliArgs,
+  parseCpuMax,
+  parseCpuStat,
   parseCsvRow,
   parseInvariantsSql,
   runSession,
   stamp,
   summarizeK6,
   templateDbName,
+  warmupDiscardSql,
 } from './run.mjs';
 
 const { dir: G02_DIR, manifest: G02 } = loadManifest('g02-stock-decrement');
@@ -210,6 +214,26 @@ describe('메타데이터', () => {
     assert.equal(v.droppedCountedAsFailure, false);
     assert.equal(judgeValidity(parseCliArgs(['--max-vus', '1000']), { droppedIterations: 3, httpReqs: 10 }).valid, true);
   });
+
+  it('k6 CPU: cgroup cpu.stat 전후 차이로 평균 사용률·스로틀 비율, 포화면 무효', () => {
+    const before = parseCpuStat('usage_usec 1000000\nuser_usec 1\nsystem_usec 1\nnr_periods 100\nnr_throttled 0\nthrottled_usec 0\n');
+    const after = parseCpuStat('usage_usec 11000000\nnr_periods 200\nnr_throttled 5\nthrottled_usec 9\n');
+    assert.equal(parseCpuMax('200000 100000'), 2);
+    assert.equal(parseCpuMax('max 100000'), null);
+    assert.equal(parseCpuStat(''), null);
+    const low = k6CpuUsage(before, after, 20_000, 2); // 10 CPU초 / 20초 / 2코어
+    assert.equal(low.avgRatio, 0.25);
+    assert.equal(low.throttledPeriodRatio, 0.05);
+    const o = parseCliArgs(['--max-vus', '1000']);
+    const ok = judgeValidity(o, { droppedIterations: 0, httpReqs: 10 }, low);
+    assert.equal(ok.valid, true);
+    assert.equal(ok.k6CpuAvgRatio, 0.25);
+    const hot = k6CpuUsage(before, after, 6_000, 2); // 10/6/2 ≈ 0.833
+    const bad = judgeValidity(o, { droppedIterations: 0, httpReqs: 10 }, hot);
+    assert.equal(bad.valid, false);
+    assert.match(bad.reasons[0], /k6 CPU 포화/);
+    assert.equal(judgeValidity(o, { droppedIterations: 0, httpReqs: 10 }).checks.k6Cpu, 'not-measured');
+  });
 });
 
 describe('k6·불변식 결과 해석', () => {
@@ -310,6 +334,17 @@ describe('팩 구조(폴더 규약)', () => {
   });
 });
 
+describe('웜업 흔적 제거', () => {
+  it('G02 discardSql: 본 실행 상품 범위 밖(웜업 상품)의 원장·상품만 지우고, PG17 파서로 파싱된다', async () => {
+    const sql = warmupDiscardSql(G02, parseCliArgs(['--products', '7']));
+    assert.match(sql, /delete from g02_order_ledger where product_id > 7;/);
+    assert.match(sql, /delete from g02_product where id > 7;/);
+    assert.doesNotMatch(sql, /\{\{/);
+    await parseSql(sql);
+    assert.equal(warmupDiscardSql({ load: {} }, parseCliArgs([])), null);
+  });
+});
+
 describe('dry-run', () => {
   it('docker 없이 전 단계를 출력하고 파일을 쓰지 않는다', async () => {
     const lines = [];
@@ -321,6 +356,12 @@ describe('dry-run', () => {
       assert.ok(out.includes(marker), `단계 '${marker}' 출력 없음`);
     }
     assert.ok(out.includes('drop database if exists lab_run with (force)'));
+    // 웜업 흔적 제거가 웜업 뒤·본 실행 앞
+    assert.ok(out.indexOf('웜업 흔적 제거') > out.indexOf('k6 웜업'));
+    assert.ok(out.indexOf('웜업 흔적 제거') < out.indexOf('k6 본 실행'));
+    // 빌드 직후 기존 app 컨테이너 제거(새 이미지 반영)가 첫 app 기동보다 먼저
+    assert.ok(out.indexOf('rm --stop --force app') > out.indexOf('build app'));
+    assert.ok(out.indexOf('rm --stop --force app') < out.indexOf('--scale app='));
     assert.ok(out.includes('constant-arrival-rate') || out.includes('PHASE=main'));
     const after = existsSync(path.join(REPO_ROOT, 'runs')) ? readdirSync(path.join(REPO_ROOT, 'runs')).length : 0;
     assert.equal(after, before);

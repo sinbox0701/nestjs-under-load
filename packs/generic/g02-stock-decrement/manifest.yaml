@@ -63,7 +63,13 @@ load:
   model: open
   executor: constant-arrival-rate
   defaults: { rate: 100, timeUnit: 1s, duration: 30s, preAllocatedVUs: 50, maxVUs: 200 }
-  warmup: { duration: 10s }     # 별도 k6 실행, 웜업 전용 상품만 대상으로 함
+  warmup:
+    duration: 10s               # 별도 k6 실행, 웜업 전용 상품만 대상으로 함
+    # 웜업이 끝나면 run.mjs가 본 실행 전에 이 SQL로 웜업 흔적을 버린다(DESIGN §7.1 "웜업 제외").
+    # 남겨 두면 원장 대조(ledger-matches-k6)와 불변식에 웜업 주문이 섞인다. {{products}} = 본 실행 상품 수(정수).
+    discardSql: >-
+      delete from g02_order_ledger where product_id > {{products}};
+      delete from g02_product where id > {{products}};
   allowedProfiles: [constant]
 
 chaosHooks:

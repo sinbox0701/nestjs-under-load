@@ -193,6 +193,9 @@ export async function createTestDatabase() {
       extensions: [Migrator],
       migrations: {
         tableName: 'mikro_orm_migrations_g02_test',
+        // 기본값(snapshotOnMigrate)이면 up() 때마다 팩 폴더에 .snapshot-<db>.json을 남긴다. 테스트 DB는 일회용이라 끈다.
+        snapshot: false,
+        snapshotOnMigrate: false,
         migrationsList: [{ name: 'Migration20261007000000_g02_init', class: Migration20261007000000_g02_init }],
       },
     });

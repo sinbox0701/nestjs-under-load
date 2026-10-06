@@ -137,8 +137,22 @@ outcomes:
     situation: spike-200-one-instance
     verdict: broken
     expected: "재고가 소진되는 처음 몇 초 동안 잃어버린 갱신이 여러 번 나고, sold_equals_decrement·no_oversell이 위반된다"
-    measured: null
-    why: "서버가 1대여도 요청마다 DB 왕복을 await 하는 사이 다른 요청이 끼어든다. 상품당 초당 약 40건이면 경합 창이 겹치는 일이 흔하다. 뒤의 UPDATE는 앞 커밋을 기다린 뒤 WHERE id=?만 재검사하므로 그대로 덮어쓴다"
+    measured:
+      run: 2026-10-06T16-20-36Z_g02_no-lock_i1
+      runs: [ 2026-10-06T16-20-36Z_g02_no-lock_i1_r1, 2026-10-06T16-20-36Z_g02_no-lock_i1_r2, 2026-10-06T16-20-36Z_g02_no-lock_i1_r3 ]
+      summary: 위반 1/3회 발생(sold-equals-decrement 상품 1·0·0개, no-oversell 상품 1·0·0개) · 원장 성공 501·500·500건 / 총재고 500 · 처리량 200 req/s(200~200.1) · p95 2.84ms(2.83~2.97) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 1, 0, 0 ]
+        no-oversell: [ 1, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 501, 500, 500 ]
+      throughputRps: { median: 200, min: 200, max: 200.1 }
+      p95Ms: { median: 2.84, min: 2.83, max: 2.97 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.044, min: 0.043, max: 0.044 }
+      conditions: 로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s(상황 정의 shape=spike, 0단계 run.mjs는 constant만 지원) · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "서버가 1대여도 요청마다 DB 왕복을 await 하는 사이 다른 요청이 끼어들 수 있고, 뒤의 UPDATE는 앞 커밋을 기다린 뒤 WHERE id=?만 재검사하므로 그대로 덮어쓴다. 다만 실측(로컬, 지연 주입 없음)에서는 3회 중 1회, 1건만 초과 판매됐다. 같은 컨테이너 망의 DB 왕복이 1ms 안팎이라 SELECT~UPDATE 경합 창이 몇 ms에 그치고, 상품당 초당 약 40건이면 두 요청이 그 창에 겹칠 확률이 낮다. 재고 500개가 약 3초 만에 소진되어 경합이 가능한 구간도 짧다. 위반이 드물게 나는 것이지 막혀 있는 것이 아니다. 경합 창을 30ms로 넓히면(지연 주입, 통합 테스트) 매번 깨진다"
     focus:
       - { file: strategies/no-lock.strategy.ts, marker: read-then-write }
       - { file: strategies/no-lock.strategy.ts, marker: app-side-check }
@@ -148,8 +162,22 @@ outcomes:
     situation: spike-200-two-instances
     verdict: broken
     expected: "서버 1대와 같은 이유로 위반. 인스턴스 수와 무관하다"
-    measured: null
-    why: "보호 장치가 처음부터 없으므로 인스턴스가 늘어도 줄어도 결과의 성격은 같다. 위반 횟수만 실행마다 달라진다"
+    measured:
+      run: 2026-10-06T16-20-36Z_g02_no-lock_i2
+      runs: [ 2026-10-06T16-20-36Z_g02_no-lock_i2_r1, 2026-10-06T16-20-36Z_g02_no-lock_i2_r2, 2026-10-06T16-20-36Z_g02_no-lock_i2_r3 ]
+      summary: 위반 1/3회 발생(sold-equals-decrement 상품 0·0·1개, no-oversell 상품 0·0·1개) · 원장 성공 500·500·501건 / 총재고 500 · 처리량 200.1 req/s(200.1~200.1) · p95 2.93ms(2.89~3.21) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 1 ]
+        no-oversell: [ 0, 0, 1 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 501 ]
+      throughputRps: { median: 200.1, min: 200.1, max: 200.1 }
+      p95Ms: { median: 2.93, min: 2.89, max: 3.21 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.042, min: 0.041, max: 0.042 }
+      conditions: 로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s(상황 정의 shape=spike, 0단계 run.mjs는 constant만 지원) · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "보호 장치가 처음부터 없으므로 인스턴스가 늘어도 줄어도 결과의 성격은 같다. 실측에서도 서버 1대와 똑같이 3회 중 1회, 1건 초과 판매였다. 로컬에서는 경합 창이 몇 ms라 드물게 드러날 뿐이고, 위반 횟수는 실행마다 달라진다"
     focus:
       - { file: strategies/no-lock.strategy.ts, marker: tx-boundary }
       - { file: strategies/no-lock.strategy.ts, marker: app-computed-set }
@@ -204,8 +232,22 @@ outcomes:
     situation: spike-200-one-instance
     verdict: ok
     expected: "위반 0. 상품당 초당 약 40건이라 잠금 대기가 생기지만 짧다. p99가 no-lock보다 조금 높다"
-    measured: null
-    why: "보유 시간(FOR UPDATE~COMMIT, 왕복 3~4번)이 몇 ms 수준이면 상품당 천장이 수백 건/초라 여유가 있다. 품절 뒤에도 FOR UPDATE로 줄을 서지만 금방 끝난다"
+    measured:
+      run: 2026-10-06T16-20-36Z_g02_row-lock_i1
+      runs: [ 2026-10-06T16-20-36Z_g02_row-lock_i1_r1, 2026-10-06T16-20-36Z_g02_row-lock_i1_r2, 2026-10-06T16-20-36Z_g02_row-lock_i1_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 200.1 req/s(200~200.1) · p95 2.67ms(2.62~2.86) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 200.1, min: 200, max: 200.1 }
+      p95Ms: { median: 2.67, min: 2.62, max: 2.86 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.042, min: 0.04, max: 0.043 }
+      conditions: 로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s(상황 정의 shape=spike, 0단계 run.mjs는 constant만 지원) · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "보유 시간(FOR UPDATE~COMMIT, 왕복 3~4번)이 몇 ms 수준이면 상품당 천장이 수백 건/초라 여유가 있다. 품절 뒤에도 FOR UPDATE로 줄을 서지만 금방 끝난다. 실측에서는 p95·p99가 no-lock과 구분되지 않았다(p99 약 4ms로 둘 다 같은 범위). 상품당 초당 약 40건이면 잠금 대기가 거의 겹치지 않고, 요청의 약 87%가 재고 소진 뒤의 품절 응답이라 지연 분포는 품절 경로가 정한다"
     focus:
       - { file: strategies/row-lock.strategy.ts, marker: for-update }
       - { file: strategies/row-lock.strategy.ts, marker: lock-held-span }
@@ -214,7 +256,21 @@ outcomes:
     situation: spike-200-two-instances
     verdict: ok
     expected: "위반 0. 결과는 서버 1대와 같다"
-    measured: null
+    measured:
+      run: 2026-10-06T16-20-36Z_g02_row-lock_i2
+      runs: [ 2026-10-06T16-20-36Z_g02_row-lock_i2_r1, 2026-10-06T16-20-36Z_g02_row-lock_i2_r2, 2026-10-06T16-20-36Z_g02_row-lock_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 200.1 req/s(200~200.1) · p95 2.62ms(2.5~2.86) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 200.1, min: 200, max: 200.1 }
+      p95Ms: { median: 2.62, min: 2.5, max: 2.86 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.041, min: 0.041, max: 0.043 }
+      conditions: 로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s(상황 정의 shape=spike, 0단계 run.mjs는 constant만 지원) · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "잠금이 DB 행에 있으므로 어느 인스턴스에서 온 트랜잭션이든 같은 줄에 선다. 락의 범위 = 공유 자원의 범위"
     focus:
       - { file: strategies/row-lock.strategy.ts, marker: for-update }
@@ -269,7 +325,21 @@ outcomes:
     situation: spike-200-one-instance
     verdict: ok
     expected: "위반 0. 품절 뒤의 요청은 잠금 없이 빨리 끝난다"
-    measured: null
+    measured:
+      run: 2026-10-06T16-20-36Z_g02_conditional-update_i1
+      runs: [ 2026-10-06T16-20-36Z_g02_conditional-update_i1_r1, 2026-10-06T16-20-36Z_g02_conditional-update_i1_r2, 2026-10-06T16-20-36Z_g02_conditional-update_i1_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 200.1 req/s(200~200.1) · p95 2.53ms(2.5~2.78) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 200.1, min: 200, max: 200.1 }
+      p95Ms: { median: 2.53, min: 2.5, max: 2.78 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.041, min: 0.041, max: 0.042 }
+      conditions: 로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s(상황 정의 shape=spike, 0단계 run.mjs는 constant만 지원) · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "재고가 0이 되면 UPDATE가 조건에 맞는 행을 찾지 못해 행을 잠그지 않고 영향 행 0으로 끝난다. row-lock은 품절 뒤에도 FOR UPDATE로 줄을 선다는 점과 비교할 것"
     focus:
       - { file: strategies/conditional-update.strategy.ts, marker: where-stock-gte }
@@ -279,7 +349,21 @@ outcomes:
     situation: spike-200-two-instances
     verdict: ok
     expected: "위반 0. 결과는 서버 1대와 같다"
-    measured: null
+    measured:
+      run: 2026-10-06T16-20-36Z_g02_conditional-update_i2
+      runs: [ 2026-10-06T16-20-36Z_g02_conditional-update_i2_r1, 2026-10-06T16-20-36Z_g02_conditional-update_i2_r2, 2026-10-06T16-20-36Z_g02_conditional-update_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 200.1 req/s(200.1~200.1) · p95 2.51ms(2.48~2.57) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 200.1, min: 200.1, max: 200.1 }
+      p95Ms: { median: 2.51, min: 2.48, max: 2.57 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.041, min: 0.04, max: 0.041 }
+      conditions: 로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s(상황 정의 shape=spike, 0단계 run.mjs는 constant만 지원) · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "직렬화는 DB 행 잠금과 재검사가 하므로 인스턴스 수와 상관없다"
     focus:
       - { file: strategies/conditional-update.strategy.ts, marker: where-stock-gte }
@@ -330,7 +414,21 @@ outcomes:
     situation: spike-200-one-instance
     verdict: ok
     expected: "위반 0. 대기가 앱 안에서 일어나므로 pg_locks에는 대기가 없고, 앱 지연·이벤트 루프 지연으로만 보인다"
-    measured: null
+    measured:
+      run: 2026-10-06T16-20-36Z_g02_app-memory-lock_i1
+      runs: [ 2026-10-06T16-20-36Z_g02_app-memory-lock_i1_r1, 2026-10-06T16-20-36Z_g02_app-memory-lock_i1_r2, 2026-10-06T16-20-36Z_g02_app-memory-lock_i1_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 200.1 req/s(200.1~200.1) · p95 2.79ms(2.62~2.94) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 200.1, min: 200.1, max: 200.1 }
+      p95Ms: { median: 2.79, min: 2.62, max: 2.94 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.043, min: 0.042, max: 0.044 }
+      conditions: 로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s(상황 정의 shape=spike, 0단계 run.mjs는 constant만 지원) · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "한 프로세스 안에서는 직렬화가 된다. 대기열 길이 = 상품별 Promise 체인 길이이며 상한이 없다"
     focus:
       - { file: strategies/app-memory-lock.strategy.ts, marker: promise-chain-mutex }
@@ -340,8 +438,22 @@ outcomes:
     situation: spike-200-two-instances
     verdict: broken
     expected: "위반 발생. 서버 1대에서 통과한 같은 코드가 2대에서 초과 판매·차감 누락을 낸다"
-    measured: null
-    why: "mutex가 인스턴스마다 따로 있어서 app-1과 app-2가 같은 상품을 동시에 처리하면 서로를 모른다. mutex 안쪽은 no-lock과 같은 읽기-계산-쓰기라 잃어버린 갱신이 그대로 난다"
+    measured:
+      run: 2026-10-06T16-20-36Z_g02_app-memory-lock_i2
+      runs: [ 2026-10-06T16-20-36Z_g02_app-memory-lock_i2_r1, 2026-10-06T16-20-36Z_g02_app-memory-lock_i2_r2, 2026-10-06T16-20-36Z_g02_app-memory-lock_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 200.1 req/s(200.1~200.1) · p95 2.72ms(2.61~2.76) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 200.1, min: 200.1, max: 200.1 }
+      p95Ms: { median: 2.72, min: 2.61, max: 2.76 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.041, min: 0.041, max: 0.042 }
+      conditions: 로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal, cpuset none) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s(상황 정의 shape=spike, 0단계 run.mjs는 constant만 지원) · 웜업 5s(별도 실행, 웜업 전용 상품) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "mutex가 인스턴스마다 따로 있어서 app-1과 app-2가 같은 상품을 동시에 처리하면 서로를 모른다. mutex 안쪽은 no-lock과 같은 읽기-계산-쓰기라 잃어버린 갱신이 그대로 난다. 그런데 실측(로컬, 지연 주입 없음)에서는 3회 모두 위반 0이었다. 요청은 두 인스턴스에 반씩 갔지만, 경합 창이 DB 왕복 몇 ms뿐이고 한 상품의 요청이 인스턴스당 초당 약 20건이라 두 인스턴스의 처리가 같은 상품에서 겹친 경우가 없었다. 인스턴스 안의 요청은 줄을 서므로 no-lock(1/3회)보다도 겹칠 기회가 적다. 이 조건에서 통과했다고 맞는 코드는 아니다. 경합 창을 30ms로 넓히면(통합 테스트) 2벌에서 바로 깨진다. 0회는 안전하다는 뜻이 아니다"
     focus:
       - { file: strategies/app-memory-lock.strategy.ts, marker: process-local-map }
       - { file: strategies/app-memory-lock.strategy.ts, marker: same-read-then-write }
