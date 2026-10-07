@@ -1,5 +1,5 @@
 # G02 재고·좌석 차감 경합 — 시나리오 manifest (DESIGN §6.2)
-# 0단계: strategy 4개(no-lock, app-memory-lock, row-lock, conditional-update). redis-lock·advisory-xact-lock은 1단계.
+# strategy 6개. redis-lock은 requires: [redis]일 때만 module이 Redis 클라이언트를 만든다.
 id: g02-stock-decrement
 pack: generic
 title: 재고·좌석 차감 경합
@@ -40,6 +40,18 @@ strategies:
     kind: fixed
     bypassesOrm: true
     params: {}
+  - id: redis-lock
+    label: Redis 락 (SET NX PX + 소유자 확인 해제)
+    kind: tradeoff
+    bypassesOrm: false
+    requires: [redis]
+    params:
+      ttlMs: { type: integer, default: 3000 }
+  - id: advisory-xact-lock
+    label: pg_advisory_xact_lock(상품 ID) — 트랜잭션 종료 시 자동 해제
+    kind: fixed
+    bypassesOrm: true
+    params: {}
 
 invariants:
   - id: no-negative-stock
@@ -59,8 +71,9 @@ invariants:
     sql: invariants.sql#ledger_counts      # 원장 결과별 행 수. k6 카운트와의 대조는 run.mjs가 한다
 
 load:
-  # 0단계 run.mjs는 open model(constant-arrival-rate)로 돌린다. closed 버전은 1단계.
+  # 기본은 open(constant-arrival-rate). closed(고정 VU)도 지원한다(T-126 k6 v1).
   model: open
+  models: [open, closed]
   executor: constant-arrival-rate
   defaults: { rate: 100, timeUnit: 1s, duration: 30s, preAllocatedVUs: 50, maxVUs: 200 }
   warmup:

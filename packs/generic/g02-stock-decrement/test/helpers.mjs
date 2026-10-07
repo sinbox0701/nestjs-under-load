@@ -38,9 +38,11 @@ export function makeCtx(em, { params = {}, instance = 'app-1', delays = [], even
   };
 }
 
-export function makeStrategy(id) {
-  const { cls, params } = resolveStrategy(id, undefined);
-  return { strategy: new cls(), params };
+/** redis: redis-lock의 Redis 클라이언트(생성자 주입). redis-lock인데 안 주면 가짜 Redis를 쓴다. 나머지 strategy는 의존성이 없다. */
+export function makeStrategy(id, { redis, params: rawParams } = {}) {
+  const { cls, params, requires } = resolveStrategy(id, rawParams);
+  const dep = requires.includes('redis') ? (redis ?? createFakeRedis()) : undefined;
+  return { strategy: dep ? new cls(dep) : new cls(), params };
 }
 
 export function cmd(productId = 1, qty = 1) {
@@ -127,6 +129,7 @@ export async function createFakeOrm({ latencyMs = 1 } = {}) {
       const id = String(db.ledger.length);
       return { affectedRows: 1, rows: [{ id }], row: { id }, insertId: id };
     }
+    if (/^select pg_advisory_xact_lock\(\d+\)$/.test(sql)) return [{ pg_advisory_xact_lock: '' }];
     if (/^set local lock_timeout = '\d+ms'$/.test(sql)) return [];
     throw new Error(`fake db: 모르는 SQL: ${sql}`);
   };
@@ -143,6 +146,67 @@ export async function createFakeOrm({ latencyMs = 1 } = {}) {
       return { soldEqualsDecrement: p.initialStock - p.stock !== sold ? 1 : 0, oversell: sold > p.initialStock ? 1 : 0, sold, stock: p.stock };
     },
   };
+}
+
+/**
+ * 가짜 Redis(도커 불필요): redis-lock이 쓰는 SET key token PX ms NX 와 Lua 소유자 확인 해제만 흉내 낸다.
+ * eval은 RELEASE_LOCK_LUA 그대로의 동작(내 토큰이면 삭제)을 JS로 구현한다.
+ */
+export function createFakeRedis() {
+  const keys = new Map();
+  const log = [];
+  const fake = {
+    keys,
+    log,
+    failWith: null,
+    async set(key, token, px, ms, nx) {
+      if (fake.failWith) throw fake.failWith;
+      log.push(['set', key, token, px, ms, nx]);
+      await sleep(0);
+      const cur = keys.get(key);
+      if (cur && cur.expiresAt > Date.now()) return null;
+      keys.set(key, { token, expiresAt: Date.now() + ms });
+      return 'OK';
+    },
+    async eval(script, numKeys, key, token) {
+      if (fake.failWith) throw fake.failWith;
+      log.push(['eval', script, numKeys, key, token]);
+      const cur = keys.get(key);
+      if (cur && cur.token === token) {
+        keys.delete(key);
+        return 1;
+      }
+      return 0;
+    },
+  };
+  return fake;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 실제 Redis(도커). 없으면 null을 돌려주고 테스트는 skip 한다.
+// 접속: G02_TEST_REDIS_URL (기본 redis://127.0.0.1:6379). 키는 g02:lock:* 만 쓴다.
+// ─────────────────────────────────────────────────────────────────────────────
+export const REDIS_URL = process.env.G02_TEST_REDIS_URL ?? 'redis://127.0.0.1:6379';
+
+export function openRedis(url = REDIS_URL, options = {}) {
+  const Redis = require('ioredis');
+  const redis = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 1, retryStrategy: () => null, ...options });
+  redis.on('error', () => {});
+  return redis;
+}
+
+/** 접속 가능하면 { ok: true }, 아니면 { ok: false, reason } */
+export async function probeRedis(timeoutMs = 3000) {
+  const redis = openRedis(REDIS_URL, { connectTimeout: timeoutMs });
+  try {
+    await redis.connect();
+    await redis.ping();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  } finally {
+    redis.disconnect();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
