@@ -186,7 +186,9 @@ export function registerApiRoutes(routers: Routers, deps: ApiDeps): void {
       }
       batches.push(mds);
     }
-    ctx.json(200, { scenario, cells: computeMeasuredCells(situations, batches) });
+    // 기록된 params 에 기본값이 들어 있든 없든 같게 보도록 manifest 기본 파라미터를 넘긴다
+    const defaults = Object.fromEntries(catalog.get(scenario)!.strategies.map((st) => [st.id, st.params]));
+    ctx.json(200, { scenario, cells: computeMeasuredCells(situations, batches, defaults) });
   });
 
   // ── 내부 포트: app 이 부팅할 때 가져가는 RunConfig(C1) ──
