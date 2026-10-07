@@ -1,0 +1,435 @@
+{
+  "uid": "nul-run-overview",
+  "title": "실행 개요",
+  "description": "정합성 자리 → 부하 발생기 유효성 → 처리량·지연(성공/실패). phase 주석(reset·warmup·main·invariants)은 태그 run:$run_id 로 가져온다.",
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "timezone": "browser",
+  "tags": [
+    "nul"
+  ],
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "refresh": "5s",
+  "links": [],
+  "annotations": {
+    "list": [
+      {
+        "name": "phase",
+        "enable": true,
+        "iconColor": "orange",
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "target": {
+          "type": "tags",
+          "limit": 100,
+          "matchAny": false,
+          "tags": [
+            "nul",
+            "run:$run_id"
+          ]
+        }
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "label": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "hide": 2,
+        "current": {},
+        "refresh": 1,
+        "options": []
+      },
+      {
+        "name": "run_id",
+        "label": "run_id",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${ds}"
+        },
+        "query": {
+          "query": "label_values(lab_instrumentation_info, run_id)",
+          "refId": "run_id"
+        },
+        "definition": "label_values(lab_instrumentation_info, run_id)",
+        "refresh": 2,
+        "sort": 2,
+        "includeAll": false,
+        "multi": false,
+        "hide": 0,
+        "current": {},
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "정합성",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 3
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**불변식 결과는 오케스트레이터 판정(DB 원장) — 실행 기록 화면 참조**\n\n이 대시보드의 지표(처리량·에러율)로 정합성을 판정하지 않는다."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "k6 CPU(코어)",
+      "description": "부하 발생기 컨테이너 CPU 사용량(cAdvisor, run_id 필터 없음 — 시간 범위 기준). 한도(2코어)에 가까우면 부하 발생기가 병목이라 실행이 무효일 수 있다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 3,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service=\"k6\"}[30s]))",
+          "legendFormat": "k6 CPU 코어",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "min": 0,
+          "max": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 1.6
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "도착률: 목표 vs 실제",
+      "description": "목표 = 완료 + dropped 로 재구성한 근사값(k6 는 목표 도착률을 지표로 내지 않는다; constant-arrival-rate 라면 스케줄한 도착과 같다). 실제 = 완료된 iteration. 둘이 벌어지면 부하 발생기·VU 부족.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 3,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum(rate(k6_iterations_total{run_id=\"$run_id\"}[30s])) + sum(rate(k6_dropped_iterations_total{run_id=\"$run_id\"}[30s]))",
+          "legendFormat": "목표(완료+dropped 재구성 근사)",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum(rate(k6_iterations_total{run_id=\"$run_id\"}[30s]))",
+          "legendFormat": "실제(완료)",
+          "refId": "B",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "dropped_iterations",
+      "description": "VU 가 모자라 시작하지 못한 iteration. 0 이 아니면 부하 모양이 의도와 다르다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 3,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum(rate(k6_dropped_iterations_total{run_id=\"$run_id\"}[30s]))",
+          "legendFormat": "dropped/s",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "처리량(성공/실패)",
+      "description": "서버(app) 관점 응답 수/s. 성공 = 2xx·3xx, 실패 = 4xx·5xx(시나리오에 따라 409 같은 정상 응답이 실패로 보일 수 있다).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum(rate(lab_http_request_duration_seconds_count{run_id=\"$run_id\",status=~\"[23]..\"}[30s]))",
+          "legendFormat": "성공 2xx/3xx",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum(rate(lab_http_request_duration_seconds_count{run_id=\"$run_id\",status=~\"[45]..\"}[30s]))",
+          "legendFormat": "실패 4xx/5xx",
+          "refId": "B",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "지연(성공/실패)",
+      "description": "app 서버 측 지연 히스토그램 분위수. k6 p95 는 클라이언트(부하 발생기) 관점이라 서버 값과의 차이가 대기열·발생기 포화의 단서가 된다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 11,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(lab_http_request_duration_seconds_bucket{run_id=\"$run_id\",status=~\"[23]..\"}[30s])))",
+          "legendFormat": "성공 p50",
+          "refId": "A",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(lab_http_request_duration_seconds_bucket{run_id=\"$run_id\",status=~\"[23]..\"}[30s])))",
+          "legendFormat": "성공 p95",
+          "refId": "B",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(lab_http_request_duration_seconds_bucket{run_id=\"$run_id\",status=~\"[23]..\"}[30s])))",
+          "legendFormat": "성공 p99",
+          "refId": "C",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(lab_http_request_duration_seconds_bucket{run_id=\"$run_id\",status=~\"[45]..\"}[30s])))",
+          "legendFormat": "실패 p95",
+          "refId": "D",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(k6_http_req_duration_seconds{run_id=\"$run_id\"}[30s])))",
+          "legendFormat": "k6 p95(클라이언트)",
+          "refId": "E",
+          "range": true,
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}
