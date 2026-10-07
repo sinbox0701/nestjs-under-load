@@ -1,0 +1,6 @@
+# 기준 5(k6 포화 → 무효 판정) 전용 override. k6 실행기만 cpus 0.2 로 다시 띄운다.
+#   docker compose -f infra/compose/docker-compose.yml -f scripts/acceptance/k6-cpu-0.2.override.yml --profile obs up -d k6
+# 끝나면 override 없이 `up -d k6` 로 되돌린다.
+services:
+  k6:
+    cpus: 0.2
