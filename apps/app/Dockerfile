@@ -7,10 +7,13 @@ WORKDIR /repo
 # 의존성 레이어: 매니페스트만 먼저 복사
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/app/package.json apps/app/
+COPY engine/contracts/package.json engine/contracts/
+COPY packs/generic/g01-shared-document/package.json packs/generic/g01-shared-document/
 COPY packs/generic/g02-stock-decrement/package.json packs/generic/g02-stock-decrement/
 RUN pnpm install --frozen-lockfile --filter "@under-load/app..."
 
 COPY apps/app apps/app
+COPY engine engine
 COPY packs packs
 RUN pnpm --filter "@under-load/app..." run build \
   && pnpm --filter "@under-load/app" deploy --prod --legacy /out
