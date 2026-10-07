@@ -167,6 +167,10 @@ importers:
         version: 5.9.3
 
   packs/generic/g02-stock-decrement:
+    dependencies:
+      '@under-load/contracts':
+        specifier: workspace:*
+        version: link:../../../engine/contracts
     devDependencies:
       '@mikro-orm/core':
         specifier: 7.2.3
