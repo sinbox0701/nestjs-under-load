@@ -1,0 +1,535 @@
+# G01 학습 데이터 (규약: learn.yaml, 2026-10-07 — DESIGN §6.5, G02 learn.yaml 과 같은 규약)
+# - 코드 줄은 마커로 찾는다: 소스 줄 끝 주석 `// @learn <id> — <설명>`. 계측 마커 `// @event <phase…>`와 한 줄에 같이 두지 않는다.
+# - focus.file은 이 시나리오 폴더 기준 경로. 줄 번호는 쓰지 않는다. 코드 실험실은 strategies/*.strategy.ts 만 읽으므로 focus 도 그 파일만 가리킨다.
+#   blind-retry 는 서버 구현이 optimistic-version 과 같아서(클래스 상속, id 만 다름) 그 파일의 마커를 가리킨다. 차이는 k6 클라이언트(k6/client.mjs blindRetryBody)다.
+# - outcomes.expected는 예상이다. PostgreSQL·MikroORM 동작에서 추론했고, "단순 모델 추정"이라고 쓴 수치는 요청 왕복 1~2ms·행 쓰기 2~4ms를 가정하고
+#   k6 클라이언트 규칙(재적용 3회, 맹목 재시도 1회, lease 폴링 20ms·대기 상한 10초)을 흉내 낸 이산 사건 계산의 대략값이다. 실측과 다를 수 있다.
+#   measured는 실측(run id·수치). 실측 전에는 null. 채우는 것은 실행기(measured 계산)이고 사람이 쓰지 않는다.
+# - sql은 이 팩 코드가 실제로 보내는 문장의 예(값은 예시). 한 번의 HTTP 흐름 순서로 적었다(GET 은 컨트롤러의 자동 커밋 읽기, 409 본문의 current 재조회 포함).
+#   MikroORM은 파라미터를 문자열에 채워서 보낸다. begin·commit 은 적지 않는다. 0행으로 끝나는 UPDATE 는 why 에서 설명한다.
+# - situations.data.documents·scenarioParams.editMs 는 k6 env DOC_MAX·EDIT_MS 로, params 는 strategy 파라미터(RunConfig)로 간다.
+# - 검증: test/learn.test.mjs (전 조합, 마커 존재·고아 마커, sql 형태가 실제 생성 SQL과 일치, verdict 규칙)
+scenario: g01-shared-document
+title: 같은 문서 동시 수정
+
+concepts:
+  - id: lost-update
+    label: 잃어버린 갱신 (lost update)
+    body: >-
+      두 사람이 같은 버전을 읽고 각자 고쳐 저장하면, 늦게 저장한 쪽이 앞사람 수정을 덮어써서 앞사람 수정이 사라진다.
+      G01에서는 "읽은 배열 뒤에 내 토큰을 붙여 저장"하므로, 서버가 성공이라고 답한 토큰이 최종 문서에 없으면 그것이 잃어버린 갱신이다.
+      응답은 둘 다 200이라 클라이언트도 서버 로그도 알아채지 못한다.
+      그래서 판정은 응답이 아니라 DB에 남은 사실로 한다. 원장의 성공 토큰과 최종 문서를 대조하는 불변식 no_lost_update가 그 역할이다.
+  - id: tx-boundary
+    label: 트랜잭션 경계 (읽기와 저장은 다른 트랜잭션)
+    body: >-
+      화면을 여는 GET은 SELECT 한 문장(자동 커밋)이고, 저장은 em.transactional 안에서 UPDATE와 원장·이력 INSERT를 함께 커밋한다.
+      둘은 서로 다른 트랜잭션이고 그 사이에 사람의 편집 시간(실제로는 초~분, 실험실에서는 ms로 압축)이 끼어 있다.
+      DB는 각 트랜잭션 안쪽만 보므로 "이 저장이 몇 번 버전을 보고 만든 것인가"를 모른다. 그 증거는 클라이언트가 본문 version으로 들고 와야 한다.
+      저장 트랜잭션은 원장·이력을 문서 UPDATE와 같이 커밋해 불변식 판정 근거를 만들 뿐, 덮어쓰기 자체를 막지는 않는다.
+  - id: serializable-cannot-help
+    label: SERIALIZABLE로도 못 막는 이유
+    body: >-
+      격리 수준을 SERIALIZABLE로 올려도 G01의 덮어쓰기는 막히지 않는다.
+      PostgreSQL의 직렬화 검사는 한 트랜잭션 안에서 일어난 읽기와 쓰기의 의존만 보는데, 여기서는 읽기(GET)와 쓰기(PUT)가 서로 다른 트랜잭션이기 때문이다.
+      읽기와 쓰기가 한 트랜잭션 안이었다면 REPEATABLE READ 이상에서 늦은 쪽이 40001(could not serialize access)로 중단된다.
+      하지만 사람의 편집 시간 동안 트랜잭션(=풀 커넥션)을 열어 둘 수는 없다. 그래서 버전 번호를 클라이언트가 들고 오는 낙관 락, 또는 편집 전에 잡는 잠금(lease)이 필요하다.
+  - id: optimistic-two-failure-points
+    label: 낙관 락의 두 실패 지점
+    body: >-
+      MikroORM 낙관 락은 두 곳에서 실패한다. ① findOneOrFail(…, { lockMode: OPTIMISTIC, lockVersion })은 읽어 온 엔티티의 version을 메모리에서 `!==`로 비교만 한다(락 SQL이 아니다).
+      ② flush가 보내는 `UPDATE … SET version = version + 1 WHERE id = ? AND version = ?`가 0행이면 OptimisticLockError가 난다.
+      같은 순간에 도착한 두 저장은 ①을 둘 다 통과할 수 있으므로, 동시성을 실제로 가르는 것은 ②다. ①은 이미 늦은 요청을 SQL 한 번 덜 쓰고 미리 거르는 최적화다.
+      둘 다 409 version_mismatch로 응답하고, 트랜잭션 밖에서 현재 version을 다시 읽어 currentVersion으로 돌려준다.
+      lockVersion이 undefined면 검사를 건너뛰고 문자열 '3'은 숫자 3과 불일치라, 컨트롤러가 누락을 428로 거절하고 number로 바꿔 넘긴다.
+  - id: rc-recheck
+    label: READ COMMITTED 재평가 (EvalPlanQual)
+    body: >-
+      READ COMMITTED에서 UPDATE가 다른 트랜잭션이 바꾸고 있는 행을 만나면 그 트랜잭션이 끝날 때까지 행 잠금을 기다린다.
+      상대가 커밋하면 그 행의 최신 버전으로 WHERE를 다시 평가하고(PostgreSQL 내부 이름 EvalPlanQual), 거짓이 되면 그 행을 건너뛰어 0행이 된다.
+      그래서 `WHERE version = 2`는 앞사람이 version을 3으로 올린 뒤 재평가에서 거짓이 되어 동시 UPDATE 중 정확히 하나만 1행이다.
+      반대로 `WHERE id = 1`뿐인 UPDATE는 재평가를 그대로 통과해 앞사람 내용을 덮는다. 조건부 UPDATE가 곧 동시성 제어가 되는 이유다.
+  - id: native-bypasses-version
+    label: nativeUpdate는 버전 검사를 우회한다
+    body: >-
+      엔티티에 `version: true` 컬럼이 있어도 보호는 flush가 만드는 `UPDATE … WHERE version = ?`에만 있다.
+      em.nativeUpdate는 Unit of Work를 거치지 않고 UPDATE를 바로 보낸다. 이 팩의 실제 SQL을 보면 `"version" = "version" + 1`은 붙지만 WHERE에는 version 조건이 없다.
+      버전 값은 올라가는데 아무도 비교하지 않으니 낙관 락이 무력하다.
+      쓰기 경로가 여럿이면(nativeUpdate, raw SQL, 배치) 경로마다 WHERE version을 걸어야 한다. 하나라도 빠지면 그 경로가 덮어쓰기 구멍이 된다.
+  - id: blind-retry-loss
+    label: 맹목 재시도의 유실
+    body: >-
+      409를 "버전만 새로 받으면 되는 일시 오류"로 오해하면, 클라이언트가 응답의 currentVersion만 꺼내 같은 본문으로 다시 PUT 한다.
+      재시도의 version은 현재 값이라 서버 검사(①·②)를 통과하고, 본문은 처음 읽은 옛 배열 + 내 토큰이라 그 사이 커밋된 앞사람 토큰이 사라진다.
+      서버와 DB는 정상 저장으로 보고 409도 로그에 찍혀 있어 "충돌을 처리했다"처럼 보이지만 결과는 덮어쓰기와 같다.
+      올바른 재시도는 다시 GET → 내 변경을 최신본에 다시 적용(병합 또는 사용자 결정) → 새 버전으로 PUT이다.
+  - id: field-level-merge
+    label: 필드 단위 병합
+    body: >-
+      field-merge는 바뀐 필드 하나만 PATCH 하고, WHERE는 문서 version이 아니라 그 필드가 마지막으로 바뀐 버전(field_versions)을 본다.
+      다른 필드를 동시에 고친 UPDATE는 재평가에서 통과하고, SET에 없는 앞사람 필드는 최신 값 그대로 남는다. 같은 필드끼리만 409다.
+      대가는 필드 경계가 의미 경계와 맞아야 한다는 것이다. 서로 의존하는 두 필드를 따로 병합하면 각각은 맞아도 합친 문서가 틀릴 수 있고, no_lost_update는 이것을 잡지 못한다.
+      모든 PATCH가 같은 행을 UPDATE 하므로 행 잠금으로 줄을 서는 구조와 처리량 한계는 그대로다.
+  - id: status-409-vs-423
+    label: 409와 423을 나눈 이유
+    body: >-
+      저장 실패(version_mismatch, lease_lost, lease_expired)는 모두 409이고 본문 reason으로 구분한다.
+      셋 다 "내가 알던 상태가 현재와 다르다"는 같은 종류의 충돌이라, 클라이언트가 같은 복구 절차(다시 GET → 재적용)를 타면 된다.
+      423 Locked는 WebDAV(RFC 4918) 코드를 빌린 것으로, edit-lease의 acquire 거절(지금 다른 사람이 잠금을 쥐고 있음)에만 쓰고 Retry-After를 함께 보낸다.
+      423은 저장이 아니라 자원 점유에 대한 답이라 "기다렸다 다시"가 복구 방법이다. 버전 누락은 428이다.
+  - id: lease-no-queue
+    label: lease는 서버 줄 세우기가 아니다 (FIFO 없음)
+    body: >-
+      edit-lease의 acquire는 조건부 UPDATE 한 문장이다. 비었거나·내 것이거나·만료됐으면 가져가고, 아니면 0행 → 423으로 바로 거절한다.
+      서버는 기다리는 사람 목록을 갖지 않는다. 423을 받은 클라이언트가 각자 다시 노크(폴링)하고, 잠금이 풀린 순간 먼저 노크한 사람이 가져간다.
+      도착 순서가 보장되지 않으니 운 나쁜 사람은 계속 밀릴 수 있고(굶주림), 풀리는 순간 여럿이 한꺼번에 몰린다.
+      대신 기다리는 동안 DB 커넥션·트랜잭션을 쥐지 않는다. 잠금을 쥔 채 사라진 사람의 잠금은 lease_until이 지나면 다음 acquire가 회수한다(TTL).
+  - id: fencing-token
+    label: fencing 토큰 (fence)
+    body: >-
+      fence는 acquire 때마다 1씩 오르는 번호이고, 클라이언트가 save·release에 들고 와야 한다.
+      잠금을 쥐었다고 믿는 클라이언트가 멈췄다 깨어나면(GC, 네트워크 단절, 긴 편집) 그 사이 TTL이 지나 다른 사람이 잠금을 가져갔을 수 있다.
+      save는 `WHERE locked_by = ? AND fence = ? AND lease_until > clock_timestamp()` 조건부 UPDATE라, 옛 세션의 늦은 저장은 0행 → 409 lease_lost로 걸러진다.
+      검사를 저장하는 쪽(DB의 같은 UPDATE)이 하므로 앱 쪽에서 "아직 내 잠금인가"를 따로 확인하는 사이의 틈이 없다. 같은 사람이 다시 잡아도 fence가 올라 옛 세션은 걸러진다.
+  - id: db-clock
+    label: DB 시계 (clock_timestamp와 now)
+    body: >-
+      lease 만료 시각과 유효 판단은 모두 DB 시계 clock_timestamp()로 계산한다. 앱 서버 시계는 인스턴스마다 어긋나므로 쓰지 않는다.
+      PostgreSQL의 now()(= transaction_timestamp())는 트랜잭션 시작 시각이라 한 트랜잭션 안에서 멈춰 있다.
+      저장 트랜잭션 안에서 기다린 시간(경합 창, 잠금 대기)이 있으면 now()는 그만큼 과거 시각이라 이미 만료된 잠금을 유효하다고 판단할 수 있다.
+      clock_timestamp()는 호출한 순간의 실제 시각이다.
+
+situations:
+  - id: two-people-one-doc
+    label: 사람 2명 · 문서 1개 · 서버 1대
+    load: { model: closed, vus: 2, shape: constant, duration: 30s }
+    instances: 1
+    chaos: none
+    data: { documents: 1, distribution: { kind: uniform } }
+    scenarioParams: { editMs: 50 }
+    note: >-
+      두 사람이 같은 문서를 쉬지 않고 연다(GET) → 50ms 고친다 → 저장한다. 편집 50ms는 실제의 초~분을 압축한 값이라 충돌 빈도는 실제보다 훨씬 높다(메커니즘 관찰용).
+      한 사람의 편집 창(GET~저장) 안에 상대의 저장이 거의 늘 한 번 끼므로, 사람이 둘뿐이어도 경합이 꾸준히 생긴다.
+  - id: twenty-people-one-doc
+    label: 사람 20명 · 문서 1개 · 서버 2대
+    load: { model: closed, vus: 20, shape: constant, duration: 30s }
+    instances: 2
+    chaos: none
+    data: { documents: 1, distribution: { kind: uniform } }
+    scenarioParams: { editMs: 50 }
+    note: >-
+      한 문서를 20명이 동시에 고친다. nginx가 두 인스턴스에 번갈아 보낸다. G01의 strategy는 모두 DB 행(version·field_versions·locked_by)에서
+      판정하므로 서버 대수는 결과의 성격을 바꾸지 않는다(G02의 메모리 락과 대비). 같은 행에 대한 쓰기가 몰려 행 잠금 직렬화가 처리량 한계가 된다.
+  - id: zipf-100-docs
+    label: 사람 20명 · 문서 100개 Zipf(s=1.1) · 서버 2대
+    load: { model: closed, vus: 20, shape: constant, duration: 30s }
+    instances: 2
+    chaos: none
+    data: { documents: 100, distribution: { kind: zipf, s: 1.1 } }
+    scenarioParams: { editMs: 50 }
+    note: >-
+      문서 100개 중 문서 1이 요청의 약 23%, 문서 2가 약 11%를 받는다(Zipf s=1.1). 대부분의 문서는 거의 겹치지 않고 상위 몇 개에 충돌이 몰린다.
+      평균은 괜찮아 보여도 핫 문서에서 무슨 일이 나는지가 판정을 정한다.
+  - id: lease-short-ttl
+    label: lease TTL 100ms < 편집 150ms · 사람 5명 · 문서 1개
+    load: { model: closed, vus: 5, shape: constant, duration: 30s }
+    instances: 1
+    chaos: none
+    params: { edit-lease: { ttlMs: 100 } }
+    data: { documents: 1, distribution: { kind: uniform } }
+    scenarioParams: { editMs: 150 }
+    note: >-
+      edit-lease의 잠금 유지 시간(ttlMs)을 편집 시간보다 짧게 잡은 설정 실수다. 보유자가 아직 편집 중인데 잠금이 만료되고,
+      20ms마다 노크하던 다른 사람이 회수한다. ttlMs는 edit-lease 파라미터라 다른 strategy에는 "편집 150ms · 5명 · 문서 1개" 조건으로만 작용한다.
+  - id: contention-window-30
+    label: 경합 창 30ms 주입 · 편집 0ms · 사람 10명 · 문서 1개
+    load: { model: closed, vus: 10, shape: constant, duration: 30s }
+    instances: 1
+    chaos: none
+    injected: { contentionWindowMs: 30 }
+    data: { documents: 1, distribution: { kind: uniform } }
+    scenarioParams: { editMs: 0 }
+    note: >-
+      사람 편집 시간을 0으로 두고, 모든 strategy의 같은 지점(after-read: 저장 트랜잭션 안, 문서를 읽은 뒤 쓰기 전. 트랜잭션 안에서 읽지 않는 strategy는 UPDATE 직전)에
+      30ms를 인위로 넣는다. 경합 창은 사람 편집만이 아니라 서버 안 처리 시간에서도 생긴다는 것을 보인다. 주입된 조건이므로 결과에 "주입됨"으로 표시한다.
+      edit-lease는 이 30ms가 잠금(lease) 보유 시간에 더해진다.
+
+outcomes:
+  # ── naive-overwrite ────────────────────────────────────────────────────────
+  - strategy: naive-overwrite
+    situation: two-people-one-doc
+    verdict: broken
+    expected: "응답은 전부 200, 409 0건인데 no_lost_update가 위반된다. 단순 모델 추정으로 성공 저장의 절반 가까이가 최종 문서에서 사라진다. edit_count·revision 불변식은 통과한다"
+    measured: null
+    why: "두 사람이 같은 version을 GET으로 받고 각자 고쳐 PUT 한다. 서버는 본문의 version을 보지 않고 WHERE id만으로 UPDATE 하므로, 늦게 온 저장이 앞사람 배열을 통째로 바꾼다. 두 UPDATE가 같은 순간에 오면 뒤쪽이 앞 트랜잭션의 행 잠금을 기다렸다가 최신 행으로 WHERE를 다시 평가하지만, 조건이 id뿐이라 그대로 통과한다. 원장·이력은 같은 트랜잭션에서 둘 다 커밋되고 edit_count도 DB가 +1 하므로 기록 쪽 불변식은 맞는다. 사라진 것은 문서 내용뿐이고, 그래서 원장 토큰과 최종 문서를 대조하는 no_lost_update만 위반을 잡는다"
+    focus:
+      - { file: strategies/naive-overwrite.strategy.ts, marker: where-id-only }
+      - { file: strategies/naive-overwrite.strategy.ts, marker: ledger-same-tx }
+    concepts: [lost-update, rc-recheck, tx-boundary]
+    sql: &sql-naive
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'update "g01_document" set "field_a" = ''{3f9c0d12ab47,8e21b6c0d9f3}'', "field_b" = ''{}'', "field_c" = ''{}'', "field_d" = ''{}'', "edit_count" = edit_count + 1, "version" = "version" + 1 where "id" = 1 returning "version", "edit_count"'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'insert into "g01_edit_ledger" ("request_id", "document_id", "edit_token", "result", "instance") values (''00000000-0000-4000-8000-000000000001'', 1, ''8e21b6c0d9f3'', ''success'', ''app-1'') returning "id", "txid", "created_at"'
+      - 'insert into "g01_document_revision" ("document_id", "edit_token", "request_id", "base_version", "version") values (1, ''8e21b6c0d9f3'', ''00000000-0000-4000-8000-000000000001'', 2, 3) returning "id", "txid", "created_at"'
+  - strategy: naive-overwrite
+    situation: twenty-people-one-doc
+    verdict: broken
+    expected: "성공 저장의 대부분(단순 모델 추정 90% 이상)이 최종 문서에서 사라진다. 거절(409·423)이 없어 오류율 0%이고 처리량도 버전을 검사하는 strategy와 같거나 높게(행 쓰기 한계 근처) 나와, 응답 지표만 보면 좋아 보인다"
+    measured: null
+    why: "편집 50ms 사이에 다른 사람의 저장이 여러 번 끼어든다. 마지막으로 저장한 사람의 '읽은 시점 배열 + 내 토큰'만 남고 그 사이 커밋은 모두 덮인다. 서버가 2대여도 결과의 성격은 같다. 막는 장치가 애초에 어디에도 없다. 판정 근거가 응답이 아니라 DB에 남은 사실(원장 대 최종 문서)이어야 하는 이유가 가장 크게 드러나는 칸이다"
+    focus:
+      - { file: strategies/naive-overwrite.strategy.ts, marker: where-id-only }
+      - { file: strategies/naive-overwrite.strategy.ts, marker: native-bypasses-version }
+    concepts: [lost-update, native-bypasses-version]
+    sql: *sql-naive
+  - strategy: naive-overwrite
+    situation: zipf-100-docs
+    verdict: broken
+    expected: "위반은 줄지만 0이 아니다. 핫 문서(문서 1·2)에 몰려서 단순 모델 추정으로 성공 저장의 약 40%가 사라진다. 차가운 문서는 거의 깨지지 않는다"
+    measured: null
+    why: "문서가 많아도 Zipf(s=1.1)에서는 문서 1·2가 요청의 약 1/3을 받는다. 같은 문서를 같은 편집 창 안에 두 사람이 고치는 일이 핫 문서에서 계속 생긴다. 대부분의 문서가 멀쩡해 '거의 괜찮다'처럼 보이지만, 불변식은 평균이 아니라 한 건이라도 있으면 위반이다"
+    focus:
+      - { file: strategies/naive-overwrite.strategy.ts, marker: where-id-only }
+    concepts: [lost-update]
+    sql: *sql-naive
+  - strategy: naive-overwrite
+    situation: lease-short-ttl
+    verdict: broken
+    expected: "편집이 150ms로 길어 거의 모든 저장 사이에 다른 저장이 끼고, 단순 모델 추정으로 성공 저장의 약 80%가 사라진다. lease TTL 설정은 이 strategy와 무관하다"
+    measured: null
+    why: "덮어쓰기 창은 GET부터 저장 커밋까지, 곧 편집 시간이다. 편집이 길수록 그 사이 커밋 수가 늘고 덮이는 수도 는다. 격리 수준을 올려도 소용없다. 읽기와 저장이 다른 트랜잭션이고 그 사이가 사람의 시간이기 때문이다. ttlMs는 edit-lease 파라미터라 여기에는 적용되지 않는다"
+    focus:
+      - { file: strategies/naive-overwrite.strategy.ts, marker: tx-boundary }
+      - { file: strategies/naive-overwrite.strategy.ts, marker: where-id-only }
+    concepts: [lost-update, tx-boundary, serializable-cannot-help]
+    sql: *sql-naive
+  - strategy: naive-overwrite
+    situation: contention-window-30
+    verdict: broken
+    expected: "편집 0ms인데도 성공 저장의 대부분(단순 모델 추정 약 90%)이 사라진다. 주입된 30ms만큼 지연이 늘 뿐 거절은 없다"
+    measured: null
+    why: "naive는 저장 트랜잭션 안에서 문서를 읽지 않으므로 주입 지점은 UPDATE 바로 앞이다. 30ms 동안 다른 사람의 GET·저장이 계속 지나가고, 이 저장은 GET 때 받은 옛 배열로 덮는다. 기다리는 동안 행 잠금은 없다(UPDATE 전이다). 경합 창이 사람의 편집 시간만이 아니라 서버 안 처리 시간에서도 생긴다는 것을 보인다"
+    focus:
+      - { file: strategies/naive-overwrite.strategy.ts, marker: tx-boundary }
+      - { file: strategies/naive-overwrite.strategy.ts, marker: native-bypasses-version }
+    concepts: [lost-update, native-bypasses-version, tx-boundary]
+    sql: *sql-naive
+  # ── blind-retry ────────────────────────────────────────────────────────────
+  # 서버 코드는 optimistic-version 과 같다. focus 는 그 파일, 차이는 k6/client.mjs blindRetryBody(409 뒤 version 만 바꾼 같은 본문).
+  - strategy: blind-retry
+    situation: two-people-one-doc
+    verdict: broken
+    expected: "PUT의 절반 가까이가 409이고, 버전만 바꾼 재시도가 거의 다 통과하면서 앞사람 토큰을 지운다. 단순 모델 추정으로 성공 저장의 절반 가까이가 사라진다(naive와 비슷한 규모)"
+    measured: null
+    why: "서버는 optimistic-version과 완전히 같고 버전 검사도 제대로 한다. 문제는 클라이언트다. 409 본문의 currentVersion만 받아 처음 읽은 옛 배열 그대로 다시 보내므로, 재시도는 lockVersion 비교와 WHERE version = 현재값을 모두 통과하고 앞사람 토큰이 빠진 배열로 저장된다. 서버·DB 입장에서는 정상 저장이라 막을 방법이 없다. version은 '무엇을 보고 고쳤는가'의 증거인데, 클라이언트가 보지 않은 버전을 들고 왔다"
+    focus:
+      - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
+      - { file: strategies/optimistic-version.strategy.ts, marker: flush-where-version }
+    concepts: [blind-retry-loss, optimistic-two-failure-points, lost-update]
+    sql: &sql-blind
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'update "g01_document" set "field_a" = ''{3f9c0d12ab47,8e21b6c0d9f3}'', "edit_count" = 3, "version" = "version" + 1 where "id" = 1 and "version" = 3 returning "version"'
+      - 'insert into "g01_edit_ledger" ("request_id", "document_id", "edit_token", "result", "instance") values (''00000000-0000-4000-8000-000000000002'', 1, ''8e21b6c0d9f3'', ''success'', ''app-1'') returning "id", "txid", "created_at"'
+      - 'insert into "g01_document_revision" ("document_id", "edit_token", "request_id", "base_version", "version") values (1, ''8e21b6c0d9f3'', ''00000000-0000-4000-8000-000000000002'', 3, 4) returning "id", "txid", "created_at"'
+  - strategy: blind-retry
+    situation: twenty-people-one-doc
+    verdict: broken
+    expected: "재시도(1회 상한) 사이에도 다른 저장이 끼어 재시도마저 409로 포기하는 편집이 많다. 통과한 재시도마다 그 사이 커밋이 사라져, 단순 모델 추정으로 성공 수는 optimistic-version보다 적고(약 1/3~2/3) 성공의 80% 이상이 최종 문서에 없다"
+    measured: null
+    why: "사람이 많으면 409 뒤 재시도까지의 몇 ms 사이에도 다른 커밋이 일어난다. 재시도가 통과하면 첫 GET 이후의 모든 커밋을 옛 배열로 덮는다. 409 비율이 높아 겉으로는 '경합을 잘 감지하는 시스템'처럼 보이지만 결과는 naive와 같은 종류의 유실이다. 서버 2대여도 같다"
+    focus:
+      - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
+      - { file: strategies/optimistic-version.strategy.ts, marker: lock-optimistic }
+    concepts: [blind-retry-loss, status-409-vs-423]
+    sql: *sql-blind
+  - strategy: blind-retry
+    situation: zipf-100-docs
+    verdict: broken
+    expected: "핫 문서에서 409 → 맹목 재시도가 일어날 때마다 유실. 단순 모델 추정으로 성공 저장의 35~40%가 사라진다. 차가운 문서는 409도 유실도 거의 없다"
+    measured: null
+    why: "재시도는 충돌이 난 곳(핫 문서)에서만 일어나므로 유실도 거기에 몰린다. 409가 날 때마다 그 사이 커밋된 수정이 하나 이상 사라진다고 보면 된다. 낙관 락 서버를 갖췄어도 클라이언트의 재시도 규약이 틀리면 보호가 사라진다"
+    focus:
+      - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
+    concepts: [blind-retry-loss]
+    sql: *sql-blind
+  - strategy: blind-retry
+    situation: lease-short-ttl
+    verdict: broken
+    expected: "편집 150ms 동안 거의 늘 다른 저장이 끼어 첫 PUT 대부분이 409이고, 맹목 재시도가 통과하면서 크게 유실된다(단순 모델 추정: 성공의 절반 이상). ttlMs는 무관하다"
+    measured: null
+    why: "편집이 길수록 첫 PUT이 ①(메모리 비교)에서 409가 날 확률이 높고, 바로 이어지는 재시도는 창이 몇 ms라 대개 통과한다. 통과하는 순간 150ms 동안 쌓인 앞사람 수정이 옛 배열에 덮인다. ttlMs는 edit-lease 파라미터라 여기에는 적용되지 않는다"
+    focus:
+      - { file: strategies/optimistic-version.strategy.ts, marker: lock-optimistic }
+      - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
+    concepts: [blind-retry-loss, optimistic-two-failure-points]
+    sql: *sql-blind
+  - strategy: blind-retry
+    situation: contention-window-30
+    verdict: broken
+    expected: "같은 순간 들어온 저장끼리 30ms 창에서 부딪쳐 409가 대부분이고 재시도도 자주 409로 끝나 성공은 적다. 그래도 재시도로 통과한 저장이 앞사람 토큰을 지워 위반은 0이 아니다(단순 모델 추정: 성공의 약 절반)"
+    measured: null
+    why: "재시도 PUT도 트랜잭션 안에서 읽고(①) 30ms 기다린 뒤 flush(②) 한다. 그 사이 다른 커밋이 있으면 ②에서 0행이 되고 재시도 상한(1회) 때문에 포기한다. 그 틈을 피한 재시도만 통과하는데, 통과하면 본문이 첫 GET 시점 배열이라 그 사이 커밋을 지운다"
+    focus:
+      - { file: strategies/optimistic-version.strategy.ts, marker: flush-where-version }
+      - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
+    concepts: [blind-retry-loss, rc-recheck]
+    sql: *sql-blind
+  # ── optimistic-version ─────────────────────────────────────────────────────
+  - strategy: optimistic-version
+    situation: two-people-one-doc
+    verdict: ok
+    expected: "위반 0. PUT의 절반 가까이가 409지만(편집 50ms 안에 상대가 거의 늘 먼저 저장한다, 단순 모델 추정) 다시 GET → 재적용 → PUT으로 거의 다 성공한다. 409는 대부분 ①(메모리 비교)에서 난다"
+    measured: null
+    why: "GET과 PUT 사이에 상대가 커밋했으면 트랜잭션 안 findOne이 읽은 version이 본문 version과 달라 ①에서 바로 OptimisticLockError가 난다(SQL은 SELECT 하나). 두 PUT이 같은 순간에 와서 ①을 둘 다 통과해도 flush의 UPDATE … WHERE version = ?에서 뒤쪽이 행 잠금을 기다린 뒤 최신 행으로 재평가돼 0행(②)이다. 409를 받은 클라이언트는 최신본을 다시 읽어 내 토큰을 붙이므로 앞사람 수정이 남는다. edit_count를 앱이 계산한 상수(읽은 값 + 1)로 써도 안전한 것은 WHERE version이 같은 버전에서 출발한 쓰기를 하나만 통과시키기 때문이다"
+    focus:
+      - { file: strategies/optimistic-version.strategy.ts, marker: lock-optimistic }
+      - { file: strategies/optimistic-version.strategy.ts, marker: flush-where-version }
+      - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
+    concepts: [optimistic-two-failure-points, rc-recheck, status-409-vs-423]
+    sql: &sql-optimistic
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'update "g01_document" set "field_a" = ''{3f9c0d12ab47,8e21b6c0d9f3}'', "edit_count" = 2, "version" = "version" + 1 where "id" = 1 and "version" = 2 returning "version"'
+      - 'insert into "g01_edit_ledger" ("request_id", "document_id", "edit_token", "result", "instance") values (''00000000-0000-4000-8000-000000000001'', 1, ''8e21b6c0d9f3'', ''success'', ''app-1'') returning "id", "txid", "created_at"'
+      - 'insert into "g01_document_revision" ("document_id", "edit_token", "request_id", "base_version", "version") values (1, ''8e21b6c0d9f3'', ''00000000-0000-4000-8000-000000000001'', 2, 3) returning "id", "txid", "created_at"'
+  - strategy: optimistic-version
+    situation: twenty-people-one-doc
+    verdict: ok
+    expected: "위반 0. 409가 성공 수와 비슷하거나 더 많다(단순 모델 추정: 성공 1건당 1~3건, 서버 지연·지터가 크면 위쪽, 실측으로 확인), 성공 처리량은 사람 수에 비례해 늘지 않고 문서 한 행의 쓰기 한계 근처에서 멈춘다. 재시도 상한(3회)을 다 쓰고 포기하는 편집은 소수"
+    measured: null
+    why: "사람이 늘면 편집 50ms 안에 다른 커밋이 여러 번 일어나 첫 PUT은 거의 늘 ①에서 409다. 다시 GET → 곧바로 PUT 하는 재시도는 창이 몇 ms라 대부분 통과한다. 같은 행에 대한 UPDATE는 행 잠금으로 한 번에 하나씩이고, 409로 버려진 GET·PUT이 일을 늘리므로 성공 처리량에는 천장이 있다. 판정은 DB 행이 하므로 서버 2대여도 같다"
+    focus:
+      - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
+      - { file: strategies/optimistic-version.strategy.ts, marker: flush-where-version }
+      - { file: strategies/optimistic-version.strategy.ts, marker: tx-boundary }
+    concepts: [optimistic-two-failure-points, rc-recheck]
+    sql: &sql-optimistic-409
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'update "g01_document" set "field_a" = ''{3f9c0d12ab47,c41e88a0b2d5,8e21b6c0d9f3}'', "edit_count" = 3, "version" = "version" + 1 where "id" = 1 and "version" = 3 returning "version"'
+      - 'insert into "g01_edit_ledger" ("request_id", "document_id", "edit_token", "result", "instance") values (''00000000-0000-4000-8000-000000000002'', 1, ''8e21b6c0d9f3'', ''success'', ''app-1'') returning "id", "txid", "created_at"'
+      - 'insert into "g01_document_revision" ("document_id", "edit_token", "request_id", "base_version", "version") values (1, ''8e21b6c0d9f3'', ''00000000-0000-4000-8000-000000000002'', 3, 4) returning "id", "txid", "created_at"'
+  - strategy: optimistic-version
+    situation: zipf-100-docs
+    verdict: ok
+    expected: "위반 0. 409는 핫 문서에 몰리고 대부분 재시도 한 번에 성공한다. 포기는 거의 없다(단순 모델 추정)"
+    measured: null
+    why: "차가운 문서는 충돌이 거의 없어 GET → PUT 한 번에 끝난다. 핫 문서에서만 ①·②가 걸리고, 재시도 창이 짧아 회복된다. 정합성은 문서 수·분포와 상관없이 같은 방식(WHERE version)으로 지켜진다"
+    focus:
+      - { file: strategies/optimistic-version.strategy.ts, marker: flush-where-version }
+      - { file: strategies/optimistic-version.strategy.ts, marker: ledger-same-tx }
+    concepts: [optimistic-two-failure-points]
+    sql: *sql-optimistic
+  - strategy: optimistic-version
+    situation: lease-short-ttl
+    verdict: ok
+    expected: "위반 0. 편집이 150ms로 길어 첫 PUT의 대부분이 409지만 재시도로 거의 다 회복한다(단순 모델 추정). ttlMs는 무관하다"
+    measured: null
+    why: "낙관 락은 편집 동안 아무것도 잡지 않으므로 편집이 길어도 다른 사람을 막지 않는다. 대신 편집이 길수록 그 사이 커밋이 늘어 409가 는다. 재적용(최신 배열 뒤에 내 토큰 붙이기)이 순간이라 회복이 싸다. 실제 편집에서 재적용이 사람의 병합 작업이라면 이 409가 곧 사용자의 수고다"
+    focus:
+      - { file: strategies/optimistic-version.strategy.ts, marker: lock-optimistic }
+      - { file: strategies/optimistic-version.strategy.ts, marker: lock-version-strict }
+    concepts: [optimistic-two-failure-points, serializable-cannot-help]
+    sql: *sql-optimistic-409
+  - strategy: optimistic-version
+    situation: contention-window-30
+    verdict: rejects
+    expected: "위반 0. 409가 성공보다 훨씬 많고, 재시도 3회를 다 쓰고 포기하는 편집이 성공보다 많을 수 있다(단순 모델 추정: 성공은 초당 수십 건). 409의 대부분이 ①이 아니라 ②(flush 0행)에서 난다(conflict 이벤트의 at=flush)"
+    measured: null
+    why: "주입 지점이 트랜잭션 안 읽기(①) 뒤, flush(②) 앞이다. 같은 순간 들어온 저장들이 ①을 함께 통과한 뒤 30ms 동안 서로 모른 채 기다린다. 먼저 flush 한 하나만 1행이고 나머지는 행 잠금을 기다렸다가 재평가에서 0행이 된다. 재시도도 같은 30ms 창을 다시 지나므로 또 진다. 실패 지점이 두 개인 이유가 여기서 보인다. ①은 미리 걸러 주는 최적화일 뿐이고 동시 도착을 가르는 진짜 보장은 ②다"
+    focus:
+      - { file: strategies/optimistic-version.strategy.ts, marker: flush-where-version }
+      - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
+      - { file: strategies/optimistic-version.strategy.ts, marker: lock-optimistic }
+    concepts: [optimistic-two-failure-points, rc-recheck]
+    sql: *sql-optimistic-409
+  # ── field-merge ────────────────────────────────────────────────────────────
+  - strategy: field-merge
+    situation: two-people-one-doc
+    verdict: ok
+    expected: "위반 0. 409는 두 사람이 같은 필드를 골랐을 때만 난다(필드 4개 중 무작위라 단순 모델 추정 optimistic-version의 약 1/4)"
+    measured: null
+    why: "PATCH는 바뀐 필드 하나만 SET 하고, WHERE는 문서 version이 아니라 그 필드가 마지막으로 바뀐 버전을 본다. 다른 필드를 동시에 고친 UPDATE는 행 잠금을 기다렸다가 최신 행으로 재평가돼도 그 필드의 field_versions가 그대로라 통과하고, SET에 없는 앞사람 필드는 최신 값 그대로 남는다. 같은 필드라면 앞사람이 field_versions를 올렸으므로 0행 → 409다"
+    focus:
+      - { file: strategies/field-merge.strategy.ts, marker: field-version-where }
+      - { file: strategies/field-merge.strategy.ts, marker: set-one-field }
+      - { file: strategies/field-merge.strategy.ts, marker: field-version-bump }
+    concepts: [field-level-merge, rc-recheck]
+    sql: &sql-field-merge
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'update "g01_document" set "field_b" = ''{77d0e1c2a9b4,8e21b6c0d9f3}'', "field_versions" = jsonb_set(field_versions, ''{b}''::text[], to_jsonb(version + 1)), "edit_count" = edit_count + 1, "version" = "version" + 1 where "id" = 1 and (field_versions ->> ''b'')::int <= 2 returning "version", "field_versions", "edit_count"'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'insert into "g01_edit_ledger" ("request_id", "document_id", "edit_token", "result", "instance") values (''00000000-0000-4000-8000-000000000001'', 1, ''8e21b6c0d9f3'', ''success'', ''app-1'') returning "id", "txid", "created_at"'
+      - 'insert into "g01_document_revision" ("document_id", "edit_token", "request_id", "base_version", "version") values (1, ''8e21b6c0d9f3'', ''00000000-0000-4000-8000-000000000001'', 2, 3) returning "id", "txid", "created_at"'
+  - strategy: field-merge
+    situation: twenty-people-one-doc
+    verdict: ok
+    expected: "위반 0. 같은 필드 경쟁자가 약 5명이라 409는 여전히 많고(단순 모델 추정 optimistic-version과 비슷한 수준까지. 근거: 편집 50ms 동안 문서 전체 커밋이 십수 건이면 같은 필드 커밋도 몇 건은 끼어 첫 PATCH가 대부분 409가 된다. 재시도 창 몇 ms 안에 같은 필드 커밋이 낄 확률은 1/4로 줄어 회복은 쉽다) 행 잠금 직렬화로 처리량 한계도 같다. 재시도 끝에 포기하는 편집은 optimistic-version보다 적다(추정)"
+    measured: null
+    why: "필드 단위 병합은 충돌 단위를 줄일 뿐, 행 하나에 쓰기가 몰리는 구조는 그대로다. 모든 PATCH가 같은 행을 UPDATE 하므로 행 잠금으로 줄을 서고 처리량 천장은 optimistic-version과 같다. 같은 필드 경쟁자가 많으면 409 이득도 작아진다. 이 팩의 PUT(문서 전체)은 모든 필드 버전을 올려서, PUT과 PATCH가 섞이면 PUT 이전 버전을 본 PATCH는 409가 된다"
+    focus:
+      - { file: strategies/field-merge.strategy.ts, marker: same-field-409 }
+      - { file: strategies/field-merge.strategy.ts, marker: put-bumps-all }
+      - { file: strategies/field-merge.strategy.ts, marker: tx-boundary }
+    concepts: [field-level-merge]
+    sql: &sql-field-merge-409
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'update "g01_document" set "field_b" = ''{77d0e1c2a9b4,8e21b6c0d9f3}'', "field_versions" = jsonb_set(field_versions, ''{b}''::text[], to_jsonb(version + 1)), "edit_count" = edit_count + 1, "version" = "version" + 1 where "id" = 1 and (field_versions ->> ''b'')::int <= 2 returning "version", "field_versions", "edit_count"'
+      - 'select version, (field_versions ->> ''b'')::int as field_version from g01_document where id = 1'
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'update "g01_document" set "field_b" = ''{77d0e1c2a9b4,c41e88a0b2d5,8e21b6c0d9f3}'', "field_versions" = jsonb_set(field_versions, ''{b}''::text[], to_jsonb(version + 1)), "edit_count" = edit_count + 1, "version" = "version" + 1 where "id" = 1 and (field_versions ->> ''b'')::int <= 3 returning "version", "field_versions", "edit_count"'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'insert into "g01_edit_ledger" ("request_id", "document_id", "edit_token", "result", "instance") values (''00000000-0000-4000-8000-000000000002'', 1, ''8e21b6c0d9f3'', ''success'', ''app-1'') returning "id", "txid", "created_at"'
+      - 'insert into "g01_document_revision" ("document_id", "edit_token", "request_id", "base_version", "version") values (1, ''8e21b6c0d9f3'', ''00000000-0000-4000-8000-000000000002'', 3, 4) returning "id", "txid", "created_at"'
+  - strategy: field-merge
+    situation: zipf-100-docs
+    verdict: ok
+    expected: "위반 0. 버전 충돌로 409를 내는 다른 strategy(optimistic-version·blind-retry)보다 409가 적다(naive-overwrite와 edit-lease는 이 상황에서 409를 내지 않으므로 비교 대상이 아니다)(단순 모델 추정 optimistic-version의 절반 안팎). 근거: 충돌하려면 같은 문서에 더해 같은 필드(4개 중 1개)까지 겹쳐야 하고, 핫 문서에 몰린 경쟁자 몇 명이 필드로 갈리면 그만큼 409가 빠진다"
+    measured: null
+    why: "충돌하려면 같은 문서 · 같은 필드 · 같은 편집 창이 모두 겹쳐야 한다. 핫 문서에서도 필드가 갈리면 둘 다 성공한다. 단, 필드 경계가 의미 경계와 맞을 때만 이 이득이 정당하다. 서로 의존하는 필드(예: 금액과 합계)를 따로 병합하면 각각은 맞아도 합친 문서가 틀릴 수 있고, no_lost_update는 그것을 잡지 못한다"
+    focus:
+      - { file: strategies/field-merge.strategy.ts, marker: field-version-where }
+      - { file: strategies/field-merge.strategy.ts, marker: ledger-same-tx }
+    concepts: [field-level-merge]
+    sql: *sql-field-merge
+  - strategy: field-merge
+    situation: lease-short-ttl
+    verdict: ok
+    expected: "위반 0. 편집이 길어 409가 많지만 optimistic-version보다 적고(단순 모델 추정 약 2/3. 근거: 경쟁자가 4명뿐이라 150ms 창 안에 다른 커밋은 거의 늘 끼지만 같은 필드 커밋은 그중 일부라, 1/4까지는 줄지 않는다) 재시도로 회복한다. ttlMs는 무관하다"
+    measured: null
+    why: "편집 150ms 동안 같은 필드를 다른 사람이 고칠 확률은 문서 전체가 바뀔 확률보다 낮다. 다른 필드의 커밋은 이 PATCH를 막지 않는다. ttlMs는 edit-lease 파라미터라 여기에는 적용되지 않는다"
+    focus:
+      - { file: strategies/field-merge.strategy.ts, marker: field-version-where }
+      - { file: strategies/field-merge.strategy.ts, marker: same-field-409 }
+    concepts: [field-level-merge, status-409-vs-423]
+    sql: *sql-field-merge-409
+  - strategy: field-merge
+    situation: contention-window-30
+    verdict: rejects
+    expected: "위반 0. 같은 필드를 고른 저장끼리만 부딪치므로 optimistic-version보다 성공이 많지만(단순 모델 추정 약 3배) 409와 재시도 끝 포기는 여전히 많다"
+    measured: null
+    why: "주입된 30ms는 트랜잭션 안 UPDATE 앞이라 그동안 행 잠금은 없다. 그 사이 같은 필드에 다른 커밋이 있으면 재평가에서 0행이다. 필드 4개가 각자 줄을 서는 셈이라 문서 전체 버전을 비교하는 optimistic-version보다 낫지만, 한 필드 안에서는 같은 문제다"
+    focus:
+      - { file: strategies/field-merge.strategy.ts, marker: tx-boundary }
+      - { file: strategies/field-merge.strategy.ts, marker: field-version-where }
+      - { file: strategies/field-merge.strategy.ts, marker: same-field-409 }
+    concepts: [field-level-merge, rc-recheck]
+    sql: *sql-field-merge-409
+  # ── edit-lease ─────────────────────────────────────────────────────────────
+  - strategy: edit-lease
+    situation: two-people-one-doc
+    verdict: ok
+    expected: "위반 0, 409 0. 한 사람이 편집하는 동안 다른 사람은 423을 받고 20ms 간격으로 다시 노크한다. 편집이 직렬화되어 문서 처리량은 optimistic-version의 약 절반(단순 모델 추정)"
+    measured: null
+    why: "acquire는 '비었거나 · 내 것이거나 · 만료됐으면 가져간다'를 UPDATE 한 문장(자동 커밋)으로 한다. 두 사람이 동시에 acquire 하면 뒤 UPDATE가 최신 행으로 재평가돼 0행이 된다. 잠금을 쥔 사람만 GET → 편집 → 저장하므로 같은 버전을 두 사람이 읽는 장면 자체가 없다. 대가는 기다림이다. 423은 저장 실패가 아니라 '지금 다른 사람이 쓰는 중, 나중에 다시'라 409와 코드를 나눴다. acquire·save·release가 각각 version을 +1 하므로(엔티티에 version 컬럼이 매핑돼 있다) 편집 한 번에 version이 3씩 오른다"
+    focus:
+      - { file: strategies/edit-lease.strategy.ts, marker: acquire-autocommit }
+      - { file: strategies/edit-lease.strategy.ts, marker: acquire-where }
+      - { file: strategies/edit-lease.strategy.ts, marker: held-423 }
+    concepts: [lease-no-queue, status-409-vs-423, rc-recheck]
+    sql: &sql-lease
+      - 'update "g01_document" set "locked_by" = ''vu1-it0'', "lease_until" = clock_timestamp() + 30000 * interval ''1 millisecond'', "fence" = fence + 1, "version" = "version" + 1 where "id" = 1 and ("locked_by" is null or "locked_by" = ''vu1-it0'' or "lease_until" <= clock_timestamp()) returning "fence", "lease_until"'
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'update "g01_document" set "field_a" = ''{3f9c0d12ab47,8e21b6c0d9f3}'', "field_b" = ''{}'', "field_c" = ''{}'', "field_d" = ''{}'', "edit_count" = edit_count + 1, "version" = "version" + 1 where "id" = 1 and "locked_by" = ''vu1-it0'' and "fence" = ''7'' and "lease_until" > clock_timestamp() returning "version", "edit_count"'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'insert into "g01_edit_ledger" ("request_id", "document_id", "edit_token", "result", "instance") values (''00000000-0000-4000-8000-000000000001'', 1, ''8e21b6c0d9f3'', ''success'', ''app-1'') returning "id", "txid", "created_at"'
+      - 'insert into "g01_document_revision" ("document_id", "edit_token", "request_id", "base_version", "version") values (1, ''8e21b6c0d9f3'', ''00000000-0000-4000-8000-000000000001'', 20, 21) returning "id", "txid", "created_at"'
+      - 'update "g01_document" set "locked_by" = null, "lease_until" = null, "version" = "version" + 1 where "id" = 1 and "locked_by" = ''vu1-it0'' and "fence" = ''7'' returning "version"'
+  - strategy: edit-lease
+    situation: twenty-people-one-doc
+    verdict: slow
+    expected: "위반 0. 20명이 한 문서를 한 명씩 편집하므로 문서 처리량이 초당 약 1 / (편집 50ms + 폴링 틈), 곧 15~20건으로 고정되고(단순 모델 추정) 423이 성공의 수십 배 찍힌다. 대기 p95가 초 단위로 오르고 10초 대기 상한에 걸려 포기하는 사람이 생길 수 있다"
+    measured: null
+    why: "서버는 줄을 세우지 않는다. 423을 받은 사람은 각자 20ms마다 다시 노크하고, 잠금이 풀린 순간 먼저 노크한 사람이 가져간다. 도착 순서(FIFO)가 보장되지 않으니 운 나쁜 사람은 계속 밀릴 수 있다(굶주림). 기다리는 동안 DB 커넥션·트랜잭션을 쥐지 않는 것은 장점이다(G02의 행 잠금 대기는 커넥션을 쥔다). 잠금이 DB 행에 있으므로 서버 2대여도 같다"
+    focus:
+      - { file: strategies/edit-lease.strategy.ts, marker: held-423 }
+      - { file: strategies/edit-lease.strategy.ts, marker: acquire-where }
+      - { file: strategies/edit-lease.strategy.ts, marker: release-fence }
+    concepts: [lease-no-queue, status-409-vs-423]
+    sql: &sql-lease-423
+      - 'update "g01_document" set "locked_by" = ''vu2-it0'', "lease_until" = clock_timestamp() + 30000 * interval ''1 millisecond'', "fence" = fence + 1, "version" = "version" + 1 where "id" = 1 and ("locked_by" is null or "locked_by" = ''vu2-it0'' or "lease_until" <= clock_timestamp()) returning "fence", "lease_until"'
+      - 'select locked_by, greatest(0, ceil(extract(epoch from (lease_until - clock_timestamp())) * 1000))::int as remaining_ms from g01_document where id = 1'
+      - 'update "g01_document" set "locked_by" = ''vu2-it0'', "lease_until" = clock_timestamp() + 30000 * interval ''1 millisecond'', "fence" = fence + 1, "version" = "version" + 1 where "id" = 1 and ("locked_by" is null or "locked_by" = ''vu2-it0'' or "lease_until" <= clock_timestamp()) returning "fence", "lease_until"'
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'update "g01_document" set "field_a" = ''{3f9c0d12ab47,8e21b6c0d9f3}'', "field_b" = ''{}'', "field_c" = ''{}'', "field_d" = ''{}'', "edit_count" = edit_count + 1, "version" = "version" + 1 where "id" = 1 and "locked_by" = ''vu2-it0'' and "fence" = ''8'' and "lease_until" > clock_timestamp() returning "version", "edit_count"'
+      - 'select "d0".* from "g01_document" as "d0" where "d0"."id" = 1 limit 1'
+      - 'insert into "g01_edit_ledger" ("request_id", "document_id", "edit_token", "result", "instance") values (''00000000-0000-4000-8000-000000000002'', 1, ''8e21b6c0d9f3'', ''success'', ''app-1'') returning "id", "txid", "created_at"'
+      - 'insert into "g01_document_revision" ("document_id", "edit_token", "request_id", "base_version", "version") values (1, ''8e21b6c0d9f3'', ''00000000-0000-4000-8000-000000000002'', 23, 24) returning "id", "txid", "created_at"'
+      - 'update "g01_document" set "locked_by" = null, "lease_until" = null, "version" = "version" + 1 where "id" = 1 and "locked_by" = ''vu2-it0'' and "fence" = ''8'' returning "version"'
+  - strategy: edit-lease
+    situation: zipf-100-docs
+    verdict: slow
+    expected: "위반 0. 차가운 문서는 바로 잠금을 얻지만 문서 1·2에 사람이 쌓여 그 문서의 대기가 초 단위로 길어진다. 닫힌 모델이라 핫 문서에서 기다리는 사람이 늘수록 전체 처리량도 optimistic-version보다 크게 낮다(단순 모델 추정 약 1/4)"
+    measured: null
+    why: "닫힌 모델에서는 기다리는 사람이 다른 일을 하지 않는다. 핫 문서의 잠금 대기에 VU가 묶이면 차가운 문서로 갈 요청도 함께 줄어 전체 처리량이 떨어진다. 낙관 락은 같은 핫 문서에서 409를 내고 바로 재시도하지만, lease는 편집 시간 전체를 한 줄로 세운다. 경합이 잦은 문서에 lease를 쓰면 그 문서의 처리량은 1 / 편집 시간에 묶인다"
+    focus:
+      - { file: strategies/edit-lease.strategy.ts, marker: held-423 }
+      - { file: strategies/edit-lease.strategy.ts, marker: acquire-autocommit }
+    concepts: [lease-no-queue]
+    sql: *sql-lease-423
+  - strategy: edit-lease
+    situation: lease-short-ttl
+    verdict: rejects
+    expected: "위반 0인데 저장 성공이 거의 0. 편집(150ms)이 TTL(100ms)보다 길어 모든 보유자의 저장이 만료 뒤에 도착한다. 그 사이 다른 사람이 만료된 잠금을 회수(fence + 1)하므로 대부분 409 lease_lost, 아무도 회수하지 않았으면 lease_expired다"
+    measured: null
+    why: "TTL은 '쥔 채 사라진 사람'의 잠금을 회수하는 장치인데, 편집보다 짧으면 정상 편집 중인 사람의 잠금까지 회수한다. 늦은 보유자는 아직 잠금을 쥐었다고 믿고 저장하지만 save의 WHERE locked_by · fence · lease_until > clock_timestamp()가 0행이 되고, 같은 트랜잭션에서 다시 읽어 lease_lost와 lease_expired를 가린 뒤 롤백한다(원장에 흔적 없음). 그 뒤 release도 fence가 달라 새 보유자의 잠금을 풀지 못한다. 정합성은 지켜지지만 아무도 저장하지 못한다. TTL은 최대 편집 시간 + 여유보다 길어야 하고, 너무 길면 이탈자의 잠금 회수가 늦어진다(긴 편집은 같은 holder의 재acquire로 연장할 수 있지만 fence가 오르므로 새 fence를 써야 한다)"
+    focus:
+      - { file: strategies/edit-lease.strategy.ts, marker: save-where-fence }
+      - { file: strategies/edit-lease.strategy.ts, marker: reread-reason }
+      - { file: strategies/edit-lease.strategy.ts, marker: fence-increment }
+      - { file: strategies/edit-lease.strategy.ts, marker: lease-until-db-clock }
+    concepts: [fencing-token, lease-no-queue, status-409-vs-423]
+    sql: &sql-lease-lost
+      - 'update "g01_document" set "locked_by" = ''vu1-it0'', "lease_until" = clock_timestamp() + 100 * interval ''1 millisecond'', "fence" = fence + 1, "version" = "version" + 1 where "id" = 1 and ("locked_by" is null or "locked_by" = ''vu1-it0'' or "lease_until" <= clock_timestamp()) returning "fence", "lease_until"'
+      - 'select id, version, field_a, field_b, field_c, field_d, field_versions, edit_count, locked_by, lease_until, fence::text as fence, (locked_by is not null and lease_until is not null and lease_until > clock_timestamp()) as lease_active from g01_document where id = 1'
+      - 'update "g01_document" set "field_a" = ''{3f9c0d12ab47,8e21b6c0d9f3}'', "field_b" = ''{}'', "field_c" = ''{}'', "field_d" = ''{}'', "edit_count" = edit_count + 1, "version" = "version" + 1 where "id" = 1 and "locked_by" = ''vu1-it0'' and "fence" = ''7'' and "lease_until" > clock_timestamp() returning "version", "edit_count"'
+      - 'select locked_by, fence::text as fence, lease_until > clock_timestamp() as live, version from g01_document where id = 1'
+      - 'update "g01_document" set "locked_by" = null, "lease_until" = null, "version" = "version" + 1 where "id" = 1 and "locked_by" = ''vu1-it0'' and "fence" = ''7'' returning "version"'
+  - strategy: edit-lease
+    situation: contention-window-30
+    verdict: slow
+    expected: "위반 0. 주입된 30ms가 저장 트랜잭션 안, 곧 잠금(lease) 보유 시간에 더해져 문서 처리량이 초당 약 25~30건으로 고정되고(단순 모델 추정) 나머지 9명은 423을 받으며 기다린다. TTL(30초)보다 훨씬 짧아 만료는 없다"
+    measured: null
+    why: "lease는 편집 시간 + 저장 처리 시간 동안 쥐어진다. 서버 안 처리가 느려지면(경합 창, DB 지연) 그대로 다른 사람의 대기로 번진다. 같은 조건에서 optimistic-version은 409와 포기가 쌓였는데 edit-lease는 거절 대신 대기로 바뀐다. 같은 경합을 어느 쪽 비용으로 낼지의 선택이다. save는 clock_timestamp()로 유효성을 재므로 트랜잭션 안에서 30ms를 기다린 뒤에도 실제 시각으로 판단한다. now()였다면 트랜잭션 시작 시각이라 그만큼 늦게 만료를 알아챈다"
+    focus:
+      - { file: strategies/edit-lease.strategy.ts, marker: tx-boundary }
+      - { file: strategies/edit-lease.strategy.ts, marker: db-clock }
+      - { file: strategies/edit-lease.strategy.ts, marker: ledger-same-tx }
+    concepts: [db-clock, lease-no-queue]
+    sql: *sql-lease
+
+choose:
+  - when: "여럿이 같은 문서를 읽고 고쳐 저장하는 일반적인 편집 화면"
+    pick: optimistic-version
+    because: "편집 동안 아무것도 잡지 않아 다른 사람을 막지 않고, 같은 버전에서 출발한 저장 중 하나만 통과시킨다. 클라이언트는 GET 때 받은 version을 본문에 들고 오고, 409를 받으면 다시 GET → 재적용 → 새 버전으로 PUT 한다"
+    avoid: [naive-overwrite, blind-retry]
+  - when: "409를 받았다 (재시도를 어떻게 짤까)"
+    pick: optimistic-version
+    because: "올바른 재시도는 최신본을 다시 읽어 내 변경을 그 위에 다시 적용하는 것이다. 응답의 currentVersion만 바꿔 같은 본문을 다시 보내면 서버 검사를 통과하면서 앞사람 수정을 지운다"
+    avoid: [blind-retry]
+  - when: "문서가 독립적인 필드(섹션)로 나뉘고, 사람마다 주로 다른 필드를 고친다"
+    pick: field-merge
+    because: "같은 필드끼리만 충돌하므로 409와 재작업이 줄어든다. 단 필드 경계가 의미 경계와 맞을 때만 쓴다. 서로 의존하는 필드를 따로 병합하면 각각은 맞아도 합친 문서가 틀릴 수 있다"
+    avoid: [naive-overwrite, blind-retry]
+  - when: "충돌 뒤 재적용이 비싸다 (편집이 길고, 사람이 손으로 병합해야 한다)"
+    pick: edit-lease
+    because: "편집 전에 잠금을 잡아 충돌 자체를 없앤다. 대신 TTL을 최대 편집 시간보다 길게 잡고, fence를 save·release에 반드시 싣고, 423 폴링과 순서 보장 없음(굶주림)을 감수한다. 만료 판단은 DB 시계로 한다"
+    avoid: [naive-overwrite, blind-retry]
+  - when: "한 문서에 동시 편집자가 많다 (핫 문서)"
+    pick: optimistic-version
+    because: "재적용이 짧으면 409 뒤 재시도 창이 몇 ms라 대부분 회복되고, 처리량은 행 쓰기 한계까지 간다. lease는 편집 시간 전체를 한 줄로 세워 처리량이 1 / 편집 시간에 묶인다. 근본 해법은 문서를 쪼개 경합 단위를 줄이는 것이다"
+    avoid: [edit-lease, blind-retry]
+  - when: "같은 엔티티를 쓰는 경로가 여럿이다 (ORM flush 외에 nativeUpdate·raw SQL·배치)"
+    pick: optimistic-version
+    because: "버전 검사는 경로마다 WHERE version으로 있어야 한다. nativeUpdate는 version을 올리기만 하고 비교하지 않으므로, 한 경로라도 빠지면 그곳이 덮어쓰기 구멍이 된다"
+    avoid: [naive-overwrite]
