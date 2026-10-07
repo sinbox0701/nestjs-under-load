@@ -92,16 +92,22 @@
   "annotations": {
     "list": [
       {
-        "builtIn": 1,
+        "name": "phase",
+        "enable": true,
+        "iconColor": "orange",
         "datasource": {
           "type": "grafana",
           "uid": "-- Grafana --"
         },
-        "enable": true,
-        "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
-        "name": "Annotations & Alerts",
-        "type": "dashboard"
+        "target": {
+          "type": "tags",
+          "limit": 100,
+          "matchAny": false,
+          "tags": [
+            "nul",
+            "run:$run_id"
+          ]
+        }
       }
     ]
   },
@@ -836,13 +842,13 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 6,
         "x": 0,
         "y": 28
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "bytes",
           "min": 0,
           "custom": {
             "drawStyle": "line",
@@ -885,7 +891,58 @@
           "instant": false,
           "editorMode": "code",
           "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "WAL 세그먼트 수",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
         },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
         {
           "datasource": {
             "type": "prometheus",
@@ -896,12 +953,12 @@
           "range": true,
           "instant": false,
           "editorMode": "code",
-          "refId": "B"
+          "refId": "A"
         }
       ]
     },
     {
-      "id": 16,
+      "id": 17,
       "type": "timeseries",
       "title": "dead tuple",
       "description": "pg_stat_user_tables. exporter DSN 이 가리키는 DB 의 테이블만 보인다(현재 postgres DB). lab_run 의 테이블을 보려면 DSN 또는 --auto-discover-databases 가 필요하다.",
@@ -911,8 +968,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 8,
+        "w": 12,
+        "x": 12,
         "y": 28
       },
       "fieldConfig": {
@@ -964,9 +1021,9 @@
       ]
     },
     {
-      "id": 17,
+      "id": 18,
       "type": "timeseries",
-      "title": "체크포인트",
+      "title": "체크포인트 횟수",
       "description": "PG17 은 pg_stat_checkpointer. exporter 에 --collector.stat_checkpointer 를 켜야 값이 나온다(기본 off).",
       "datasource": {
         "type": "prometheus",
@@ -974,9 +1031,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 28
+        "w": 12,
+        "x": 0,
+        "y": 36
       },
       "fieldConfig": {
         "defaults": {
@@ -1035,18 +1092,69 @@
           "instant": false,
           "editorMode": "code",
           "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "체크포인트 write·sync 시간",
+      "description": "초당 소요 ms. --collector.stat_checkpointer 필요.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
         },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${ds}"
           },
           "expr": "sum(rate(pg_stat_checkpointer_write_time_total[$__rate_interval]))",
-          "legendFormat": "write ms/초",
+          "legendFormat": "write",
           "range": true,
           "instant": false,
           "editorMode": "code",
-          "refId": "C"
+          "refId": "A"
         },
         {
           "datasource": {
@@ -1054,11 +1162,11 @@
             "uid": "${ds}"
           },
           "expr": "sum(rate(pg_stat_checkpointer_sync_time_total[$__rate_interval]))",
-          "legendFormat": "sync ms/초",
+          "legendFormat": "sync",
           "range": true,
           "instant": false,
           "editorMode": "code",
-          "refId": "D"
+          "refId": "B"
         }
       ]
     }

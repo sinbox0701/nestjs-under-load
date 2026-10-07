@@ -123,16 +123,22 @@
   "annotations": {
     "list": [
       {
-        "builtIn": 1,
+        "name": "phase",
+        "enable": true,
+        "iconColor": "orange",
         "datasource": {
           "type": "grafana",
           "uid": "-- Grafana --"
         },
-        "enable": true,
-        "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
-        "name": "Annotations & Alerts",
-        "type": "dashboard"
+        "target": {
+          "type": "tags",
+          "limit": 100,
+          "matchAny": false,
+          "tags": [
+            "nul",
+            "run:$run_id"
+          ]
+        }
       }
     ]
   },
@@ -502,7 +508,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "p99 + exemplar → Tempo",
-      "description": "exemplar(점)의 trace_id 를 클릭하면 Tempo 로 이동(데이터소스 exemplarTraceIdDestinations, T-116). exemplar 는 계측 수준 full 에서만 나간다.",
+      "description": "exemplar(점)의 trace_id 를 클릭하면 Tempo 로 이동(Prometheus 데이터소스의 exemplarTraceIdDestinations: trace_id → tempo). exemplar 는 계측 수준 full 에서만 나간다.",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"

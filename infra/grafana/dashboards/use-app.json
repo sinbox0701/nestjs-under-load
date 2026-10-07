@@ -92,16 +92,22 @@
   "annotations": {
     "list": [
       {
-        "builtIn": 1,
+        "name": "phase",
+        "enable": true,
+        "iconColor": "orange",
         "datasource": {
           "type": "grafana",
           "uid": "-- Grafana --"
         },
-        "enable": true,
-        "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
-        "name": "Annotations & Alerts",
-        "type": "dashboard"
+        "target": {
+          "type": "tags",
+          "limit": 100,
+          "matchAny": false,
+          "tags": [
+            "nul",
+            "run:$run_id"
+          ]
+        }
       }
     ]
   },
@@ -123,7 +129,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "CPU 사용률(컨테이너, limit 대비)",
-      "description": "cAdvisor. limit(cpus)가 1 이면 1.0 = 100%.",
+      "description": "cAdvisor. run_id 필터 없음 — 시간 범위 기준. limit(cpus)가 1 이면 1.0 = 100%.",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"
@@ -186,7 +192,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "CPU 스로틀링 비율",
-      "description": "스로틀 기간 비율(왼쪽 축 해석)과 초당 스로틀 시간. 0 에서 벗어나면 limit 에 걸린 것.",
+      "description": "cAdvisor. run_id 필터 없음 — 시간 범위 기준. 스로틀 기간 비율(퍼센트)과 초당 스로틀 시간(초/초)을 한 축에 비율 단위로 그린다. 0 에서 벗어나면 limit 에 걸린 것.",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"
@@ -344,7 +350,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 6,
         "x": 0,
         "y": 10
       },
@@ -435,15 +441,15 @@
       "id": 7,
       "type": "timeseries",
       "title": "컨테이너 메모리(working set)",
-      "description": "cAdvisor. mem_limit 512m, 힙 한도 384MB(DESIGN §4.1).",
+      "description": "cAdvisor. run_id 필터 없음 — 시간 범위 기준. mem_limit 512m, 힙 한도 384MB(DESIGN §4.1).",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 8,
+        "w": 6,
+        "x": 6,
         "y": 10
       },
       "fieldConfig": {
@@ -496,7 +502,70 @@
     {
       "id": 8,
       "type": "timeseries",
-      "title": "GC — 종류별 시간 비율",
+      "title": "GC — 종류별 시간 비율(초/초)",
+      "description": "GC 에 쓴 시간 / 실제 시간. 1 이면 항상 GC 중.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (kind) (rate(nodejs_gc_duration_seconds_sum{run_id=\"$run_id\",instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{kind}}",
+          "range": true,
+          "instant": false,
+          "editorMode": "code",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "GC pause p99 — 종류별",
       "description": "",
       "datasource": {
         "type": "prometheus",
@@ -504,8 +573,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 16,
+        "w": 6,
+        "x": 18,
         "y": 10
       },
       "fieldConfig": {
@@ -547,29 +616,17 @@
             "type": "prometheus",
             "uid": "${ds}"
           },
-          "expr": "sum by (kind) (rate(nodejs_gc_duration_seconds_sum{run_id=\"$run_id\",instance=~\"$instance\"}[$__rate_interval]))",
-          "legendFormat": "{{kind}} 초/초",
-          "range": true,
-          "instant": false,
-          "editorMode": "code",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${ds}"
-          },
           "expr": "histogram_quantile(0.99, sum by (le, kind) (rate(nodejs_gc_duration_seconds_bucket{run_id=\"$run_id\",instance=~\"$instance\"}[$__rate_interval])))",
           "legendFormat": "p99 {{kind}}",
           "range": true,
           "instant": false,
           "editorMode": "code",
-          "refId": "B"
+          "refId": "A"
         }
       ]
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "row",
       "title": "이벤트 루프 · 요청",
       "collapsed": false,
@@ -582,7 +639,7 @@
       "panels": []
     },
     {
-      "id": 10,
+      "id": 11,
       "type": "timeseries",
       "title": "이벤트 루프 지연(ELD) p50·p99",
       "description": "",
@@ -657,7 +714,7 @@
       ]
     },
     {
-      "id": 11,
+      "id": 12,
       "type": "timeseries",
       "title": "이벤트 루프 사용률(ELU)",
       "description": "lab_eventloop_utilization(직전 스크레이프 이후, 0..1). 1 에 붙으면 이벤트 루프 포화.",
@@ -721,7 +778,7 @@
       ]
     },
     {
-      "id": 12,
+      "id": 13,
       "type": "timeseries",
       "title": "in-flight 요청",
       "description": "",
@@ -796,7 +853,7 @@
       ]
     },
     {
-      "id": 13,
+      "id": 14,
       "type": "row",
       "title": "DB 풀",
       "collapsed": false,
@@ -809,7 +866,7 @@
       "panels": []
     },
     {
-      "id": 14,
+      "id": 15,
       "type": "timeseries",
       "title": "풀 연결 수 — state 별(total·idle·waiting)",
       "description": "lab_db_pool_connections{state}. waiting > 0 이면 풀 대기 발생. active = total − idle.",
@@ -872,7 +929,7 @@
       ]
     },
     {
-      "id": 15,
+      "id": 16,
       "type": "timeseries",
       "title": "풀 acquire 대기 시간 p50·p95·p99",
       "description": "",
@@ -959,7 +1016,7 @@
       ]
     },
     {
-      "id": 16,
+      "id": 17,
       "type": "timeseries",
       "title": "풀 acquire 타임아웃 · 스레드풀 크기",
       "description": "",
