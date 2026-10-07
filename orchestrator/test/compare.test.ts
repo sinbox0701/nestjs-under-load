@@ -158,7 +158,10 @@ describe('orderBatchSummary', () => {
     b.timeouts.lockMs = 3000;
     const r = compareBatches(two, [a, b], null);
     assert.equal(r.comparable, false);
-    assert.deepEqual(r.diffs, [{ path: 'timeouts.lockMs', values: [1000, 3000], kind: 'blocking' }]);
+    assert.deepEqual(r.diffs, [
+      { path: 'timeouts.lockMs', values: [1000, 3000], kind: 'blocking' },
+      { path: 'strategy.params.lockTimeoutMs', values: [1000, 3000], kind: 'blocking' },
+    ]);
   });
 
   it('T-153: 3배치 혼합(row-lock 1000 + row-lock 3000 + no-lock)은 같은 strategy 끼리 달라서 blocking', () => {
@@ -171,7 +174,10 @@ describe('orderBatchSummary', () => {
     const three = [batch, { ...batch, batchId: 'b' }, { ...batch, batchId: 'c' }];
     const r = compareBatches(three, [mk('row-lock', 1000), mk('row-lock', 3000), mk('no-lock', null)], null);
     assert.equal(r.comparable, false);
-    assert.deepEqual(r.diffs, [{ path: 'timeouts.lockMs', values: [1000, 3000, null], kind: 'blocking' }]);
+    assert.deepEqual(r.diffs, [
+      { path: 'timeouts.lockMs', values: [1000, 3000, null], kind: 'blocking' },
+      { path: 'strategy.params.lockTimeoutMs', values: [1000, 3000, null], kind: 'blocking' },
+    ]);
   });
 
   it('T-153: 2·3배치 모두 strategy 가 다르면 lockMs 차이는 제외', () => {
@@ -187,6 +193,28 @@ describe('orderBatchSummary', () => {
     const r3 = compareBatches(three, [mk('row-lock', 1000), mk('no-lock', null), mk('conditional-update', 5)], null);
     assert.equal(r3.comparable, true);
     assert.deepEqual(r3.diffs, []);
+  });
+
+  it('T-155 AC-1: 같은 strategy(redis-lock)에서 ttlMs 만 다르면 strategy.params.ttlMs blocking', () => {
+    const a = clone(md1);
+    a.strategy = { id: 'redis-lock', params: { ttlMs: 3000 } };
+    a.timeouts.lockMs = null;
+    const b = clone(a);
+    b.strategy.params.ttlMs = 5000;
+    const r = compareBatches(two, [a, b], null);
+    assert.equal(r.comparable, false);
+    assert.deepEqual(r.diffs, [{ path: 'strategy.params.ttlMs', values: [3000, 5000], kind: 'blocking' }]);
+  });
+
+  it('T-155 AC-2: no-lock(params {}) vs redis-lock(ttlMs 3000)은 다른 strategy 라 comparable', () => {
+    const a = clone(md1);
+    a.strategy = { id: 'no-lock', params: {} };
+    a.timeouts.lockMs = null;
+    const b = clone(a);
+    b.strategy = { id: 'redis-lock', params: { ttlMs: 3000 } };
+    const r = compareBatches(two, [a, b], null);
+    assert.equal(r.comparable, true);
+    assert.deepEqual(r.diffs, []);
   });
 
   it('closed 배치의 total 은 그대로 둔다', () => {
