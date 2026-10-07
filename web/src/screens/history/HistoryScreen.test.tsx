@@ -70,3 +70,15 @@ describe('HistoryScreen', () => {
     expect(autoAxis(a, c)).toBe('instrumentation');
   });
 });
+
+describe('HistoryScreen unstable 배지 문구', () => {
+  it('AC-3 문구가 반복 수를 반영한다', async () => {
+    const api = createApi({ mock: true });
+    render(
+      <HistoryScreen
+        api={{ ...api, getBatch: async () => ({ ...fixtures.batch, reps: 5, badges: ['unstable'] }) as BatchSummary }}
+      />,
+    );
+    expect(await screen.findByText('5회 편차 큼')).toBeInTheDocument();
+  });
+});

@@ -15,7 +15,7 @@ import {
 const BADGE_TEXT: Record<BatchBadge, string> = {
   'closed-latency-caution': '닫힌 모델: 지연이 낮게 보일 수 있음',
   injected: '주입됨',
-  unstable: '3회 편차 큼',
+  unstable: '편차 큼',
 };
 const BADGE_TONE: Record<BatchBadge, string> = {
   'closed-latency-caution': 't-wait',
@@ -51,7 +51,7 @@ function Badges({ b }: { b: BatchSummary }) {
     <div className="cx__row">
       {b.badges.map((x) => (
         <span key={x} className={`badge ${BADGE_TONE[x]}`}>
-          {BADGE_TEXT[x]}
+          {x === 'unstable' ? `${b.reps}회 편차 큼` : BADGE_TEXT[x]}
         </span>
       ))}
     </div>
@@ -191,7 +191,7 @@ function Throughput({ batches, comparable }: { batches: BatchSummary[]; comparab
   return (
     <section className="panel cx__sec" data-section="throughput" aria-labelledby="cx-tp">
       <h2 className="panel__h" id="cx-tp">
-        3. 처리량·지연 <span className="meta">숫자 옆은 3회 범위(최소–최대)</span>
+        3. 처리량·지연 <span className="meta">숫자 옆은 {Math.max(...batches.map((b) => b.reps))}회 범위(최소–최대)</span>
       </h2>
       {!comparable && (
         <p className="dim" data-testid="no-rank">
