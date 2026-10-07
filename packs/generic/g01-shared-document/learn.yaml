@@ -175,7 +175,7 @@ outcomes:
   - strategy: naive-overwrite
     situation: twenty-people-one-doc
     verdict: broken
-    expected: "성공 저장의 대부분(단순 모델 추정 90% 이상)이 최종 문서에서 사라진다. 거절이 없어 처리량은 다섯 strategy 중 가장 높고 오류율 0%라, 응답 지표만 보면 가장 좋아 보인다"
+    expected: "성공 저장의 대부분(단순 모델 추정 90% 이상)이 최종 문서에서 사라진다. 거절(409·423)이 없어 오류율 0%이고 처리량도 버전을 검사하는 strategy와 같거나 높게(행 쓰기 한계 근처) 나와, 응답 지표만 보면 좋아 보인다"
     measured: null
     why: "편집 50ms 사이에 다른 사람의 저장이 여러 번 끼어든다. 마지막으로 저장한 사람의 '읽은 시점 배열 + 내 토큰'만 남고 그 사이 커밋은 모두 덮인다. 서버가 2대여도 결과의 성격은 같다. 막는 장치가 애초에 어디에도 없다. 판정 근거가 응답이 아니라 DB에 남은 사실(원장 대 최종 문서)이어야 하는 이유가 가장 크게 드러나는 칸이다"
     focus:
@@ -300,7 +300,7 @@ outcomes:
   - strategy: optimistic-version
     situation: twenty-people-one-doc
     verdict: ok
-    expected: "위반 0. 409가 성공 수와 비슷하거나 더 많고(단순 모델 추정: 성공 1건당 약 1건), 성공 처리량은 사람 수에 비례해 늘지 않고 문서 한 행의 쓰기 한계 근처에서 멈춘다. 재시도 상한(3회)을 다 쓰고 포기하는 편집은 소수"
+    expected: "위반 0. 409가 성공 수와 비슷하거나 더 많다(단순 모델 추정: 성공 1건당 1~3건, 서버 지연·지터가 크면 위쪽, 실측으로 확인), 성공 처리량은 사람 수에 비례해 늘지 않고 문서 한 행의 쓰기 한계 근처에서 멈춘다. 재시도 상한(3회)을 다 쓰고 포기하는 편집은 소수"
     measured: null
     why: "사람이 늘면 편집 50ms 안에 다른 커밋이 여러 번 일어나 첫 PUT은 거의 늘 ①에서 409다. 다시 GET → 곧바로 PUT 하는 재시도는 창이 몇 ms라 대부분 통과한다. 같은 행에 대한 UPDATE는 행 잠금으로 한 번에 하나씩이고, 409로 버려진 GET·PUT이 일을 늘리므로 성공 처리량에는 천장이 있다. 판정은 DB 행이 하므로 서버 2대여도 같다"
     focus:
@@ -373,7 +373,7 @@ outcomes:
   - strategy: field-merge
     situation: twenty-people-one-doc
     verdict: ok
-    expected: "위반 0. 같은 필드 경쟁자가 약 5명이라 409는 여전히 많고(단순 모델 추정 optimistic-version과 비슷한 수준까지) 행 잠금 직렬화로 처리량 한계도 같다. 재시도 끝에 포기하는 편집은 optimistic-version보다 적다(추정)"
+    expected: "위반 0. 같은 필드 경쟁자가 약 5명이라 409는 여전히 많고(단순 모델 추정 optimistic-version과 비슷한 수준까지. 근거: 편집 50ms 동안 문서 전체 커밋이 십수 건이면 같은 필드 커밋도 몇 건은 끼어 첫 PATCH가 대부분 409가 된다. 재시도 창 몇 ms 안에 같은 필드 커밋이 낄 확률은 1/4로 줄어 회복은 쉽다) 행 잠금 직렬화로 처리량 한계도 같다. 재시도 끝에 포기하는 편집은 optimistic-version보다 적다(추정)"
     measured: null
     why: "필드 단위 병합은 충돌 단위를 줄일 뿐, 행 하나에 쓰기가 몰리는 구조는 그대로다. 모든 PATCH가 같은 행을 UPDATE 하므로 행 잠금으로 줄을 서고 처리량 천장은 optimistic-version과 같다. 같은 필드 경쟁자가 많으면 409 이득도 작아진다. 이 팩의 PUT(문서 전체)은 모든 필드 버전을 올려서, PUT과 PATCH가 섞이면 PUT 이전 버전을 본 PATCH는 409가 된다"
     focus:
@@ -394,7 +394,7 @@ outcomes:
   - strategy: field-merge
     situation: zipf-100-docs
     verdict: ok
-    expected: "위반 0. 다섯 중 409가 가장 적다(단순 모델 추정 optimistic-version의 절반 안팎)"
+    expected: "위반 0. 버전 충돌로 409를 내는 다른 strategy(optimistic-version·blind-retry)보다 409가 적다(naive-overwrite와 edit-lease는 이 상황에서 409를 내지 않으므로 비교 대상이 아니다)(단순 모델 추정 optimistic-version의 절반 안팎). 근거: 충돌하려면 같은 문서에 더해 같은 필드(4개 중 1개)까지 겹쳐야 하고, 핫 문서에 몰린 경쟁자 몇 명이 필드로 갈리면 그만큼 409가 빠진다"
     measured: null
     why: "충돌하려면 같은 문서 · 같은 필드 · 같은 편집 창이 모두 겹쳐야 한다. 핫 문서에서도 필드가 갈리면 둘 다 성공한다. 단, 필드 경계가 의미 경계와 맞을 때만 이 이득이 정당하다. 서로 의존하는 필드(예: 금액과 합계)를 따로 병합하면 각각은 맞아도 합친 문서가 틀릴 수 있고, no_lost_update는 그것을 잡지 못한다"
     focus:
@@ -405,7 +405,7 @@ outcomes:
   - strategy: field-merge
     situation: lease-short-ttl
     verdict: ok
-    expected: "위반 0. 편집이 길어 409가 많지만 optimistic-version보다 적고(단순 모델 추정 약 2/3) 재시도로 회복한다. ttlMs는 무관하다"
+    expected: "위반 0. 편집이 길어 409가 많지만 optimistic-version보다 적고(단순 모델 추정 약 2/3. 근거: 경쟁자가 4명뿐이라 150ms 창 안에 다른 커밋은 거의 늘 끼지만 같은 필드 커밋은 그중 일부라, 1/4까지는 줄지 않는다) 재시도로 회복한다. ttlMs는 무관하다"
     measured: null
     why: "편집 150ms 동안 같은 필드를 다른 사람이 고칠 확률은 문서 전체가 바뀔 확률보다 낮다. 다른 필드의 커밋은 이 PATCH를 막지 않는다. ttlMs는 edit-lease 파라미터라 여기에는 적용되지 않는다"
     focus:
