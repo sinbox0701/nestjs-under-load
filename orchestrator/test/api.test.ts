@@ -374,6 +374,29 @@ describe('C2 API', () => {
   });
 });
 
+describe('learn measured: manifest 기본 params 대응', () => {
+  it('row-lock 이 기본 params({lockTimeoutMs:1000})를 기록해도 params 없는 situation 에 대응하고, 다른 값이면 대응하지 않는다', () => {
+    const sits = loadPackCatalog(repoDir).learnSituations('g02-stock-decrement')!;
+    const defaults = { 'row-lock': { lockTimeoutMs: 1000 } };
+    const key = (params: Record<string, unknown>) => {
+      const m = clone(md1);
+      Object.assign(m, { strategy: { id: 'row-lock', params } });
+      m.topology.appInstances = 1;
+      m.load = { ...m.load, model: 'closed', vus: 2, rate: null, duration: '30s' };
+      m.interventions = [];
+      m.data.rows = {};
+      m.data.seedOptions = { products: 5, stockPerProduct: 100 };
+      m.data.distribution = 'uniform';
+      return batchKey(m);
+    };
+    assert.equal(matchSituation(sits, key({ lockTimeoutMs: 1000 }), defaults)?.id, 'two-users-one-instance');
+    assert.equal(matchSituation(sits, key({}), defaults)?.id, 'two-users-one-instance');
+    assert.equal(matchSituation(sits, key({ lockTimeoutMs: 50 }), defaults), null);
+    // 기본값을 모르면 글자 그대로 비교한다
+    assert.equal(matchSituation(sits, key({ lockTimeoutMs: 1000 }), {}), null);
+  });
+});
+
 describe('learn measured 계산 (G01·closed·params)', () => {
   const g01 = loadPackCatalog(repoDir).learnSituations('g01-shared-document')!;
   const mkG01 = (o: { strategy?: string; params?: Record<string, unknown>; instances?: number; vus?: number; documents?: number | null; editMs?: number | null; dist?: string }) => {
