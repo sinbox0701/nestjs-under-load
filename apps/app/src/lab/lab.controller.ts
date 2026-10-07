@@ -1,6 +1,8 @@
 import { Controller, Get, Inject, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { MikroORM } from '@mikro-orm/postgresql';
 
+import type { ReadyResponse } from '@under-load/contracts';
+
 import type { RunConfig } from '../config/run-config';
 
 export const LAB_STATE = Symbol('LAB_STATE');
@@ -9,6 +11,8 @@ export interface LabState {
   instance: string;
   runConfig: RunConfig | null;
   bootedAt: string;
+  /** task=prepare-template 이면 마이그레이션·시드가 끝난 뒤 bootstrap 이 채운다. 채워지기 전에는 ready 가 503. */
+  prepared?: { database: string; durationMs: number };
 }
 
 /**
@@ -28,17 +32,23 @@ export class LabController {
   }
 
   @Get('ready')
-  async ready(): Promise<{ instance: string; runId: string; scenario: string; strategy: string; bootedAt: string }> {
+  async ready(): Promise<ReadyResponse> {
     const rc = this.state.runConfig;
     if (!rc) throw new ServiceUnavailableException(`instance ${this.state.instance}: RunConfig 없음(대기 모드)`);
     const db = this.orm ? await this.orm.checkConnection() : { ok: false, reason: 'ORM 없음' };
     if (!db.ok) throw new ServiceUnavailableException(`instance ${this.state.instance}: DB 연결 실패 (${db.reason})`);
+    if (rc.task === 'prepare-template' && !this.state.prepared) {
+      throw new ServiceUnavailableException(`instance ${this.state.instance}: 템플릿 준비 중`);
+    }
     return {
       instance: this.state.instance,
       runId: rc.runId,
+      task: rc.task,
       scenario: rc.scenario,
       strategy: rc.strategy,
+      instrumentation: rc.instrumentation,
       bootedAt: this.state.bootedAt,
+      ...(this.state.prepared ? { prepared: this.state.prepared } : {}),
     };
   }
 }
