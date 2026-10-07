@@ -38,6 +38,8 @@ export class RowLockStrategy implements G02Strategy<RowLockParams> {
   readonly id = 'row-lock';
 
   async execute(cmd: OrderCommand, ctx: StrategyContext<RowLockParams>): Promise<OrderResult> { // @event arrived
+    const entity = { type: 'Product', id: String(cmd.productId) };
+    ctx.events.emit('arrived', { entity });
     const timeoutMs = ctx.params.lockTimeoutMs;
     if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
       throw new Error(`row-lock: lockTimeoutMs는 양의 정수여야 합니다(받은 값: ${String(timeoutMs)})`);
@@ -45,22 +47,39 @@ export class RowLockStrategy implements G02Strategy<RowLockParams> {
     try {
       return await ctx.em.transactional(async (em) => {
         await em.execute(`set local lock_timeout = '${timeoutMs}ms'`); // @learn set-local-lock-timeout — SET LOCAL은 이 트랜잭션에만 적용되고 끝나면 원복된다. 그냥 SET이면 풀 커넥션에 남는다
+        const waitStart = performance.now();
         const product = await em.findOneOrFail(Product, cmd.productId, { // @event lock_wait
           lockMode: LockMode.PESSIMISTIC_WRITE, // @learn for-update — SELECT ... FOR UPDATE. 잠금을 기다린 뒤 최신 커밋 버전을 읽어 온다
         }); // @event lock_acquired
+        ctx.events.emit('lock_wait', { entity, durMs: performance.now() - waitStart });
+        ctx.events.emit('lock_acquired', { entity });
+        let delayStart = performance.now();
         await ctx.contentionWindow('after-lock'); // @event injected_delay
+        let delayed = performance.now() - delayStart;
+        if (delayed >= 0.5) ctx.events.emit('injected_delay', { entity, injected: true, durMs: delayed });
+        delayStart = performance.now();
         await ctx.contentionWindow('after-read'); // @event injected_delay
+        delayed = performance.now() - delayStart;
+        if (delayed >= 0.5) ctx.events.emit('injected_delay', { entity, injected: true, durMs: delayed });
         if (product.stock < cmd.qty) { // @learn fresh-read-check — 잠근 행의 최신 값으로 판정한다. 다른 트랜잭션은 이 행을 바꿀 수 없다
           await ctx.ledger.record(em, cmd, 'sold_out');
+          ctx.events.emit('committed', { entity });
+          ctx.events.emit('lock_released', { entity });
           return 'sold_out' as const;
         }
         product.stock -= cmd.qty;
         await em.flush(); // @event db_write
+        ctx.events.emit('db_write', { entity });
         await ctx.ledger.record(em, cmd, 'success'); // @learn lock-held-span — 원장 INSERT까지 끝나고 커밋해야 잠금이 풀린다. FOR UPDATE부터 여기까지가 전부 보유 시간이다
+        ctx.events.emit('committed', { entity });
+        ctx.events.emit('lock_released', { entity });
         return 'success' as const;
       }); // @event committed rolled_back lock_released
     } catch (err) {
+      ctx.events.emit('rolled_back', { entity });
+      ctx.events.emit('lock_released', { entity });
       if ((err as { code?: unknown }).code === LOCK_NOT_AVAILABLE) { // @event lock_timeout
+        ctx.events.emit('lock_timeout', { entity });
         throw new ServiceUnavailableException({ result: 'lock_timeout', requestId: cmd.requestId }); // @learn lock-timeout-55p03 — 55P03은 롤백되고 원장에 남지 않는다. 품절(409)과 구분해 503으로 돌려준다
       }
       throw err;

@@ -35,24 +35,40 @@ export class AppMemoryLockStrategy implements G02Strategy {
   private readonly tails = new Map<number, Promise<void>>(); // @learn process-local-map — 이 Map은 이 프로세스에만 있다. 다른 인스턴스는 이 락을 볼 수 없다
 
   async execute(cmd: OrderCommand, ctx: StrategyContext): Promise<OrderResult> { // @event arrived
+    const entity = { type: 'Product', id: String(cmd.productId) };
+    ctx.events.emit('arrived', { entity });
+    const waitStart = performance.now();
     const ticket = this.enqueue(cmd.productId); // @event lock_wait
     await ticket.ready; // @event lock_acquired
+    ctx.events.emit('lock_wait', { entity, durMs: performance.now() - waitStart });
+    ctx.events.emit('lock_acquired', { entity });
+    let done = false; // 콜백이 끝까지 가면 true. finally 에서 커밋/롤백을 가른다
     try {
       return await ctx.em.transactional(async (em) => {
         const product = await em.findOneOrFail(Product, cmd.productId); // @event db_read
+        ctx.events.emit('db_read', { entity });
         const seen = product.stock; // @learn same-read-then-write — mutex 안쪽은 no-lock과 똑같다. DB는 아무것도 잠그지 않는다
+        const delayStart = performance.now();
         await ctx.contentionWindow('after-read'); // @event injected_delay
+        const delayed = performance.now() - delayStart;
+        if (delayed >= 0.5) ctx.events.emit('injected_delay', { entity, injected: true, durMs: delayed });
         if (seen < cmd.qty) {
           await ctx.ledger.record(em, cmd, 'sold_out');
+          done = true;
           return 'sold_out' as const;
         }
         product.stock = seen - cmd.qty;
         await em.flush(); // @event db_write
+        ctx.events.emit('db_write', { entity });
         await ctx.ledger.record(em, cmd, 'success');
+        done = true;
         return 'success' as const;
       }); // @event committed rolled_back
     } finally { // @learn release-after-commit — 커밋이 끝난 뒤에 푼다. 예외가 나도 finally에서 반드시 푼다
+      if (done) ctx.events.emit('committed', { entity });
+      else ctx.events.emit('rolled_back', { entity });
       ticket.release(); // @event lock_released
+      ctx.events.emit('lock_released', { entity });
     }
   }
 
