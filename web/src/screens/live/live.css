@@ -11,7 +11,11 @@
   gap: var(--s2) var(--s3);
 }
 .live__hint,
-.live__conn,
+.live__conn {
+  font: 12px/1.5 var(--font-body);
+  color: var(--dim);
+  margin: 0;
+}
 .live__run {
   font: 10px/1.4 var(--font-small);
   color: var(--dim);

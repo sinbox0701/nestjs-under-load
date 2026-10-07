@@ -23,6 +23,8 @@ export interface LiveStatus {
 
 export interface LiveState {
   runId: string | null;
+  /** 이미 지나간 runId 들. 이들의 늦은 메시지는 버린다. */
+  past: string[];
   events: WireEventV0[];
   /** 인스턴스별 최신 풀 상태. */
   pools: Record<string, PoolSnapshot>;
@@ -34,6 +36,7 @@ export interface LiveState {
 
 export const initialLive: LiveState = {
   runId: null,
+  past: [],
   events: [],
   pools: {},
   probe: null,
@@ -44,9 +47,10 @@ export const initialLive: LiveState = {
 
 export function liveReduce(prev: LiveState, msg: WsMessage): LiveState {
   // 새 runId 의 첫 메시지: 이전 실행의 화면 상태를 모두 버린다.
+  if (prev.past.includes(msg.runId)) return prev;
   const s: LiveState =
     prev.runId !== null && prev.runId !== msg.runId
-      ? { ...initialLive, runId: msg.runId }
+      ? { ...initialLive, runId: msg.runId, past: [...prev.past, prev.runId] }
       : { ...prev, runId: msg.runId };
   switch (msg.type) {
     case 'events': {
@@ -78,9 +82,9 @@ export function liveReduce(prev: LiveState, msg: WsMessage): LiveState {
   }
 }
 
-/** 이벤트에 나온 서로 다른 대표 actor 수 = "샘플: 대표 N명분" 의 N. */
+/** actor 는 `<VU>-<반복>` 이다(loadtest/lib/headers.mjs). "대표 N명"의 N = 서로 다른 VU 수. */
 export function sampleCount(events: readonly WireEventV0[]): number {
-  return new Set(events.map((e) => e.actor)).size;
+  return new Set(events.map((e) => e.actor.split('-')[0])).size;
 }
 
 /** 풀 게이지 값. 활성 = 전체 - 유휴. */

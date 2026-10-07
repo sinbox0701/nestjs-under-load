@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { WS_CURRENT, type Api, type WsMessage } from '../../api';
 import { Timeline } from '../../components/Timeline';
 import { scenarioIdOf } from '../../components/lib/config';
@@ -6,7 +6,7 @@ import { toRecording, type WireEvent } from '../../events/ndjson';
 import type { PhaseGroup } from '../../events/phases';
 import { prepare } from '../../playback/prepare';
 import { buildRows, type RowView } from '../../playback/rows';
-import { MEASURED_BADGE, STAGE_BADGE } from './badges';
+import { MEASURED_BADGE } from './badges';
 import { PoolGauges } from './PoolGauges';
 import { ProbeTree } from './ProbeTree';
 import { initialLive, liveReduce, sampleCount } from './state';
@@ -29,6 +29,25 @@ const STATE_LABEL = {
   failed: '실패',
 } as const;
 
+/** 값이 바뀌어도 ms 에 한 번만 따라간다(마지막 값 보장). 무거운 재계산을 메시지마다 하지 않으려는 것. */
+function useThrottled<T>(value: T, ms: number): T {
+  const [out, setOut] = useState(value);
+  const latest = useRef(value);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    latest.current = value;
+    if (timer.current === undefined)
+      timer.current = setTimeout(() => {
+        timer.current = undefined;
+        setOut(latest.current);
+      }, ms);
+  }, [value, ms]);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return out;
+}
+
+const RENDER_THROTTLE_MS = 250;
+
 /** 서버 속 라이브(화면 4): WS 이벤트·PG 프로브·풀을 텍스트로 그린다. 표본은 대표 요청만이다. */
 export function LiveScreen({ api, runId = WS_CURRENT, scenario }: LiveScreenProps) {
   const [live, dispatch] = useReducer(liveReduce, initialLive);
@@ -44,23 +63,25 @@ export function LiveScreen({ api, runId = WS_CURRENT, scenario }: LiveScreenProp
   }, [api, runId]);
 
   const n = sampleCount(live.events);
+  const shownEvents = useThrottled(live.events, RENDER_THROTTLE_MS);
+  const shownRunId = useThrottled(live.runId, RENDER_THROTTLE_MS);
   const strategyId = useMemo(() => {
-    const a = live.events.find((e) => typeof e.attrs?.strategy === 'string')?.attrs?.strategy;
+    const a = shownEvents.find((e) => typeof e.attrs?.strategy === 'string')?.attrs?.strategy;
     return typeof a === 'string' ? a : '';
-  }, [live.events]);
-  const scenarioId = scenarioIdOf(scenario ?? live.runId ?? '');
+  }, [shownEvents]);
+  const scenarioId = scenarioIdOf(scenario ?? shownRunId ?? '');
   const prepared = useMemo(
     () =>
       prepare(
-        toRecording(live.events as WireEvent[], {
+        toRecording(shownEvents as WireEvent[], {
           meta: {
-            runId: live.runId ?? '',
+            runId: shownRunId ?? '',
             scenario: scenarioId,
             strategy: { id: strategyId, label: strategyId, kind: 'broken' },
           },
         }),
       ),
-    [live.events, live.runId, scenarioId, strategyId],
+    [shownEvents, shownRunId, scenarioId, strategyId],
   );
   const rows = useMemo(
     () => buildRows(prepared.events, { view, off }, { info: prepared.info }),
@@ -81,8 +102,7 @@ export function LiveScreen({ api, runId = WS_CURRENT, scenario }: LiveScreenProp
           {MEASURED_BADGE(n)}
         </span>
         <span className="live__hint">
-          실제 실행의 대표 요청만 보입니다(전량 아님). 무대 화면의{' '}
-          <span className="badge t-neutral">{STAGE_BADGE}</span> 배지는 가상 기록입니다.
+          오케스트레이터가 받은 실제 실행의 대표 요청만 보입니다(전량 아님).
         </span>
         <span className="live__conn" role="status">
           {conn === 'open' ? '연결됨' : conn === 'connecting' ? '연결 중' : '연결 끊김'}

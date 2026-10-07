@@ -10,7 +10,7 @@ export const DASHBOARDS = [
 export type DashboardUid = (typeof DASHBOARDS)[number]['uid'];
 
 export interface GrafanaUrlInput {
-  /** Grafana 가 서 있는 경로 접두사(리버스 프록시). 기본 `/grafana`. */
+  /** Grafana 주소 접두사. 기본은 compose 의 Grafana 호스트 포트(3001)다. */
   base?: string;
   uid: string;
   runId: string;
@@ -20,8 +20,12 @@ export interface GrafanaUrlInput {
   kiosk?: boolean;
 }
 
+const GRAFANA_PORT = 3001;
+const defaultBase = () =>
+  `${globalThis.location.protocol}//${globalThis.location.hostname}:${GRAFANA_PORT}`;
+
 export function grafanaUrl(i: GrafanaUrlInput): string {
-  const base = (i.base ?? '/grafana').replace(/\/$/, '');
+  const base = (i.base ?? defaultBase()).replace(/\/$/, '');
   const q = new URLSearchParams({
     'var-run_id': i.runId,
     from: String(Math.round(i.fromMs)),

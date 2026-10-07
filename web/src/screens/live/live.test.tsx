@@ -88,13 +88,23 @@ describe('blockTree', () => {
 
 describe('liveReduce', () => {
   it('새 runId 의 첫 메시지가 오면 이전 실행 상태를 모두 비운다', () => {
-    let s = liveReduce(initialLive, events(RUN, [ev(RUN, 1, 'a')]));
+    let s = liveReduce(initialLive, events(RUN, [ev(RUN, 1, '3-1')]));
     s = liveReduce(s, pool(RUN, 10, 2, 3));
     expect(s.events).toHaveLength(1);
     s = liveReduce(s, pool('run-B', 5, 5, 0));
     expect(s.runId).toBe('run-B');
     expect(s.events).toHaveLength(0);
     expect(s.pools['app-1']).toEqual({ total: 5, idle: 5, waiting: 0 });
+  });
+});
+
+describe('liveReduce 늦은 메시지', () => {
+  it('지나간 runId 의 늦은 메시지는 현재 실행 상태를 버리지 않는다', () => {
+    let s = liveReduce(initialLive, pool(RUN, 10, 2, 3));
+    s = liveReduce(s, pool('run-B', 4, 1, 0));
+    const after = liveReduce(s, pool(RUN, 1, 1, 1));
+    expect(after).toBe(s);
+    expect(after.runId).toBe('run-B');
   });
 });
 
@@ -123,8 +133,9 @@ describe('LiveScreen', () => {
   it('AC-4: 실측 배지는 대표 N명, 무대 배지와 문구가 다르다', () => {
     const { api, send } = harness();
     render(<LiveScreen api={api} />);
-    send(events(RUN, [ev(RUN, 1, 'a'), ev(RUN, 2, 'b'), ev(RUN, 3, 'a')]));
+    send(events(RUN, [ev(RUN, 1, '3-1'), ev(RUN, 2, '3-2'), ev(RUN, 3, '5-1')]));
     expect(screen.getByTestId('measured-badge').textContent).toBe('실측 · 샘플 대표 2명');
+    // 같은 VU 의 반복(3-1, 3-2)은 한 명으로 센다
     expect(MEASURED_BADGE(2)).not.toBe(STAGE_BADGE);
     expect(MEASURED_BADGE(2)).not.toContain('시뮬레이션');
   });
@@ -132,10 +143,10 @@ describe('LiveScreen', () => {
   it('runId 가 바뀌면 타임라인과 풀이 초기화된다', () => {
     const { api, send } = harness();
     render(<LiveScreen api={api} />);
-    send(events(RUN, [ev(RUN, 1, 'a'), ev(RUN, 2, 'b')]));
+    send(events(RUN, [ev(RUN, 1, '3-1'), ev(RUN, 2, '5-1')]));
     send(pool(RUN, 10, 2, 3));
     expect(screen.getByTestId('measured-badge').textContent).toContain('2명');
-    send(events('run-B', [ev('run-B', 1, 'z')]));
+    send(events('run-B', [ev('run-B', 1, '9-1')]));
     expect(screen.getByTestId('measured-badge').textContent).toContain('1명');
     expect(screen.getByText('풀 상태 대기 중')).toBeInTheDocument();
     expect(screen.getByText('run run-B')).toBeInTheDocument();

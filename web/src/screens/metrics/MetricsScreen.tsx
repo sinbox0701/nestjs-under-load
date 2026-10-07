@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Api } from '../../api';
+import { Seg } from '../../components/lib/Seg';
 import { DASHBOARDS, grafanaUrl } from './grafana';
 import './metrics.css';
 
@@ -56,20 +57,12 @@ export function MetricsScreen({ runId, fromMs, toMs, api, grafanaBase }: Metrics
   return (
     <div className="nul metrics" aria-label="지표 패널">
       <header className="metrics__top">
-        <div className="seg" role="tablist" aria-label="대시보드">
-          {DASHBOARDS.map((d) => (
-            <button
-              key={d.uid}
-              type="button"
-              role="tab"
-              aria-selected={uid === d.uid}
-              className={uid === d.uid ? 'btn is-sel' : 'btn'}
-              onClick={() => setUid(d.uid)}
-            >
-              {d.tab}
-            </button>
-          ))}
-        </div>
+        <Seg<string>
+          label="대시보드"
+          value={uid}
+          onChange={setUid}
+          items={DASHBOARDS.map((d) => ({ value: d.uid, label: d.tab }))}
+        />
         <span className="metrics__run">run {runId}</span>
         {open && (
           <a className="metrics__open" href={open} target="_blank" rel="noreferrer noopener">

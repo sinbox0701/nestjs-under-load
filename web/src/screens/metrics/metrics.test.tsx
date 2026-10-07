@@ -21,10 +21,11 @@ describe('MetricsScreen', () => {
   it('탭을 누르면 iframe 이 그 UID 대시보드로 바뀐다', () => {
     render(<MetricsScreen runId="r1" fromMs={10} toMs={20} />);
     expect(screen.getByTitle('Grafana 개요').getAttribute('src')).toContain('/d/nul-run-overview/');
-    fireEvent.click(screen.getByRole('tab', { name: 'RED' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'RED' }));
     const src = screen.getByTitle('Grafana RED').getAttribute('src')!;
     expect(src).toMatch(/\/d\/nul-red\/.*var-run_id=r1&from=10&to=20&kiosk$/);
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
+    expect(src.startsWith(`${location.protocol}//${location.hostname}:3001/`)).toBe(true);
+    expect(screen.getAllByRole('radio').map((t) => t.textContent)).toEqual([
       '개요',
       'RED',
       'USE-앱',
