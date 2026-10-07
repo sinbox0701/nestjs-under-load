@@ -1,5 +1,5 @@
-// task=prepare-template 부팅 통합 테스트(AC-3). PG 에 접속할 수 없으면 skip.
-// 실행은 `tsc && node --test "dist/**/*.test.js"`(g02 팩 dist 가 있어야 부팅된다). 접속 대상: APP_TEST_DATABASE_URL(기본 compose postgres 127.0.0.1:55432, CREATE DATABASE 권한 필요).
+// task=prepare-template 부팅 통합 테스트(AC-3). APP_TEST_DATABASE_URL 이 없거나 PG 에 접속할 수 없으면 skip(없으면 접속 시도 자체를 하지 않는다).
+// 실행은 `tsc && node --test "dist/**/*.test.js"`(g02 팩 dist 가 있어야 부팅된다). 접속 대상: APP_TEST_DATABASE_URL(CREATE DATABASE 권한 필요, 기본값 없음). 일회용 PG 예시는 test-support/test-pg.ts.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -12,12 +12,15 @@ import { after, before, describe, it } from 'node:test';
 import { ReflectMetadataProvider } from '@mikro-orm/decorators/legacy';
 import { MikroORM } from '@mikro-orm/postgresql';
 
+import { APP_TEST_PG_SKIP, appTestPgUrl } from '../test-support/test-pg';
 import { toSeedOptions } from './prepare-template';
 
 const APP_DIR = path.resolve(__dirname, '../..');
 const FIXTURES = path.join(path.dirname(require.resolve('@under-load/contracts/package.json')), 'fixtures');
 
-const PG_URL = new URL(process.env.APP_TEST_DATABASE_URL ?? 'postgresql://postgres:postgres_local@127.0.0.1:55432/postgres');
+const ENV_PG_URL = appTestPgUrl();
+// env 가 없으면 probe() 가 접속 없이 skip 사유를 돌려주므로 아래 PG_URL 은 접속에 쓰이지 않는다.
+const PG_URL = ENV_PG_URL ?? new URL('postgresql://env-not-set.invalid:5432/postgres');
 
 /** 엔티티 없이 SQL 만 보내는 ORM. dbName 을 바꿔 관리용·확인용으로 쓴다. */
 function open(dbName: string) {
@@ -35,6 +38,7 @@ const ADMIN_DB = PG_URL.pathname.slice(1) || 'postgres';
 
 /** 접속 가능하면 null, 아니면 skip 사유. */
 async function probe(): Promise<string | null> {
+  if (!ENV_PG_URL) return APP_TEST_PG_SKIP;
   try {
     const a = await open(ADMIN_DB);
     try {
