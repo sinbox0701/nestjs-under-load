@@ -8,8 +8,8 @@
   },
   "scripts": {
     "build": "pnpm --filter @under-load/app... run build",
-    "typecheck": "pnpm --filter @under-load/app... run typecheck",
-    "test": "node --test \"scripts/*.test.mjs\"",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "node --test \"scripts/*.test.mjs\" \"loadtest/**/*.test.mjs\" \"infra/k6/**/*.test.mjs\" && pnpm -r --if-present --filter \"!@nul/web\" run test && pnpm --dir web test",
     "run:lab": "node scripts/run.mjs",
     "run:dry": "node scripts/run.mjs --dry-run",
     "compose:config": "docker compose -f infra/compose/docker-compose.yml config -q"

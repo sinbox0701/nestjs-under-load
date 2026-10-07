@@ -1,0 +1,22 @@
+{
+  "name": "@under-load/g01-shared-document",
+  "version": "0.0.0",
+  "private": true,
+  "description": "G01 공유 문서 동시 편집 시나리오 팩",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@under-load/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}
