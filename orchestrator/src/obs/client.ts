@@ -1,6 +1,6 @@
 // ObsClient 구현(T-114). Grafana 주석(서비스 계정 토큰)과 Prometheus 범위 질의를 맡는다.
 // obs 프로필이 없거나 연결이 거부되면 예외 없이 `not-measured` 를 돌려준다(ports.ts ObsClient).
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { GRAFANA_ANNOTATION_TAG } from '@under-load/contracts';
@@ -22,7 +22,8 @@ const SERVICE_ACCOUNT_NAME = 'nul-orchestrator';
 const GAP_MS = 15_000;
 /** 범위 질의 최대 점 수(Prometheus 한도 11000 아래) */
 const MAX_POINTS = 1000;
-const GAP_STEP_SEC = 5;
+/** 원시 표본 질의 한 번이 덮는 구간(ms). 긴 실행은 나눠 질의한다. */
+const GAP_CHUNK_MS = 10 * 60_000;
 
 /** prom.json 에 동결하는 주요 지표. 이름은 C5. */
 export const SNAPSHOT_QUERIES: Readonly<Record<string, string>> = Object.freeze({
@@ -92,7 +93,10 @@ export function createObsClient(deps: ObsClientDeps): ObsClient {
     tokenPromise ??= (async () => {
       try {
         const existing = (await readFile(obs.grafanaTokenFile, 'utf8')).trim();
-        if (existing !== '') return existing;
+        if (existing !== '') {
+          await chmod(obs.grafanaTokenFile, 0o600);
+          return existing;
+        }
       } catch {
         // 파일 없음 → 생성
       }
@@ -120,6 +124,28 @@ export function createObsClient(deps: ObsClientDeps): ObsClient {
     };
     if (res.status !== 'success') throw new Error(res.error ?? 'prometheus error');
     return res.data?.result ?? [];
+  }
+
+  /** `<selector>[<구간>]` 범위 벡터를 time=끝시각 으로 질의한다. query_range 는 5분 staleness lookback 이 공백을 메우므로 원시 표본은 이 방식으로만 얻는다. */
+  async function promRawSamples(selector: string, fromMs: number, toMs: number): Promise<PromMatrix[]> {
+    const merged = new Map<string, { metric: Record<string, string>; values: Map<number, string> }>();
+    for (let end = toMs; end > fromMs; end -= GAP_CHUNK_MS) {
+      const spanSec = Math.max(1, Math.ceil((end - Math.max(fromMs, end - GAP_CHUNK_MS)) / 1000));
+      const qs = new URLSearchParams({ query: `${selector}[${spanSec}s]`, time: String(end / 1000) });
+      const res = (await call(`${prom}/api/v1/query?${qs.toString()}`, { method: 'GET' })) as {
+        status: string;
+        error?: string;
+        data?: { result: PromMatrix[] };
+      };
+      if (res.status !== 'success') throw new Error(res.error ?? 'prometheus error');
+      for (const s of res.data?.result ?? []) {
+        const key = JSON.stringify(Object.entries(s.metric).sort());
+        const acc = merged.get(key) ?? { metric: s.metric, values: new Map<number, string>() };
+        for (const [t, v] of s.values) acc.values.set(t, v);
+        merged.set(key, acc);
+      }
+    }
+    return [...merged.values()].map((m) => ({ metric: m.metric, values: [...m.values.entries()].sort((x, y) => x[0] - y[0]) }));
   }
 
   return {
@@ -176,17 +202,24 @@ export function createObsClient(deps: ObsClientDeps): ObsClient {
     async scrapeGaps(a): Promise<Measured<{ gaps: number; details?: Record<string, unknown> }>> {
       if (!enabled) return notMeasured('obs 프로필 꺼짐');
       try {
-        const series = await promRange('up', a.fromMs, a.toMs, GAP_STEP_SEC);
-        const perSeries: Record<string, number> = {};
+        const series = await promRawSamples('up', a.fromMs, a.toMs);
+        const perSeries: Record<string, { gaps: number; down: number }> = {};
         let gaps = 0;
-        for (const s of series) {
-          let n = 0;
-          for (let i = 1; i < s.values.length; i++) {
-            if ((s.values[i]![0] - s.values[i - 1]![0]) * 1000 >= GAP_MS) n++;
+        series.forEach((s, idx) => {
+          let timeGaps = 0;
+          let down = 0;
+          for (let i = 0; i < s.values.length; i++) {
+            const [t, v] = s.values[i]!;
+            if (i > 0 && (t - s.values[i - 1]![0]) * 1000 >= GAP_MS) timeGaps++;
+            // up==0 은 스크레이프 실패이므로 연속된 0 한 덩어리를 누락 1구간으로 센다
+            if (v === '0' && (i === 0 || s.values[i - 1]![1] !== '0')) down++;
           }
-          if (n > 0) perSeries[`${s.metric.job ?? ''}/${s.metric.instance ?? ''}`] = n;
-          gaps += n;
-        }
+          if (timeGaps + down > 0) {
+            const label = [s.metric.job, s.metric.instance].filter(Boolean).join('/');
+            perSeries[label === '' ? `series-${idx}` : label] = { gaps: timeGaps, down };
+          }
+          gaps += timeGaps + down;
+        });
         return { status: 'ok', gaps, details: { series: series.length, perSeries, gapMs: GAP_MS } };
       } catch (e) {
         return notMeasured(errMsg(e));
