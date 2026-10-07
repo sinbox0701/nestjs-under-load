@@ -9,7 +9,7 @@ export type PlanItem = { strategy: string; appInstances: number; repetition: num
 
 export type PlanError = { path: string; message: string };
 
-/** run.mjs 와 같은 규칙: app-memory-lock 은 요청에 1대가 없으면 1대 대조 케이스를 추가한다. */
+/** run.mjs 와 같은 규칙: app-memory-lock 은 요청에 1대가 없으면 manifest minAppInstances 와 무관하게 1대 대조 케이스를 추가한다. */
 export const MEMORY_LOCK_STRATEGY = 'app-memory-lock';
 
 /** 요청이 시나리오 정의와 맞는지 본다(zod 검증은 이미 통과한 값). 문제가 없으면 빈 배열. */
@@ -28,16 +28,19 @@ export function validateRequest(request: RunRequest, scenario: ScenarioDef | und
   return errors;
 }
 
-/** 케이스 = strategies × appInstances(+ memory-lock 1대), 케이스마다 reps 회. 순서는 run.mjs buildPlan 과 같다. */
-export function buildPlan(request: RunRequest, minAppInstances = 1): PlanItem[] {
+/**
+ * 케이스 = strategies × appInstances(+ memory-lock 1대), 케이스마다 reps 회. 순서는 run.mjs buildPlan 과 같다.
+ * 1대 대조는 app-memory-lock 한정 예외라 minAppInstances 를 보지 않는다(다른 strategy 는 요청 appInstances 만 따른다,
+ * 그 값의 minAppInstances 검증은 validateRequest). 두 번째 인자는 호출부 호환용으로만 남겼다.
+ */
+export function buildPlan(request: RunRequest, _minAppInstances = 1): PlanItem[] {
   const cases: { strategy: string; appInstances: number }[] = [];
   for (const strategy of request.strategies) {
     for (const n of request.appInstances) cases.push({ strategy, appInstances: n });
     if (
       strategy === MEMORY_LOCK_STRATEGY &&
       request.includeMemoryLockSingle &&
-      !request.appInstances.includes(1) &&
-      minAppInstances <= 1
+      !request.appInstances.includes(1)
     ) {
       cases.push({ strategy, appInstances: 1 });
     }
