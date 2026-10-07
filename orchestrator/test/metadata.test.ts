@@ -117,14 +117,38 @@ describe('처리량 정의(0단계 measured.mjs 와 동일)', () => {
     assert.equal(summarizeBatch(rec, [md]).throughputRps?.median, 123.4);
   });
 
+  describe('unstable 배지는 반복 2회 이상일 때만', () => {
+    const withTp = (tp: number) => RunMetadataV1Schema.parse({ ...(fixture('metadata.v1.json') as object), k6: { throughputRps: tp, httpFailures: 0, dropped: 0 } });
+    it('1회 배치는 편차를 판정하지 않는다', () => {
+      assert.ok(!summarizeBatch(rec, [withTp(100)]).badges.includes('unstable'));
+    });
+    it('2회 이상이고 편차가 크면 붙는다', () => {
+      assert.ok(summarizeBatch({ ...rec, reps: 2 }, [withTp(100), withTp(200)]).badges.includes('unstable'));
+      assert.ok(!summarizeBatch({ ...rec, reps: 2 }, [withTp(100), withTp(101)]).badges.includes('unstable'));
+    });
+  });
+
   // 0단계 실제 runs/ 가 있을 때만(공개 레포에는 없다). learn.yaml measured 의 throughputRps 와 같은 규칙으로 대조한다.
   const runsDir = process.env.LAB_PHASE0_RUNS ?? new URL('../../runs/', import.meta.url).pathname;
-  const have = existsSync(runsDir);
+  // runs/ 가 있어도 1단계 실측(schemaVersion 있음)뿐이면 0단계 결과가 아니므로 skip 한다.
+  const isPhase0 = (file: string) => {
+    try {
+      return (JSON.parse(readFileSync(file, 'utf8')) as { schemaVersion?: unknown }).schemaVersion === undefined;
+    } catch {
+      return false;
+    }
+  };
+  const have =
+    existsSync(runsDir) &&
+    readdirSync(runsDir).some((d) => {
+      const file = join(runsDir, d, 'metadata.json');
+      return existsSync(file) && isPhase0(file);
+    });
   it('0단계 실제 metadata.json 의 처리량이 measured.mjs 규칙(httpReqs / 길이)과 일치한다', { skip: !have && '0단계 runs/ 없음' }, () => {
     let checked = 0;
     for (const dir of readdirSync(runsDir)) {
       const file = join(runsDir, dir, 'metadata.json');
-      if (!existsSync(file)) continue;
+      if (!existsSync(file) || !isPhase0(file)) continue;
       const md = JSON.parse(readFileSync(file, 'utf8')) as { k6?: { httpReqs?: number }; load: { duration: string; model: 'open' | 'closed' } };
       if (md.k6?.httpReqs == null) continue;
       const sec = durationToMs(md.load.duration)! / 1000;

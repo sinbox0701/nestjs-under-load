@@ -1,10 +1,12 @@
 // RunEngine(실행 수명주기) 테스트. 모든 의존 모듈은 가짜 포트, 시간은 가짜 Clock.
 // 실행: tsc -p tsconfig.json && node --test "test/*.test.ts" (dist 를 import 한다)
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
+
+import YAML from 'yaml';
 
 import type { InvariantResult, K6JobRequest, K6JobStatus, ReadyResponse, RunConfigV1, RunMetadata, RunRequest, RunRow } from '@under-load/contracts';
 
@@ -25,7 +27,7 @@ import type {
   ScenarioDef,
 } from '../dist/ports.js';
 import type { RunMetadataInput } from '../dist/runs/index.js';
-import { buildPlan, createRunEngine, dashboardPeriod, k6DurationMs, renderDiscardSql, RUN_STEPS } from '../dist/runs/index.js';
+import { buildPlan, createRunEngine, dashboardPeriod, k6DurationMs, renderDiscardSql, RUN_STEPS, validateRequest } from '../dist/runs/index.js';
 
 // ───────────────────────────── 가짜 포트 ─────────────────────────────
 
@@ -660,6 +662,37 @@ describe('k6 HTML 보고서(T-150)', () => {
 });
 
 describe('계획·변환 보조', () => {
+  it('T-152: 실제 G02 manifest(minAppInstances 2) 로 app-memory-lock 1대 대조만 추가된다 (run.mjs buildPlan 과 같은 케이스)', async () => {
+    const repoDir = path.resolve(import.meta.dirname, '../..');
+    const manifest = YAML.parse(readFileSync(path.join(repoDir, 'packs/generic/g02-stock-decrement/manifest.yaml'), 'utf8'));
+    assert.equal(manifest.minAppInstances, 2);
+    const scenario: ScenarioDef = { ...SCENARIO, minAppInstances: manifest.minAppInstances };
+    const req = request({ strategies: ['app-memory-lock', 'row-lock'], appInstances: [2], reps: 3, includeMemoryLockSingle: true });
+    assert.deepEqual(validateRequest(req, scenario), []);
+    const plan = buildPlan(req, scenario.minAppInstances);
+    const cases = (p: { strategy: string; appInstances: number }[]) => p.map((x) => `${x.strategy}:${x.appInstances}`);
+    assert.deepEqual(cases(plan), [
+      ...Array(3).fill('app-memory-lock:2'),
+      ...Array(3).fill('app-memory-lock:1'),
+      ...Array(3).fill('row-lock:2'),
+    ]);
+    assert.ok(!plan.some((p) => p.strategy === 'row-lock' && p.appInstances === 1));
+
+    // run.mjs buildPlan 과 같은 케이스 집합·순서
+    const legacyPath = path.join(repoDir, 'scripts/run.mjs');
+    const { buildPlan: legacy } = (await import(legacyPath)) as { buildPlan: (o: unknown, m: unknown) => unknown };
+    const old = legacy({ strategies: req.strategies, instances: req.appInstances, reps: req.reps, memoryLockSingle: true }, manifest);
+    assert.deepEqual(plan, old);
+
+    // includeMemoryLockSingle=false 면 추가되지 않는다
+    const off = buildPlan({ ...req, includeMemoryLockSingle: false }, scenario.minAppInstances);
+    assert.ok(!off.some((p) => p.appInstances === 1));
+
+    // appInstances:[1] 을 직접 주면 여전히 검증 오류(400 의 원천)
+    const direct = validateRequest({ ...req, appInstances: [1] }, scenario);
+    assert.deepEqual(direct.map((e) => e.path), ['appInstances.0']);
+  });
+
   it('buildPlan 은 요청에 1대가 있으면 memory-lock 1대를 더하지 않는다', () => {
     const plan = buildPlan(request({ strategies: ['app-memory-lock'], appInstances: [1, 2], reps: 1 }));
     assert.deepEqual(

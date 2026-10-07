@@ -76,7 +76,9 @@ export function summarizeBatch(batch: BatchRecord, metadatas: RunMetadata[]): Ba
   if (batch.loadModel === 'closed') badges.push('closed-latency-caution');
   if (interventions.length > 0) badges.push('injected');
   const invalidAny = validity.some((v) => v?.valid === false);
-  if (invalidAny || (tp !== null && tp.median > 0 && (tp.max - tp.min) / tp.median > UNSTABLE_SPREAD_RATIO)) badges.push('unstable');
+  // 편차는 반복이 2회 이상일 때만 판정한다(1회는 범위가 항상 0 이라 의미가 없다). 무효 실행은 횟수와 무관하게 불안정으로 본다.
+  const spreadWide = metadatas.length >= 2 && tp !== null && tp.median > 0 && (tp.max - tp.min) / tp.median > UNSTABLE_SPREAD_RATIO;
+  if (invalidAny || spreadWide) badges.push('unstable');
 
   return BatchSummarySchema.parse({
     batchId: batch.batchId,

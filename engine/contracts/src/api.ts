@@ -62,6 +62,12 @@ export const COMPARABLE_PATHS = [
 ] as const;
 export type ComparablePath = (typeof COMPARABLE_PATHS)[number];
 
+/**
+ * strategy 에 딸린 비교 경로. 두 배치의 strategy id 가 다르면 이 경로(와 그 아래)의 차이는 비교 조건에서 제외한다
+ * (예: row-lock 의 `timeouts.lockMs=1000` 과 no-lock 의 null). 같은 strategy 끼리는 그대로 blocking.
+ */
+export const STRATEGY_SCOPED_PATHS = ['strategy.params', 'timeouts.lockMs'] as const;
+
 /** `axis` 로 쓸 수 있는 경로. 지정한 경로(와 그 아래)의 차이만 kind=axis 가 된다. */
 export const AXIS_PATHS = ['topology.appInstances', 'instrumentation', 'pgProbe.enabled', 'interventions'] as const;
 export const AxisPathSchema = z.enum(AXIS_PATHS);
