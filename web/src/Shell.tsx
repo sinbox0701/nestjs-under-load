@@ -107,8 +107,13 @@ export function Shell() {
   const mock = useMock();
   const api = useMemo(() => createApi({ mock }), [mock]);
 
-  // 무대 화면(App)은 자기 테마 버튼을 갖는다. 다른 화면에서 바로 열어도 저장된 테마가 적용되게 여기서도 맞춘다.
+  // 테마 버튼은 여기 하나다. 무대의 T 단축키가 html 속성을 바꾸면 버튼 표시도 따라가게 지켜본다.
   useEffect(() => applyTheme(theme), [theme]);
+  useEffect(() => {
+    const mo = new MutationObserver(() => setTheme(readTheme()));
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => mo.disconnect();
+  }, []);
 
   useEffect(() => {
     const on = () => {
@@ -150,6 +155,7 @@ export function Shell() {
           key={query}
           api={api}
           search={query}
+          // session 은 읽지 않는다: 서버 속 화면(LiveScreen)이 현재 세션을 구독하므로 링크 형태만 유지한다.
           sessionHref={(id) => `#live?session=${encodeURIComponent(id)}`}
         />
       )}
