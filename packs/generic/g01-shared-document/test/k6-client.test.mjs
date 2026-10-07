@@ -1,16 +1,17 @@
-// k6 클라이언트 본문 생성 단위 테스트(k6·도커 불필요): `node --test packs/generic/g01-shared-document/k6/`
+// k6 클라이언트 본문 생성 단위 테스트(k6·도커 불필요): 팩 test 스크립트가 tsc 를 먼저 돌리므로 dist 의존 케이스도 skip 없이 돈다
 // AC-3: blind-retry 는 409 뒤 fields 를 다시 계산하지 않는다.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { parse } from 'yaml';
 
-import { appendToken, blindRetryBody, buildPatchBody, buildPutBody, makeEditToken } from './client.mjs';
+import { appendToken, blindRetryBody, buildPatchBody, buildPutBody, makeEditToken } from '../k6/client.mjs';
 
-const DIR = path.dirname(fileURLToPath(import.meta.url));
+const DIR = path.dirname(fileURLToPath(import.meta.url)); // test/
+const K6_DIR = path.join(DIR, '..', 'k6');
 
 const first = { id: 1, version: 3, fields: { a: ['x'], b: [], c: [], d: [] } };
 // 첫 시도(v3)와 재시도 사이에 앞사람이 a 에 'y' 를 커밋해 문서가 v4 가 됐다고 하자.
@@ -60,7 +61,7 @@ describe('AC-3 blind-retry: 409 뒤 fields 를 재계산하지 않는다', () =>
   });
 
   it('template.js 에서 blind-retry 경로는 409 와 재시도 사이에 GET 하지 않는다', () => {
-    const src = readFileSync(path.join(DIR, 'template.js'), 'utf8');
+    const src = readFileSync(path.join(K6_DIR, 'template.js'), 'utf8');
     const fn = src.slice(src.indexOf('function runBlindRetry'), src.indexOf('// optimistic-version:'));
     assert.ok(fn.includes('blindRetryBody('));
     assert.equal((fn.match(/openDoc\(/g) ?? []).length, 1, 'openDoc 는 첫 GET 한 번뿐');
@@ -77,13 +78,13 @@ describe('AC-2 manifest strategies id = registry 키', () => {
     assert.deepEqual(ids, ['naive-overwrite', 'blind-retry', 'optimistic-version', 'field-merge', 'edit-lease']);
   });
 
-  it('G01_STRATEGIES 키와 같다(field-merge·edit-lease 는 T-134 머지 후 통과)', { skip: !existsSync(registryFile) && 'dist 없음(팩 빌드 필요)' }, async () => {
+  it('G01_STRATEGIES 키와 같다', async () => {
     const { G01_STRATEGIES } = await import(registryFile);
     assert.deepEqual(Object.keys(G01_STRATEGIES).sort(), [...ids].sort());
   });
 
   it('template.js 의 STRATEGIES 목록도 같다', () => {
-    const src = readFileSync(path.join(DIR, 'template.js'), 'utf8');
+    const src = readFileSync(path.join(K6_DIR, 'template.js'), 'utf8');
     const list = [...src.match(/const STRATEGIES = \[([^\]]+)\]/)[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
     assert.deepEqual(list, ids);
   });
