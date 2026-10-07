@@ -84,8 +84,8 @@ export interface StrategyContext<P = Record<string, unknown>> {
   params: P;
   /** 이 요청을 처리하는 app 인스턴스 이름(원장에 기록) */
   instance: string;
-  /** 경합 창 지연 주입 훅. 설정이 없으면 즉시 반환한다. */
-  contentionWindow(point: ContentionPoint): Promise<void>;
+  /** 경합 창 지연 주입 훅. 설정이 없으면 즉시 반환한다. 주입했으면 `{ injected: true, durMs }`(구현: `support/contention-window.ts`). */
+  contentionWindow(point: ContentionPoint): Promise<{ injected: boolean; durMs: number } | void>;
   ledger: EditLedgerWriter;
   /** C9. 컨트롤러가 `@Optional() @Inject(LAB_EVENT_SINK)`로 받고, 없으면 NOOP_EVENT_SINK를 넣는다. */
   events: EventSink;

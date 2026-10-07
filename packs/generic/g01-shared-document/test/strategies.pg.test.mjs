@@ -75,6 +75,12 @@ describe('G01 strategies × 실제 PostgreSQL', { skip }, () => {
     assert.deepEqual(lost[0], { ok: false, reason: 'version_mismatch', currentVersion: 2 });
     const conflict = sinks.flatMap((s) => s.events).find((e) => e.phase === 'conflict');
     assert.equal(conflict.attrs.at, 'flush', '둘 다 메모리 비교를 통과했고 UPDATE … WHERE version = 1 이 0행');
+    for (const sink of sinks) {
+      const delay = sink.events.find((e) => e.phase === 'injected_delay');
+      assert.ok(delay && delay.injected === true && delay.durMs >= 45, JSON.stringify(sink.events));
+      const phases = sink.events.map((e) => e.phase);
+      assert.ok(phases.indexOf('db_read') < phases.indexOf('injected_delay'), '주입 지점은 읽은 뒤(after-read)');
+    }
     assert.equal(await t.lostUpdates(), 0);
     assert.equal((await t.ledger()).length, 1);
     assert.equal((await t.read()).editCount, 1);

@@ -18,6 +18,6 @@
     "noFallthroughCasesInSwitch": true,
     "incremental": false
   },
-  "include": ["index.ts", "entities/**/*.ts", "migrations/**/*.ts", "support/**/*.ts"],
+  "include": ["index.ts", "module.ts", "strategy-registry.ts", "strategies/**/*.ts", "api/**/*.ts", "seed/**/*.ts", "entities/**/*.ts", "migrations/**/*.ts", "support/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }

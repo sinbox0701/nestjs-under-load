@@ -33,8 +33,10 @@ export class NaiveOverwriteStrategy implements G01Strategy {
     ctx.events.emit('arrived', { entity });
     try {
       const outcome = await ctx.em.transactional(async (em) => { // @learn tx-boundary — UPDATE와 원장·이력 INSERT를 한 트랜잭션에 묶는다. 트랜잭션만으로는 덮어쓰기를 막지 못한다
-        await ctx.contentionWindow('after-read'); // @event injected_delay
-        await ctx.contentionWindow('before-write'); // @event injected_delay
+        const afterRead = await ctx.contentionWindow('after-read'); // @event injected_delay
+        if (afterRead?.injected) ctx.events.emit('injected_delay', { entity, injected: true, durMs: afterRead.durMs });
+        const beforeWrite = await ctx.contentionWindow('before-write'); // @event injected_delay
+        if (beforeWrite?.injected) ctx.events.emit('injected_delay', { entity, injected: true, durMs: beforeWrite.durMs });
         const rows = await em.nativeUpdate( // @event db_write
           Document,
           { id: cmd.documentId }, // @learn where-id-only — WHERE에 version이 없다. cmd.version을 보지 않으므로 늦게 쓴 쪽이 이긴다(last-write-wins)

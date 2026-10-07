@@ -42,9 +42,11 @@ export class OptimisticVersionStrategy implements G01Strategy {
           lockVersion: cmd.version, // @learn lock-version-strict — `!==` 엄격 비교. undefined면 검사 생략, 문자열 '3'은 3과 불일치. 그래서 number만 받는다
         });
         ctx.events.emit('db_read', { entity });
-        await ctx.contentionWindow('after-read'); // @event injected_delay
+        const afterRead = await ctx.contentionWindow('after-read'); // @event injected_delay
+        if (afterRead?.injected) ctx.events.emit('injected_delay', { entity, injected: true, durMs: afterRead.durMs });
         em.assign(doc, { ...cmd.fields, editCount: doc.editCount + 1 });
-        await ctx.contentionWindow('before-write'); // @event injected_delay
+        const beforeWrite = await ctx.contentionWindow('before-write'); // @event injected_delay
+        if (beforeWrite?.injected) ctx.events.emit('injected_delay', { entity, injected: true, durMs: beforeWrite.durMs });
         at = 'flush';
         // @learn flush-where-version — UPDATE … SET version = version + 1 WHERE id = ? AND version = ?. 0행이면 OptimisticLockError(실패 지점 ②, 진짜 동시성 보장)
         await em.flush(); // @event db_write

@@ -13,18 +13,10 @@ const { EditLedger } = require('../dist/entities/edit-ledger.entity.js');
 const { Migration20261007000100_g01_init } = require('../dist/migrations/Migration20261007000100_g01_init.js');
 const { G01_STRATEGIES, resolveStrategy } = require('../dist/strategy-registry.js');
 const { LedgerWriter } = require('../dist/support/ledger.writer.js');
+const { createContentionWindow } = require('../dist/support/contention-window.js');
 const { NOOP_EVENT_SINK } = require('@under-load/contracts');
 
 export { G01_STRATEGIES, resolveStrategy };
-
-/** 지정 지점에서 ms만큼 기다리는 경합 창 훅(앱 쪽 구현의 테스트 대역). */
-export function contentionWindow(delays = []) {
-  const byPoint = new Map(delays.map((d) => [d.point, d.ms]));
-  return async (point) => {
-    const ms = byPoint.get(point);
-    if (ms && ms > 0) await sleep(ms);
-  };
-}
 
 /** emit 을 순서대로 적어 두는 EventSink */
 export function recordingSink() {
@@ -38,7 +30,7 @@ export function makeCtx(em, { params = {}, instance = 'app-1', delays = [], even
     em: em.fork(),
     params,
     instance,
-    contentionWindow: contentionWindow(delays),
+    contentionWindow: createContentionWindow(delays),
     ledger: new LedgerWriter(instance),
     events,
   };

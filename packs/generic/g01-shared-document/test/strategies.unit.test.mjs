@@ -11,6 +11,7 @@ import { G01_STRATEGIES, resolveStrategy } from './helpers.mjs';
 const require = createRequire(import.meta.url);
 const PACK_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { OptimisticVersionStrategy } = require('../dist/strategies/optimistic-version.strategy.js');
+const { createContentionWindow } = require('../dist/support/contention-window.js');
 
 describe('G01 strategy-registry', () => {
   it('1단계 A 묶음 3개를 등록한다', () => {
@@ -33,6 +34,16 @@ describe('G01 strategy-registry', () => {
     assert.throws(() => resolveStrategy('toString', undefined), /알 수 없는 strategy/);
     assert.throws(() => resolveStrategy('naive-overwrite', { ttlMs: 10 }), /파라미터를 받지 않습니다/);
     assert.deepEqual(resolveStrategy('naive-overwrite', {}).params, {});
+  });
+});
+
+describe('contention-window', () => {
+  it('지정 지점만 기다리고 { injected, durMs } 를 돌려준다', async () => {
+    const win = createContentionWindow([{ point: 'after-read', ms: 20 }]);
+    const hit = await win('after-read');
+    assert.equal(hit.injected, true);
+    assert.ok(hit.durMs >= 15, String(hit.durMs));
+    assert.deepEqual(await win('before-write'), { injected: false, durMs: 0 });
   });
 });
 
