@@ -159,6 +159,18 @@ importers:
         specifier: workspace:*
         version: link:../../../engine/contracts
     devDependencies:
+      '@mikro-orm/core':
+        specifier: 7.2.3
+        version: 7.2.3
+      '@mikro-orm/decorators':
+        specifier: 7.2.3
+        version: 7.2.3(@mikro-orm/core@7.2.3)(reflect-metadata@0.2.2)
+      '@mikro-orm/migrations':
+        specifier: 7.2.3
+        version: 7.2.3(@mikro-orm/core@7.2.3)
+      '@mikro-orm/postgresql':
+        specifier: 7.2.3
+        version: 7.2.3(@mikro-orm/core@7.2.3)
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.1
