@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Api, BatchSummary, RunDetail, RunRow } from '../../api';
+import { NO_TRACE_SINK_TEXT, type Api, type BatchSummary, type RunDetail, type RunRow } from '../../api';
 import { HONESTY_TEXT, fmtSpread, invariantSummary } from '../compare/logic';
 import './history.css';
 import {
@@ -134,6 +134,11 @@ function Item(props: {
                 {s.badges.includes('injected') && <span className="badge t-info">주입됨</span>}
                 {s.badges.includes('unstable') && (
                   <span className="badge t-wait">{s.reps}회 편차 큼</span>
+                )}
+                {s.badges.includes('no-trace-sink') && (
+                  <span className="badge t-wait" data-testid="no-trace-sink">
+                    {NO_TRACE_SINK_TEXT}
+                  </span>
                 )}
               </div>
               <div className="hx__row">

@@ -85,4 +85,27 @@ describe('HistoryScreen unstable 배지 문구', () => {
     );
     expect(await screen.findByText('5회 편차 큼')).toBeInTheDocument();
   });
+
+  it('T-157: no-trace-sink 배지가 있으면 경고를 보이고 유효 횟수는 그대로다', async () => {
+    const api = createApi({ mock: true });
+    render(
+      <HistoryScreen
+        api={{
+          ...api,
+          getBatch: async () =>
+            ({ ...fixtures.batch, badges: ['no-trace-sink'] }) as BatchSummary,
+        }}
+      />,
+    );
+    expect(await screen.findByTestId('no-trace-sink')).toHaveTextContent(
+      '경고: 추적 저장소 없음(trace 프로필 꺼짐 — full 계측의 추적이 버려짐)',
+    );
+    expect(screen.getByText('유효 3/3회')).toBeInTheDocument();
+  });
+
+  it('T-157: 배지가 없으면 경고도 없다', async () => {
+    render(<HistoryScreen api={createApi({ mock: true })} />);
+    await screen.findByText('유효 3/3회');
+    expect(screen.queryByTestId('no-trace-sink')).toBeNull();
+  });
 });

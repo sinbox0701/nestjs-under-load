@@ -7,6 +7,7 @@ import {
   INVARIANT_SEVERITIES,
   LoadModelSchema,
   RunMetadataAnySchema,
+  STACK_PROFILES,
 } from './metadata.js';
 import { InjectDelaySchema, InstrumentationLevelSchema } from './run-config.js';
 
@@ -178,7 +179,13 @@ export type RunRequest = z.infer<typeof RunRequestSchema>;
 
 // ─────────────────────────────── 공개 응답 ───────────────────────────────
 
-export const HealthResponseSchema = z.object({ ok: z.boolean(), version: z.string(), gitSha: z.string() });
+/** `GET /health` 응답. stack.profiles 는 함께 뜬 관측 프로필(실행 설정 화면이 full 안내에 쓴다). */
+export const HealthResponseSchema = z.object({
+  ok: z.literal(true),
+  version: z.string(),
+  gitSha: z.string(),
+  stack: z.object({ profiles: z.array(z.enum(STACK_PROFILES)) }),
+});
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 
 export const STRATEGY_KINDS = ['broken', 'fixed', 'tradeoff'] as const;
@@ -276,7 +283,8 @@ export const ARTIFACT_NAMES = [
 export const SpreadSchema = z.object({ median: z.number(), min: z.number(), max: z.number() }).nullable();
 export type Spread = z.infer<typeof SpreadSchema>;
 
-export const BATCH_BADGES = ['closed-latency-caution', 'injected', 'unstable'] as const;
+/** no-trace-sink: full 계측인데 추적 저장소(trace 프로필)가 없어 추적이 버려졌다. 경고일 뿐 순위·유효성에 영향 없다. */
+export const BATCH_BADGES = ['closed-latency-caution', 'injected', 'unstable', 'no-trace-sink'] as const;
 
 /** 배열 필드는 반복 순서(r1, r2, …)이고 길이 = runIds 길이. */
 export const BatchSummarySchema = z

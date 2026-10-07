@@ -140,7 +140,13 @@ export function buildMetadata(ctx: BuildMetadataContext): RunMetadataV1 {
       k6CpuAvgRatio: null,
       droppedCountedAsFailure: null,
       ...ctx.validity,
-      checks: { k6Cpu: null, scrapeGaps: null, ...ctx.validity?.checks },
+      checks: {
+        k6Cpu: null,
+        scrapeGaps: null,
+        // full 인데 추적 저장소(trace 프로필)가 없으면 absent(경고), full 이 아니면 해당 없음. valid 에는 영향 없다.
+        tracing: { sink: request.instrumentation !== 'full' ? 'not-applicable' : (ctx.stackProfiles ?? []).includes('trace') ? 'present' : 'absent' },
+        ...ctx.validity?.checks,
+      },
     },
     invariants: ctx.invariants ?? [],
     ledgerVsClient: ctx.ledgerVsClient ?? null,

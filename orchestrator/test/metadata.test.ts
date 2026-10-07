@@ -159,3 +159,40 @@ describe('처리량 정의(0단계 measured.mjs 와 동일)', () => {
     assert.ok(checked > 0);
   });
 });
+
+describe('추적 저장소(trace 프로필) 경고 — T-157', () => {
+  const rec = { batchId: 'b1', sessionId: 's1', scenario: 'g02-stock-decrement', strategy: 'row-lock', appInstances: 2, loadModel: 'open' as const, reps: 1 };
+  const build = (instrumentation: 'off' | 'metrics' | 'full', stackProfiles: ('obs' | 'trace')[]) =>
+    buildMetadata({ ...base, request: RunRequestSchema.parse({ ...request, instrumentation }), stackProfiles, validity: { valid: true } });
+
+  it('AC-1 full + trace 없음: sink absent, valid 는 그대로, 배지에 경고', () => {
+    const md = build('full', ['obs']);
+    RunMetadataV1Schema.parse(md);
+    assert.deepEqual(md.validity.checks.tracing, { sink: 'absent' });
+    assert.equal(md.validity.valid, true);
+    const summary = summarizeBatch(rec, [md]);
+    BatchSummarySchema.parse(summary);
+    assert.ok(summary.badges.includes('no-trace-sink'));
+    assert.equal(summary.validity.validReps, 1);
+    assert.ok(!summary.badges.includes('unstable'));
+  });
+
+  it('AC-2 full + trace 있음, metrics·off 는 경고 없음', () => {
+    const present = build('full', ['obs', 'trace']);
+    assert.deepEqual(present.validity.checks.tracing, { sink: 'present' });
+    assert.ok(!summarizeBatch(rec, [present]).badges.includes('no-trace-sink'));
+    for (const level of ['metrics', 'off'] as const) {
+      const md = build(level, []);
+      assert.deepEqual(md.validity.checks.tracing, { sink: 'not-applicable' });
+      assert.ok(!summarizeBatch(rec, [md]).badges.includes('no-trace-sink'));
+    }
+  });
+
+  it('AC-4 checks.tracing 이 없는 이전 v1·v0 메타데이터도 요약된다', () => {
+    const md = build('full', ['obs']);
+    const { tracing: _t, ...checks } = md.validity.checks;
+    const old = { ...md, validity: { ...md.validity, checks } } as RunMetadataV1;
+    assert.deepEqual(summarizeBatch(rec, [old]).badges, []);
+    assert.deepEqual(summarizeBatch(rec, [fixture('metadata.v0.json') as RunMetadataV1]).badges, []);
+  });
+});

@@ -5,6 +5,7 @@
  */
 import batchSummary from '../../../engine/contracts/fixtures/batch-summary.json';
 import compareResult from '../../../engine/contracts/fixtures/compare-result.json';
+import health from '../../../engine/contracts/fixtures/health.json';
 import metadataV1 from '../../../engine/contracts/fixtures/metadata.v1.json';
 import runRow from '../../../engine/contracts/fixtures/run-row.json';
 import scenarios from '../../../engine/contracts/fixtures/scenarios.json';
@@ -13,6 +14,7 @@ import wsMessages from '../../../engine/contracts/fixtures/ws-messages.json';
 import type {
   BatchSummary,
   CompareResult,
+  Health,
   RunMetadata,
   RunRow,
   ScenarioInfo,
@@ -21,6 +23,7 @@ import type {
 } from './types';
 
 export const fixtures = {
+  health: health as unknown as Health,
   scenarios: scenarios as unknown as ScenarioInfo[],
   session: session as unknown as Session,
   runRow: runRow as unknown as RunRow,

@@ -77,7 +77,8 @@
     "droppedCountedAsFailure": true,
     "checks": {
       "k6Cpu": { "cores": 2, "wallSec": 30.2, "usageSec": 24.8, "avgRatio": 0.41, "throttledPeriodRatio": 0 },
-      "scrapeGaps": { "gaps": 0 }
+      "scrapeGaps": { "gaps": 0 },
+      "tracing": { "sink": "not-applicable" }
     }
   },
   "invariants": [

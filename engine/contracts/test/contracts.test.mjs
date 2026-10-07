@@ -23,6 +23,7 @@ describe('AC-1 fixture parse', () => {
     ['RunRow', c.RunRowSchema, 'run-row.json'],
     ['Session', c.SessionResponseSchema, 'session.json'],
     ['ReadyResponse', c.ReadyResponseSchema, 'ready.json'],
+    ['HealthResponse', c.HealthResponseSchema, 'health.json'],
     ['K6JobRequest', c.K6JobRequestSchema, 'k6-job-request.json'],
     ['K6JobStatus', c.K6JobStatusSchema, 'k6-job-status.json'],
   ];
@@ -52,7 +53,7 @@ describe('AC-1 fixture parse', () => {
       'run-request.json', 'run-config.v0.json', 'run-config.v1.json', 'run-config.v1.prepare-template.json',
       'metadata.v0.json', 'metadata.v1.json', 'events.v0.ndjson', 'agg-window.json', 'ingest-batch.json',
       'batch-summary.json', 'compare-result.json', 'compare-result.blocking.json', 'ws-messages.json',
-      'run-row.json', 'session.json', 'scenarios.json', 'ready.json', 'k6-job-request.json', 'k6-job-status.json',
+      'run-row.json', 'session.json', 'scenarios.json', 'ready.json', 'health.json', 'k6-job-request.json', 'k6-job-status.json',
     ];
     for (const n of names) assert.doesNotMatch(fx(n), /\/Users\/|\/home\/|[A-Z]:\\\\/, n);
   });
@@ -266,6 +267,15 @@ describe('AC-4 상수', () => {
     assert.deepEqual(nulls.filter((p) => !allowed.has(p)), []);
   });
 
+  it('AC-4 checks.tracing 은 선택: 없는 v1 메타데이터도 통과, 값이 틀리면 실패', () => {
+    const raw = json('metadata.v1.json');
+    const { tracing: _t, ...checks } = raw.validity.checks;
+    assert.ok(c.RunMetadataV1Schema.safeParse({ ...raw, validity: { ...raw.validity, checks } }).success);
+    const bad = { ...raw, validity: { ...raw.validity, checks: { ...checks, tracing: { sink: 'nope' } } } };
+    assert.equal(c.RunMetadataV1Schema.safeParse(bad).success, false);
+    assert.ok(c.parseMetadataAnyVersion(json('metadata.v0.json')));
+  });
+
   it('스냅샷: 상수 표 전체', (t) => {
     t.assert.snapshot({
       INSTRUMENTATION_LEVELS: c.INSTRUMENTATION_LEVELS,
@@ -284,6 +294,8 @@ describe('AC-4 상수', () => {
       WS_MESSAGE_TYPES: c.WS_MESSAGE_TYPES,
       ARTIFACT_NAMES: c.ARTIFACT_NAMES,
       DASHBOARD_UIDS: c.DASHBOARD_UIDS,
+      TRACE_SINKS: c.TRACE_SINKS,
+      BATCH_BADGES: c.BATCH_BADGES,
     });
   });
 });

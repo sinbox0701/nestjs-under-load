@@ -5,6 +5,7 @@
 import type {
   BatchSummary,
   CompareResult,
+  Health,
   LearnMeasured,
   ListRunsQuery,
   RunDetail,
@@ -44,6 +45,7 @@ export interface SubscribeOptions {
 }
 
 export interface Api {
+  getHealth(): Promise<Health>;
   getScenarios(): Promise<ScenarioInfo[]>;
   postRun(req: RunRequest): Promise<RunsAccepted>;
   getSession(sessionId: string): Promise<Session>;
@@ -125,6 +127,7 @@ function createHttpApi(opts: CreateApiOptions): Api {
   };
 
   return {
+    getHealth: () => call('/health'),
     getScenarios: () => call('/scenarios'),
     postRun: (req) =>
       call('/runs', {
@@ -189,6 +192,7 @@ const MOCK_WS_STEP_MS = 50;
 function createMockApi(): Api {
   const fx = () => import('./mock-fixtures').then((m) => m.fixtures);
   return {
+    getHealth: async () => (await fx()).health,
     getScenarios: async () => (await fx()).scenarios,
     postRun: async () => {
       const { session } = await fx();

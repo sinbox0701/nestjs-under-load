@@ -163,4 +163,36 @@ describe('RunSetup', () => {
     fireEvent.click(screen.getByRole('radio', { name: '도착률 고정' }));
     expect(screen.queryByRole('note')).toBeNull();
   });
+
+  describe('T-157 full 계측 안내', () => {
+    const health = (profiles: ('obs' | 'trace')[]) => async () => ({
+      ok: true as const,
+      version: 'x',
+      gitSha: 'y',
+      stack: { profiles },
+    });
+    const pickFull = () => fireEvent.click(screen.getByRole('radio', { name: '전체' }));
+
+    it('trace 프로필이 없으면 full 선택 때만 안내한다', async () => {
+      const { api } = mockApi({ getHealth: health(['obs']) });
+      await ready(api);
+      expect(screen.queryByTestId('no-trace-hint')).toBeNull();
+      pickFull();
+      expect(await screen.findByTestId('no-trace-hint')).toHaveTextContent('추적 저장소가 없다');
+      fireEvent.click(screen.getByRole('radio', { name: '지표' }));
+      expect(screen.queryByTestId('no-trace-hint')).toBeNull();
+    });
+
+    it('trace 프로필이 있거나 /health 를 못 읽으면 안내가 없다', async () => {
+      const a = mockApi({ getHealth: health(['obs', 'trace']) });
+      await ready(a.api);
+      pickFull();
+      await waitFor(() => expect(screen.queryByTestId('no-trace-hint')).toBeNull());
+      cleanup();
+      const b = mockApi({ getHealth: () => Promise.reject(new Error('down')) });
+      await ready(b.api);
+      pickFull();
+      expect(screen.queryByTestId('no-trace-hint')).toBeNull();
+    });
+  });
 });
