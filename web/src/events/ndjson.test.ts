@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { prepare } from '../playback';
-import { loadNdjson } from './ndjson';
+import fixture from '../../../engine/contracts/fixtures/events.v0.ndjson?raw';
+import { loadNdjson, parseNdjson } from './ndjson';
 
 const line = (o: Record<string, unknown>) =>
   JSON.stringify({ v: 1, runId: 'run_x', instance: 'app-1', sampled: true, injected: false, ...o });
@@ -71,11 +72,41 @@ describe('NDJSON 로더(DESIGN §9.1)', () => {
     expect(order([ev[0]!, ev[2]!, ev[1]!, ev[3]!])).toEqual(['z', 'y', 'w', 'x']);
   });
 
-  it('프로토콜 버전은 v=1만 받는다(v=0 거부)', () => {
+  it('프로토콜 버전은 v=0·1만 받는다(v=2 거부)', () => {
     const { recording, errors } = loadNdjson(
-      [line({ ts: 1, seq: 1, actor: 'a', phase: 'arrived', v: 0 })].join('\n'),
+      [line({ ts: 1, seq: 1, actor: 'a', phase: 'arrived', v: 2 })].join('\n'),
     );
     expect(recording.events).toHaveLength(0);
-    expect(errors).toEqual([{ line: 1, reason: '모르는 프로토콜 버전 v=0' }]);
+    expect(errors).toEqual([{ line: 1, reason: '모르는 프로토콜 버전 v=2' }]);
+  });
+});
+
+describe('NDJSON v0·v1 수용(C4, contracts fixture)', () => {
+  it('fixture 의 유효 줄을 모두 받고 v=2·모르는 phase 줄은 거절한다', () => {
+    const { events, errors } = parseNdjson(fixture);
+    expect(events).toHaveLength(11);
+    expect(events.every((e) => e.v === 0)).toBe(true);
+    expect(errors).toEqual([
+      { line: 9, reason: '모르는 프로토콜 버전 v=2' },
+      { line: 11, reason: '모르는 phase teleported' },
+    ]);
+  });
+
+  it('v=0 줄도 Recording 으로 바뀐다', () => {
+    const { recording } = loadNdjson(fixture, { onlySampled: false });
+    expect(recording.events.length).toBe(11);
+  });
+
+  it('v=1 줄은 계속 받는다', () => {
+    const l = JSON.stringify({
+      v: 1,
+      runId: 'r',
+      ts: 1,
+      seq: 0,
+      instance: 'a',
+      actor: '1-1',
+      phase: 'arrived',
+    });
+    expect(parseNdjson(l).events).toHaveLength(1);
   });
 });
