@@ -1,0 +1,17 @@
+{
+  "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+  "batchId": "2026-10-07T09-00-00Z_g02_row-lock_i2",
+  "sessionId": "2026-10-07T09-00-00Z_a1b2",
+  "repetition": 1,
+  "scenario": "g02-stock-decrement",
+  "strategy": "row-lock",
+  "appInstances": 2,
+  "model": "closed",
+  "instrumentation": "metrics",
+  "status": "done",
+  "valid": true,
+  "invariantsPassed": true,
+  "violationsTotal": 0,
+  "startedAt": "2026-10-07T09:00:00.100Z",
+  "endedAt": "2026-10-07T09:00:45.900Z"
+}

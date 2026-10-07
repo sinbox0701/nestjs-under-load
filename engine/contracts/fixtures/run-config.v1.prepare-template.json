@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "task": "prepare-template",
+  "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+  "batchId": "2026-10-07T09-00-00Z_g02_row-lock_i2",
+  "repetition": 1,
+  "scenario": "g02-stock-decrement",
+  "strategy": "row-lock",
+  "strategyParams": { "lockTimeoutMs": 1000 },
+  "instrumentation": "off",
+  "injectDelay": [],
+  "pool": { "min": 2, "max": 10, "acquireTimeoutMs": 2000 },
+  "timeouts": { "serverRequestMs": 5000, "statementMs": 3000, "idleInTxMs": 10000 },
+  "events": null,
+  "tracing": null,
+  "redis": { "host": "redis", "port": 6379 },
+  "prepareTemplate": { "database": "tpl_g02_ab12cd34ef56", "seedOptions": { "products": 5 } }
+}

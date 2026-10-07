@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "task": "serve",
+  "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+  "batchId": "2026-10-07T09-00-00Z_g02_row-lock_i2",
+  "repetition": 1,
+  "scenario": "g02-stock-decrement",
+  "strategy": "row-lock",
+  "strategyParams": { "lockTimeoutMs": 1000 },
+  "instrumentation": "metrics",
+  "injectDelay": [{ "point": "after-read", "ms": 30 }],
+  "pool": { "min": 2, "max": 10, "acquireTimeoutMs": 2000 },
+  "timeouts": { "serverRequestMs": 5000, "statementMs": 3000, "idleInTxMs": 10000 },
+  "events": {
+    "endpoint": "http://orchestrator:4001/ingest/events",
+    "representativeActors": 8,
+    "flushMs": 100,
+    "batchMax": 500,
+    "bufferMax": 10000
+  },
+  "tracing": { "endpoint": "http://tempo:4318/v1/traces", "rootSampleRatio": 0.1 },
+  "redis": null
+}
