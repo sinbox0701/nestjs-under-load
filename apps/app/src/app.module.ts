@@ -1,6 +1,5 @@
-import { ConsoleLogger, type DynamicModule, type LogLevel, Logger, Module, type OnApplicationShutdown } from '@nestjs/common';
+import { type DynamicModule, Module, type OnApplicationShutdown } from '@nestjs/common';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
-import { isSpanContextValid, trace } from '@opentelemetry/api';
 
 import type { Env } from './config/env';
 import type { RunConfig } from './config/run-config';
@@ -9,35 +8,8 @@ import { type EventMetrics, EventsModule } from './events';
 import { LAB_STATE, LabController, type LabState } from './lab/lab.controller';
 import { type DefaultLabels, getLabMetrics, type LabMetrics, MetricsModule, type PoolLike } from './metrics';
 import type { ScenarioPack } from './packs/registry';
-import { getRequestContext, RequestContextModule } from './request-context';
+import { RequestContextModule } from './request-context';
 import { shutdownTracing } from './tracing';
-
-/** 지금 요청의 trace-id: 요청 컨텍스트(traceparent 헤더) → 없으면 OTel 활성 span(full 의 루트 샘플). */
-function currentTraceId(): string | undefined {
-  const fromHeader = getRequestContext()?.traceId;
-  if (fromHeader) return fromHeader;
-  const sc = trace.getActiveSpan()?.spanContext();
-  return sc && isSpanContextValid(sc) ? sc.traceId : undefined;
-}
-
-/**
- * Nest 로그를 한 줄 JSON 으로 내고, 요청 안이면 `trace_id` 를 붙인다.
- * Alloy(infra/alloy/config.alloy)가 app 로그를 `stage.json` 으로 읽어 trace_id 를 structured metadata 로 보낸다.
- */
-export class LabJsonLogger extends ConsoleLogger {
-  constructor() {
-    super({ json: true });
-  }
-
-  protected override getJsonLogObject(
-    message: unknown,
-    options: { context: string; logLevel: LogLevel; writeStreamType?: 'stdout' | 'stderr'; errorStack?: unknown },
-  ) {
-    const obj = super.getJsonLogObject(message, options);
-    const traceId = currentTraceId();
-    return traceId ? { ...obj, trace_id: traceId } : obj;
-  }
-}
 
 /** C5 기본 라벨(METRIC_DEFAULT_LABELS 순서). */
 function defaultLabels(rc: RunConfig): DefaultLabels {
@@ -60,7 +32,6 @@ export class AppModule implements OnApplicationShutdown {
    * 계측 수준 하나(RunConfig.instrumentation)를 MetricsModule·풀/ORM 훅·이벤트 카운터가 같이 쓴다(getLabMetrics 공유).
    */
   static register(env: Env, runConfig: RunConfig | null, pack: ScenarioPack | null): DynamicModule {
-    Logger.overrideLogger(new LabJsonLogger());
     const state: LabState = { instance: env.INSTANCE_NAME, runConfig, bootedAt: new Date().toISOString() };
     const imports: DynamicModule['imports'] = [RequestContextModule];
     if (runConfig && pack) {

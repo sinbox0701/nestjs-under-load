@@ -1,1 +1,2 @@
-export { shutdownTracing, startTracing, startTracingFromEnv, tracingEnabled, type StartTracingOptions } from './start-tracing';
+export { preBoot, type PreBoot, type PreBootOptions } from './pre-boot';
+export { shutdownTracing, startTracing, tracingEnabled, type StartTracingOptions } from './start-tracing';

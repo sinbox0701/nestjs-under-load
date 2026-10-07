@@ -1,7 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { hostname } from 'node:os';
-
-import { INSTRUMENTATION_LEVELS, parseRunConfig, type RunConfigV1 } from '@under-load/contracts';
+import { INSTRUMENTATION_LEVELS, type RunConfigV1 } from '@under-load/contracts';
 
 /**
  * OTel SDK 는 off·metrics 에서 로드조차 하지 않도록 켜질 때만 require 한다(C6, 모듈 로드 검사).
@@ -82,15 +79,4 @@ export async function shutdownTracing(): Promise<void> {
   const s = sdk;
   sdk = null;
   await s?.shutdown();
-}
-
-/**
- * main.ts 용: RunConfig 파일(RUN_CONFIG_PATH)을 동기로 읽어 필요할 때만 SDK 를 켠다.
- * 파일이 없으면(대기 모드) 아무것도 하지 않는다. 0단계 파일(schemaVersion 없음)도 parseRunConfig 가 v1 로 올린다.
- */
-export function startTracingFromEnv(env: NodeJS.ProcessEnv = process.env): boolean {
-  const path = env.RUN_CONFIG_PATH ?? '/lab/active/run-config.json';
-  if (!existsSync(path)) return false;
-  const rc = parseRunConfig(JSON.parse(readFileSync(path, 'utf8')) as unknown);
-  return startTracing({ runConfig: rc, instance: env.INSTANCE_NAME ?? hostname() });
 }
