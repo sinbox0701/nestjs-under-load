@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { request } from 'node:http';
+import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -14,15 +14,22 @@ import { loadPackCatalog } from '../dist/api/index.js';
 import { loadConfig } from '../dist/config.js';
 import { createEventHub } from '../dist/event-hub/index.js';
 import { createRouters, DRAIN_LIMIT, startHttpServers } from '../dist/http/index.js';
+import { completeness } from '../dist/metadata/index.js';
+import { createObsClient } from '../dist/obs/index.js';
 import {
   boundK6Runner,
   createMetadataBuilder,
   createReadyProbe,
   detectStackProfiles,
+  EFFECTIVE_DEFAULTS,
   installShutdown,
+  ledgerVsClient,
   memText,
+  readDockerDesktopVersion,
   readGitInfo,
+  readRoleConnLimit,
   resolveEnv,
+  seedHashOf,
   sharedBuffersText,
   startOrchestrator,
   withManifestRedis,
@@ -122,7 +129,9 @@ const listen = { publicPort: 0, internalPort: 0, bindHost: '127.0.0.1', allowedH
 
 describe('조립·종료(AC-4)', () => {
   it('가짜 포트로 두 리스너를 열고, SIGTERM 에 리스너를 닫고 exit(0)', async () => {
-    const { ports, calls } = fakePorts();
+    const { ports, calls } = fakePorts({
+      obs: { ...(unused('obs') as OrchestratorPorts['obs']), prepareToken: async () => ({ status: 'not-measured', reason: 'grafana 연결 거부' }) },
+    });
     const warnings: string[] = [];
     const handle = await startOrchestrator({
       ports,
@@ -131,9 +140,7 @@ describe('조립·종료(AC-4)', () => {
       version: '1.2.3',
       gitSha: 'abc1234',
       engine: { runsDir: tmpdir() },
-      prepareGrafana: async () => {
-        throw new Error('grafana 연결 거부');
-      },
+      prepareGrafana: true,
       onClose: () => {
         calls.push('onClose');
       },
@@ -164,6 +171,46 @@ describe('조립·종료(AC-4)', () => {
     assert.equal(await refused(handle.ports.public), 'ECONNREFUSED', '공개 리스너 닫힘');
     assert.equal(await refused(handle.ports.internal), 'ECONNREFUSED', '내부 리스너 닫힘');
     assert.deepEqual(calls, ['ensureRoles', 'probe.stop', 'onClose']);
+  });
+
+  it('AC-3: 시작 때 주석 POST 없이 Grafana 토큰만 준비한다(가짜 Grafana)', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'nul-grafana-'));
+    const seen: string[] = [];
+    const grafana = createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        if (req.url?.startsWith('/api/serviceaccounts/search')) return res.end(JSON.stringify({ serviceAccounts: [] }));
+        if (req.url === '/api/serviceaccounts') return res.end(JSON.stringify({ id: 3 }));
+        if (req.url === '/api/serviceaccounts/3/tokens') return res.end(JSON.stringify({ key: 'glsa_start' }));
+        res.end('{}');
+      });
+    });
+    await new Promise<void>((r) => grafana.listen(0, '127.0.0.1', r));
+    after(() => {
+      grafana.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+    const config = loadConfig({
+      RUNS_DIR: dir,
+      STACK_PROFILES: 'obs',
+      GRAFANA_URL: `http://127.0.0.1:${(grafana.address() as { port: number }).port}`,
+      GRAFANA_TOKEN_FILE: path.join(dir, '_meta', 'grafana-token'),
+    });
+    const { ports } = fakePorts({ obs: createObsClient({ obs: config.obs, clock: manualClock().clock }) });
+    const logs: string[] = [];
+    const handle = await startOrchestrator({ ports, listen, runsDir: dir, version: 'v', gitSha: 's', engine: { runsDir: dir }, prepareGrafana: true, log: (m) => logs.push(m), warn: assert.fail });
+    await handle.startup;
+    await handle.close();
+    assert.ok(logs.includes('Grafana 토큰 준비 완료'));
+    assert.equal(readFileSync(config.obs.grafanaTokenFile, 'utf8').trim(), 'glsa_start');
+    assert.deepEqual(
+      seen.filter((x) => x.includes('/api/annotations')),
+      [],
+      '주석을 남기지 않는다',
+    );
+    assert.ok(seen.includes('POST /api/serviceaccounts/3/tokens'));
   });
 
   it('역할 보장이 실패해도 리스너는 살아 있다(경고)', async () => {
@@ -268,6 +315,9 @@ describe('git·스택 프로필', () => {
     };
     assert.deepEqual(await readGitInfo(fail, 'fedcba9876'), { sha: 'fedcba9', dirty: null });
     assert.deepEqual(await readGitInfo(fail, 'unknown'), { sha: null, dirty: null });
+    // GIT_DIRTY 폴백은 GIT_SHA 폴백이 있을 때만 쓴다
+    assert.deepEqual(await readGitInfo(fail, 'fedcba9876', false), { sha: 'fedcba9', dirty: false });
+    assert.deepEqual(await readGitInfo(fail, 'unknown', true), { sha: null, dirty: null });
   });
 
   it('STACK_PROFILES 가 없으면 compose 서비스로 판단, 조회 실패는 꺼짐', async () => {
@@ -377,19 +427,22 @@ describe('어댑터', () => {
       appInstances: 2,
       status: 'done',
       error: null,
-      templateDb: 'tpl_g02_x',
+      templateDb: 'tpl_g02_0123456789ab',
       seedOptions: req.data.seedOptions,
       runConfig: { ...runConfig, strategy: 'redis-lock' },
       pgProbe: { enabled: true, intervalMs: 1000 },
       facts: {
         docker: { ncpu: 14, memTotalBytes: 11 * 1024 ** 3, serverVersion: '28', operatingSystem: 'Docker Desktop', apiVersion: '1.51' },
         containers: { app: [app], postgres: [{ ...app, service: 'postgres', imageId: 'sha256:pg', limits: { cpus: 2, memBytes: 2 * 1024 ** 3, cpuset: '6-8' } }] },
-        pgConfig: { hash: 'sha256:cfg', settings: { max_connections: '100', shared_buffers: '16384' } },
+        pgConfig: {
+          hash: 'sha256:cfg',
+          settings: { max_connections: '100', shared_buffers: '16384', statement_timeout: '0', idle_in_transaction_session_timeout: '60000' },
+        },
       },
       k6: { scriptHash: 'sha256:script', env: { A: '1' }, warmup: null, main: null, summary },
       validity: { valid: true, reasons: [], k6CpuAvgRatio: 0.4, droppedCountedAsFailure: null, failuresTotal: 2, k6Cpu: { avg: 0.4 } },
       scrapeGaps: null,
-      invariants: [],
+      invariants: [{ id: 'ledger-matches-k6', severity: 'info', violations: null, passed: null, value: { success: 5, sold_out: 2993, total: 2998 } }],
       steps: [{ name: 'app 정지', at: 't' }],
       artifacts: { runConfig: 'runs/r1/run-config.json', k6Summary: 'runs/r1/summary.json', k6Html: null, events: null, agg: null, probe: null, promSnapshot: null, metadata: 'runs/r1/metadata.json' },
       startedAt: '2026-10-07T00:00:00.000Z',
@@ -400,7 +453,9 @@ describe('어댑터', () => {
       git: () => ({ sha: 'abc1234', dirty: false }),
       catalog,
       redisMaxmemoryPolicy: 'noeviction',
-      host: { arch: 'arm64', cpu: null },
+      host: { arch: 'arm64', cpu: 'm' },
+      dockerDesktopVersion: '4.48.0',
+      appRoleConnectionLimit: () => -1,
     });
     const md = build(input);
     assert.deepEqual(md.k6, summary);
@@ -417,6 +472,31 @@ describe('어댑터', () => {
     assert.deepEqual(md.pgProbe, { enabled: true, intervalMs: 1000 });
     assert.deepEqual(md.pool, runConfig.pool);
     assert.equal(md.timeouts.poolAcquireMs, runConfig.pool.acquireTimeoutMs);
+    assert.equal(md.host.dockerDesktopVersion, '4.48.0');
+    assert.equal(md.postgres.appRoleConnectionLimit, -1);
+    assert.equal(md.data.seedHash, '0123456789ab');
+    assert.equal(md.validity.droppedCountedAsFailure, false, 'closed 는 dropped 를 더하지 않는다');
+    assert.deepEqual(md.ledgerVsClient, {
+      ledger: { success: 5, sold_out: 2993, total: 2998 },
+      client: { requests: 3000, expected: 2998, httpFailures: 2, dropped: 0 },
+      diff: { total: 0 },
+    });
+    // T-138 스모크에서 미채움이던 칸은 채워지거나(obs 꺼짐의 promSnapshot 은) 허용 null 이다
+    const report = completeness(md);
+    const fixed = ['host.dockerDesktopVersion', 'postgres.appRoleConnectionLimit', 'data.seedHash', 'ledgerVsClient', 'validity.droppedCountedAsFailure', 'pool.acquireTimeoutMs'];
+    assert.deepEqual(report.missing.filter((m) => fixed.includes(m) || m.startsWith('timeouts.') || m.startsWith('k6.')), []);
+    assert.ok(report.allowedNull.includes('artifacts.promSnapshot'));
+
+    // RunConfig 가 null(적용 안 함)이면 실효값: Node·pg 기본값, PG 서버 설정
+    const md3 = build({
+      ...input,
+      runConfig: { ...runConfig, strategy: 'redis-lock', pool: { ...runConfig.pool, acquireTimeoutMs: null }, timeouts: { serverRequestMs: null, statementMs: null, idleInTxMs: null } },
+    });
+    assert.equal(md3.pool.acquireTimeoutMs, EFFECTIVE_DEFAULTS.poolAcquireMs);
+    assert.deepEqual(
+      [md3.timeouts.serverRequestMs, md3.timeouts.poolAcquireMs, md3.timeouts.statementMs, md3.timeouts.idleInTxMs],
+      [300_000, 0, 0, 60_000],
+    );
 
     const md2 = createMetadataBuilder({ stackProfiles: ['obs'], git: () => ({ sha: null, dirty: null }), catalog, redisMaxmemoryPolicy: 'noeviction' })({
       ...input,
@@ -429,6 +509,29 @@ describe('어댑터', () => {
     assert.deepEqual(md2.validity.checks.scrapeGaps, { gaps: 1, details: { series: 3 } });
     assert.equal(md2.k6, null);
     assert.deepEqual(md2.stack.profiles, ['obs']);
+  });
+
+  it('Docker Desktop 버전·역할 연결 상한·seedHash·원장 대조', async () => {
+    const fake = (status: number, body: unknown): typeof fetch => (async () => new Response(JSON.stringify(body), { status })) as typeof fetch;
+    assert.equal(await readDockerDesktopVersion('http://sp:2375/', fake(200, { Platform: { Name: 'Docker Desktop 4.48.0 (207573)' } })), '4.48.0');
+    assert.equal(await readDockerDesktopVersion('http://sp:2375', fake(200, { Platform: { Name: 'Docker Engine - Community' } })), null);
+    assert.equal(await readDockerDesktopVersion('http://sp:2375', fake(403, {})), null);
+    const conn = (rows: Record<string, unknown>[]) => async () => ({ query: async () => ({ rows }), end: async () => {} });
+    assert.equal(await readRoleConnLimit(conn([{ rolconnlimit: 40 }]), 'lab_app'), 40);
+    assert.equal(await readRoleConnLimit(conn([]), 'lab_app'), null);
+    assert.equal(
+      await readRoleConnLimit(async () => {
+        throw new Error('ECONNREFUSED');
+      }, 'lab_app'),
+      null,
+    );
+    assert.equal(seedHashOf('tpl_g02_0123456789ab'), '0123456789ab');
+    assert.equal(seedHashOf('lab_run'), null);
+    const summary = { requests: 10, throughputRps: 1, httpFailures: 1, dropped: 0, latencyMs: { success: { p50: 1, p95: 1, p99: 1, n: 9 }, failed: { p50: 1, p95: 1, p99: 1, n: 1 } } };
+    const inv = (value: unknown) => [{ id: 'ledger-matches-k6', severity: 'info' as const, violations: null, passed: null, value }];
+    assert.equal(ledgerVsClient([], summary), null);
+    assert.equal(ledgerVsClient(inv({ total: 9 }), null), null);
+    assert.match(String(ledgerVsClient(inv({ total: 11 }), summary)?.note), /원장이 k6보다 많음/);
   });
 
   it('표기 변환', () => {

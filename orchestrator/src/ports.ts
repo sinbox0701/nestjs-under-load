@@ -354,6 +354,8 @@ export type AnnotatePhase = 'reset' | 'warmup' | 'main' | 'invariants';
 
 /** Grafana·Prometheus. obs 프로필이 없거나 연결이 거부되면 예외 없이 `not-measured`. */
 export interface ObsClient {
+  /** Grafana 주석용 토큰을 미리 준비한다(파일에 있으면 재사용, 없으면 서비스 계정 토큰 생성). 주석은 남기지 않는다. */
+  prepareToken(): Promise<Measured<Record<never, never>>>;
   /** 태그 `["nul","run:<id>","batch:<id>","phase:<phase>"]`. 구간이면 timeEndMs 도. */
   annotate(a: { runId: string; batchId: string; phase: AnnotatePhase; text: string; timeMs: number; timeEndMs?: number }): Promise<Measured<Record<never, never>>>;
   /** 구간 주요 지표 범위 질의를 `outFile`(prom.json) 로 동결. */

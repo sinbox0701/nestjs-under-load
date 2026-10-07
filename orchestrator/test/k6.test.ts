@@ -86,6 +86,8 @@ describe('k6 실행기 클라이언트', () => {
   let jobStates: string[] = [];
   let submitStatus = 202;
   let abortCalls = 0;
+  /** true 면 abort 를 받아도 계속 running(멈춘 실행기) */
+  let stuck = false;
 
   const read = (req: IncomingMessage) =>
     new Promise<string>((resolve) => {
@@ -107,7 +109,7 @@ describe('k6 실행기 클라이언트', () => {
       if (req.method === 'GET' && path === '/jobs/j1') return send(200, status(jobStates.length > 1 ? (jobStates.shift() as string) : (jobStates[0] ?? 'done')));
       if (req.method === 'POST' && path === '/jobs/j1/abort') {
         abortCalls++;
-        jobStates = ['aborted'];
+        if (!stuck) jobStates = ['aborted'];
         return send(202, { jobId: 'j1' });
       }
       if (req.method === 'POST' && path === '/inspect') return send(200, { maxVUs: 10 });
@@ -160,6 +162,25 @@ describe('k6 실행기 클라이언트', () => {
     const s = await runner.waitDone('j1', { signal: ac.signal });
     assert.equal(abortCalls, 1);
     assert.equal(s.state, 'aborted');
+  });
+
+  it('AC-5: abort 뒤에도 실행기가 running 이면 abortGraceMs 상한에서 throw 한다', async () => {
+    jobStates = ['running'];
+    abortCalls = 0;
+    stuck = true;
+    try {
+      // sleep 한 번에 시간이 ms 만큼 흐르는 가짜 시계
+      let t = 0;
+      const clock: Clock = { now: () => t, nowIso: () => new Date(t).toISOString(), sleep: async (ms) => void (t += ms) };
+      const runner = createK6Runner({ runnerUrl: url, baseUrl: 'http://nginx', clock, repoDir: dir, abortGraceMs: 30_000 });
+      const ac = new AbortController();
+      ac.abort();
+      await assert.rejects(runner.waitDone('j1', { signal: ac.signal, pollMs: 1000 }), /30000ms 안에 끝나지 않았다/);
+      assert.equal(abortCalls, 1, 'abort 는 한 번만 보낸다');
+      assert.ok(t >= 30_000 && t <= 31_000, `상한 근처에서 끝난다(t=${t})`);
+    } finally {
+      stuck = false;
+    }
   });
 
   it('inspect: 본문을 그대로 돌려준다', async () => {
@@ -226,6 +247,25 @@ describe('k6 실행기 클라이언트', () => {
         failed: { p50: 10000, p95: 10001, p99: 10002, n: 30 },
       },
     });
+  });
+
+  it('summary: threshold 로 만든 phase 태그 서브메트릭 키(phase:main,expected_response:…)도 읽는다', async () => {
+    const file = join(dir, 'summary4.json');
+    await writeFile(
+      file,
+      JSON.stringify({
+        metrics: {
+          http_reqs: { values: { count: 100, rate: 10 } },
+          http_req_failed: { values: { rate: 0.4, passes: 40, fails: 60 } },
+          'http_req_duration{phase:main}': { values: { med: 1, 'p(95)': 1, 'p(99)': 1, count: 100 } },
+          'http_req_duration{phase:main,expected_response:true}': { values: { med: 2, 'p(95)': 3, 'p(99)': 4, count: 60 } },
+          'http_req_duration{phase:main,expected_response:false}': { values: { med: 5, 'p(95)': 6, 'p(99)': 7, count: 40 } },
+        },
+      }),
+    );
+    const { runner } = make();
+    const s = await runner.readSummary(file, 10);
+    assert.deepEqual(s.latencyMs, { success: { p50: 2, p95: 3, p99: 4, n: 60 }, failed: { p50: 5, p95: 6, p99: 7, n: 40 } });
   });
 
   it('throughputRps: http_reqs.count / 본 실행 길이, 길이가 없거나 0 이하면 throw', async () => {

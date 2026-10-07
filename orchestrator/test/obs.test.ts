@@ -100,6 +100,15 @@ describe('ObsClient', () => {
     assert.equal((await readFile(tokenFile, 'utf8')).trim(), 'glsa_tok');
   });
 
+  it('prepareToken: 주석 없이 토큰만 만들고, 꺼져 있으면 요청 없이 not-measured', async () => {
+    assert.equal((await make().prepareToken()).status, 'ok');
+    assert.equal((await readFile(tokenFile, 'utf8')).trim(), 'glsa_tok');
+    assert.equal(grafana.reqs.filter((r) => r.url === '/api/annotations').length, 0);
+    grafana.reqs.length = 0;
+    assert.equal((await make({ profiles: '' }).prepareToken()).status, 'not-measured');
+    assert.equal(grafana.reqs.length, 0);
+  });
+
   it('AC-2: 토큰 파일이 있으면 서비스 계정 API 를 부르지 않는다', async () => {
     await mkdir(join(dir, '_meta'), { recursive: true });
     await writeFile(tokenFile, 'saved_tok\n', { mode: 0o644 });

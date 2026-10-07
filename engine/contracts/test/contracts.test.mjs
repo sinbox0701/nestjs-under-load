@@ -201,6 +201,7 @@ describe('AC-4 상수', () => {
         'lab_orch_ingest_events_total',
         'lab_orch_ingest_rejected_total',
         'lab_orch_ws_clients',
+        'lab_orch_file_write_errors_total',
       ],
     );
     assert.equal(new Set(c.METRIC_NAMES).size, c.METRIC_NAMES.length);
@@ -243,6 +244,9 @@ describe('AC-4 상수', () => {
       'timeouts.lockMs': false,
       'redis.maxmemoryPolicy': true,
       'validity.checks.scrapeGaps': false,
+      'artifacts.promSnapshot': false,
+      'host.dockerDesktopVersion': true,
+      ledgerVsClient: false,
     });
   });
 

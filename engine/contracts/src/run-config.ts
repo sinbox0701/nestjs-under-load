@@ -142,6 +142,7 @@ export const METRICS: readonly MetricSpec[] = Object.freeze([
   orch('lab_orch_ingest_events_total', 'counter'),
   orch('lab_orch_ingest_rejected_total', 'counter', ['reason']),
   orch('lab_orch_ws_clients', 'gauge'),
+  orch('lab_orch_file_write_errors_total', 'counter'),
 ]);
 
 /** C5 의 지표 이름 전체(문서 순서). 히스토그램의 `_bucket`/`_sum`/`_count` 접미사는 포함하지 않는다. */

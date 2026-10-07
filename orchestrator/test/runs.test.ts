@@ -1,7 +1,10 @@
 // RunEngine(실행 수명주기) 테스트. 모든 의존 모듈은 가짜 포트, 시간은 가짜 Clock.
 // 실행: tsc -p tsconfig.json && node --test "test/*.test.ts" (dist 를 import 한다)
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { after, describe, it } from 'node:test';
 
 import type { InvariantResult, K6JobRequest, K6JobStatus, ReadyResponse, RunConfigV1, RunMetadata, RunRequest, RunRow } from '@under-load/contracts';
 
@@ -22,7 +25,7 @@ import type {
   ScenarioDef,
 } from '../dist/ports.js';
 import type { RunMetadataInput } from '../dist/runs/index.js';
-import { buildPlan, createRunEngine, k6DurationMs, renderDiscardSql, RUN_STEPS } from '../dist/runs/index.js';
+import { buildPlan, createRunEngine, dashboardPeriod, k6DurationMs, renderDiscardSql, RUN_STEPS } from '../dist/runs/index.js';
 
 // ───────────────────────────── 가짜 포트 ─────────────────────────────
 
@@ -118,6 +121,8 @@ function world(
     templateLeftover?: boolean;
     apps?: number;
     ready?: (inst: string, cfg: RunConfigV1 | null) => ReadyResponse | null;
+    /** 기본 /data/runs(없는 경로) */
+    runsDir?: string;
   } = {},
 ) {
   const clock = fakeClock();
@@ -282,6 +287,7 @@ function world(
   };
 
   const obs: ObsClient = {
+    prepareToken: async () => ({ status: 'not-measured' }),
     annotate: async () => ({ status: 'not-measured' }),
     snapshot: async () => ({ status: 'not-measured' }),
     scrapeGaps: async () => ({ status: 'not-measured' }),
@@ -320,7 +326,7 @@ function world(
     catalog,
     ready,
     buildMetadata: (input) => input as unknown as RunMetadata,
-    options: { runsDir: '/data/runs', readyTimeoutMs: 2000, readyPollMs: 500 },
+    options: { runsDir: opts.runsDir ?? '/data/runs', readyTimeoutMs: 2000, readyPollMs: 500 },
     randomSuffix: () => 'beef',
   });
 
@@ -622,6 +628,34 @@ describe('RunEngine 수명주기', () => {
       (w.steps.get(runId) ?? []).map((s) => s.name),
       NORMAL_STEPS.filter((s) => s !== RUN_STEPS.warmup && s !== RUN_STEPS.discardWarmup),
     );
+  });
+});
+
+describe('k6 HTML 보고서(T-150)', () => {
+  it('report.html 은 실제로 생긴 경우에만 artifacts 에 넣고, 본 실행 job 에 대시보드 주기를 준다', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'nul-runs-'));
+    after(() => rmSync(dir, { recursive: true, force: true }));
+    const w = world({ runsDir: dir });
+    // 첫 실행만 k6 가 보고서를 쓴 것으로 한다
+    let n = 0;
+    w.hooks.onMainSubmit = (job) => {
+      if (n++ > 0) return;
+      mkdirSync(path.join(dir, job.runId), { recursive: true });
+      writeFileSync(path.join(dir, job.runId, 'report.html'), '<html></html>');
+    };
+    const acc = await startOk(w, request({ reps: 2, strategies: ['no-lock'] }));
+    await w.engine.idle();
+    const [r1, r2] = acc.batches[0]!.runIds;
+    assert.equal(w.metadata.get(r1!)!.artifacts.k6Html, `runs/${r1}/report.html`);
+    assert.equal(w.metadata.get(r2!)!.artifacts.k6Html, null);
+    const main = w.jobs.find((j) => j.phase === 'main')!;
+    const warm = w.jobs.find((j) => j.phase === 'warmup')!;
+    assert.equal(main.env.K6_WEB_DASHBOARD_PERIOD, '1s');
+    assert.equal('K6_WEB_DASHBOARD_PERIOD' in warm.env, false, '보고서를 내지 않는 웜업 job 엔 없다');
+  });
+
+  it('dashboardPeriod: 길이/30 을 1–10초로', () => {
+    assert.deepEqual(['5s', '30s', '2m', '5m', '1h', undefined].map(dashboardPeriod), ['1s', '1s', '4s', '10s', '10s', '1s']);
   });
 });
 

@@ -214,4 +214,20 @@ export const NULLABLE_WHEN: readonly NullableRule[] = Object.freeze([
     allowed: NOT_MEASURED,
     applies: (m) => !m.stack.profiles.includes('obs'),
   },
+  // Prometheus 가 없으면 구간 지표를 동결할 곳이 없다
+  { path: 'artifacts.promSnapshot', when: 'obs 프로필이 없을 때', allowed: null, applies: (m) => !m.stack.profiles.includes('obs') },
+  // Engine API 에서 Docker Desktop 버전은 /version 의 Platform.Name("Docker Desktop x.y.z")으로만 얻는다. 그 밖의 엔진엔 없다.
+  {
+    path: 'host.dockerDesktopVersion',
+    when: 'Docker Desktop 이 아닐 때(host.os 가 Docker Desktop 이 아님)',
+    allowed: null,
+    applies: (m) => !/docker desktop/i.test(m.host.os ?? ''),
+  },
+  // 원장 대조는 원장 행 수를 내는 info 불변식(ledger-matches-k6)과 k6 결과를 맞대는 것이다
+  {
+    path: 'ledgerVsClient',
+    when: '시나리오에 원장 대조 불변식(ledger-matches-k6)이 없을 때',
+    allowed: null,
+    applies: (m) => !m.invariants.some((i) => i.id === 'ledger-matches-k6'),
+  },
 ]);
