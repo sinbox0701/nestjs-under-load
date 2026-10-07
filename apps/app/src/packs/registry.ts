@@ -13,6 +13,8 @@ export interface ScenarioPack {
     strategyParams?: unknown;
     instance: string;
     injectDelay?: { point: string; ms: number }[];
+    /** RunConfig.redis(C1). Redis 를 쓰는 팩만 읽는다(g02 redis-lock). null = 시나리오가 안 씀. */
+    redis?: { host: string; port: number } | null;
   }): DynamicModule;
   seed(em: EntityManager, opts: Record<string, number>): Promise<void>;
 }
@@ -21,6 +23,8 @@ export interface ScenarioPack {
  * 시나리오 id → 팩 로더. 선택된 시나리오의 팩만 동적 import한다(DESIGN §6.4: 다른 시나리오 엔티티는 등록하지 않음).
  */
 const loaders: Record<string, () => Promise<ScenarioPack>> = {
+  'g01-shared-document': async () =>
+    (await import('@under-load/g01-shared-document')).scenarioPack as unknown as ScenarioPack,
   'g02-stock-decrement': async () =>
     (await import('@under-load/g02-stock-decrement')).scenarioPack as unknown as ScenarioPack,
 };
