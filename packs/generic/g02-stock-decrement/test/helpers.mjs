@@ -184,9 +184,13 @@ export function createFakeRedis() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 실제 Redis(도커). 없으면 null을 돌려주고 테스트는 skip 한다.
-// 접속: G02_TEST_REDIS_URL (기본 redis://127.0.0.1:6379). 키는 g02:lock:* 만 쓴다.
+// 접속: G02_TEST_REDIS_URL 을 줬을 때만 접속한다(기본값 없음 — 실행 중인 스택의 6379 에 자동으로 붙지 않는다). 키는 g02:lock:* 만 쓴다.
+// 일회용 예: docker run -d --rm --name nul-g02-redis -p 127.0.0.1:56379:6379 redis:7-alpine
+//   → G02_TEST_REDIS_URL=redis://127.0.0.1:56379
 // ─────────────────────────────────────────────────────────────────────────────
-export const REDIS_URL = process.env.G02_TEST_REDIS_URL ?? 'redis://127.0.0.1:6379';
+const REDIS_ENV = process.env.G02_TEST_REDIS_URL;
+// env 가 없을 때 테스트의 skip 메시지가 `new URL(REDIS_URL).host` 를 쓰므로 자리표시 주소를 둔다(접속에는 쓰지 않는다).
+export const REDIS_URL = REDIS_ENV ?? 'redis://env-not-set.invalid:6379';
 
 export function openRedis(url = REDIS_URL, options = {}) {
   const Redis = require('ioredis');
@@ -197,6 +201,7 @@ export function openRedis(url = REDIS_URL, options = {}) {
 
 /** 접속 가능하면 { ok: true }, 아니면 { ok: false, reason } */
 export async function probeRedis(timeoutMs = 3000) {
+  if (!REDIS_ENV) return { ok: false, reason: 'G02_TEST_REDIS_URL 미지정' };
   const redis = openRedis(REDIS_URL, { connectTimeout: timeoutMs });
   try {
     await redis.connect();
@@ -211,9 +216,14 @@ export async function probeRedis(timeoutMs = 3000) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 실제 PostgreSQL(도커). 없으면 null을 돌려주고 테스트는 skip 한다.
-// 접속: G02_TEST_DATABASE_URL (기본: compose의 127.0.0.1:55432 superuser — 테스트 DB를 만들고 지운다)
+// 접속: G02_TEST_DATABASE_URL 을 줬을 때만 접속한다(기본값 없음 — 실행 중인 스택의 55432 에 자동으로 붙지 않는다).
+// CREATE DATABASE 권한이 필요하고, 테스트 DB 를 만들고 지운다. 일회용 예:
+//   docker run -d --rm --name nul-g02-pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:55499:5432 postgres:17
+//   → G02_TEST_DATABASE_URL=postgresql://postgres:pw@127.0.0.1:55499/postgres
 // ─────────────────────────────────────────────────────────────────────────────
-export const PG_URL = process.env.G02_TEST_DATABASE_URL ?? 'postgresql://postgres:postgres_local@127.0.0.1:55432/postgres';
+const PG_ENV = process.env.G02_TEST_DATABASE_URL;
+// env 가 없을 때 테스트의 skip 메시지가 `new URL(PG_URL).host` 를 쓰므로 자리표시 주소를 둔다(접속에는 쓰지 않는다).
+export const PG_URL = PG_ENV ?? 'postgresql://env-not-set.invalid:5432/postgres';
 
 function baseOptions(dbName, poolMax) {
   return {
@@ -228,6 +238,7 @@ function baseOptions(dbName, poolMax) {
 
 /** 접속 가능하면 { ok: true }, 아니면 { ok: false, reason } */
 export async function probePostgres(timeoutMs = 3000) {
+  if (!PG_ENV) return { ok: false, reason: 'G02_TEST_DATABASE_URL 미지정' };
   let orm;
   try {
     orm = await MikroORM.init({ ...baseOptions(new URL(PG_URL).pathname.slice(1) || 'postgres', 1), connect: false });
@@ -248,6 +259,7 @@ export async function probePostgres(timeoutMs = 3000) {
 
 /** 테스트 전용 DB를 만들고 마이그레이션을 돌린다. */
 export async function createTestDatabase() {
+  if (!PG_ENV) throw new Error('G02_TEST_DATABASE_URL 미지정 — 통합 테스트는 명시 env 가 있을 때만 접속한다');
   const adminDb = new URL(PG_URL).pathname.slice(1) || 'postgres';
   const name = `g02_it_${process.pid}_${Date.now()}`;
   const admin = await MikroORM.init(baseOptions(adminDb, 1));

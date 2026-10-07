@@ -1,5 +1,5 @@
-// orm-options 단위 테스트 + PG 통합(AC-2·AC-3). 통합은 APP_TEST_DATABASE_URL(기본 compose postgres 127.0.0.1:55432)에
-// 접속할 수 없으면 skip. 통합은 SHOW·SELECT 만 보낸다(대상 DB 에 쓰지 않는다).
+// orm-options 단위 테스트 + PG 통합(AC-2·AC-3). 통합은 APP_TEST_DATABASE_URL 을 줬을 때만 접속하고(없으면 접속 시도 없이 skip),
+// 접속할 수 없어도 skip. 일회용 PG 예시는 test-support/test-pg.ts. 통합은 SHOW·SELECT 만 보낸다(대상 DB 에 쓰지 않는다).
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 
@@ -8,6 +8,7 @@ import { MikroORM } from '@mikro-orm/postgresql';
 import { loadEnv } from '../config/env';
 import { getLabMetrics, resetLabMetrics } from '../metrics';
 import { loadPack, type ScenarioPack } from '../packs/registry';
+import { APP_TEST_PG_SKIP, appTestPgUrl } from '../test-support/test-pg';
 import { buildDriverOptions, buildOrmOptions } from './orm-options';
 
 describe('buildDriverOptions', () => {
@@ -40,13 +41,13 @@ describe('buildDriverOptions', () => {
   });
 });
 
-const PG_URL = new URL(process.env.APP_TEST_DATABASE_URL ?? 'postgresql://postgres:postgres_local@127.0.0.1:55432/postgres');
+const PG_URL = appTestPgUrl();
 const pgEnv = loadEnv({
-  POSTGRES_HOST: PG_URL.hostname,
-  POSTGRES_PORT: PG_URL.port || '5432',
-  POSTGRES_DB: PG_URL.pathname.slice(1) || 'postgres',
-  POSTGRES_USER: decodeURIComponent(PG_URL.username),
-  POSTGRES_PASSWORD: decodeURIComponent(PG_URL.password),
+  POSTGRES_HOST: PG_URL?.hostname ?? 'env-not-set.invalid',
+  POSTGRES_PORT: PG_URL?.port || '5432',
+  POSTGRES_DB: PG_URL?.pathname.slice(1) || 'postgres',
+  POSTGRES_USER: PG_URL ? decodeURIComponent(PG_URL.username) : 'postgres',
+  POSTGRES_PASSWORD: PG_URL ? decodeURIComponent(PG_URL.password) : 'unused',
   INSTANCE_NAME: 'orm-options-test',
 });
 
@@ -58,6 +59,10 @@ describe('buildOrmOptions + PG', () => {
   before(async () => {
     resetLabMetrics();
     pack = await loadPack('g01-shared-document');
+    if (!PG_URL) {
+      skip = APP_TEST_PG_SKIP;
+      return;
+    }
     try {
       orm = await MikroORM.init(
         buildOrmOptions(pgEnv, pack, { min: 1, max: 2, acquireTimeoutMs: 2000 }, {
@@ -68,7 +73,7 @@ describe('buildOrmOptions + PG', () => {
       await orm.connect();
       if (!(await orm.checkConnection()).ok) throw new Error('checkConnection 실패');
     } catch (err) {
-      skip = `PG 접속 불가(${PG_URL.host}): ${err instanceof Error ? err.message : String(err)}`;
+      skip = `PG 접속 불가(${PG_URL?.host}): ${err instanceof Error ? err.message : String(err)}`;
       await orm?.close(true).catch(() => {});
       orm = null;
     }

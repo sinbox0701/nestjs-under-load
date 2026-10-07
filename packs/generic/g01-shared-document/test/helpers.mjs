@@ -56,9 +56,14 @@ export function saveCmd(seen, { documentId = 1, field = 'a', version = seen.vers
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 실제 PostgreSQL(도커). 없으면 probe 가 실패하고 테스트는 skip 한다.
-// 접속: G01_TEST_DATABASE_URL (기본: compose의 127.0.0.1:55432 superuser — 테스트 DB를 만들고 지운다)
+// 접속: G01_TEST_DATABASE_URL 을 줬을 때만 접속한다(기본값 없음 — 실행 중인 스택의 55432 에 자동으로 붙지 않는다).
+// CREATE DATABASE 권한이 필요하고, 테스트 DB 를 만들고 지운다. 일회용 예:
+//   docker run -d --rm --name nul-g01-pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:55498:5432 postgres:17
+//   → G01_TEST_DATABASE_URL=postgresql://postgres:pw@127.0.0.1:55498/postgres
 // ─────────────────────────────────────────────────────────────────────────────
-export const PG_URL = process.env.G01_TEST_DATABASE_URL ?? 'postgresql://postgres:postgres_local@127.0.0.1:55432/postgres';
+const PG_ENV = process.env.G01_TEST_DATABASE_URL;
+// env 가 없을 때 테스트의 skip 메시지가 `new URL(PG_URL).host` 를 쓰므로 자리표시 주소를 둔다(접속에는 쓰지 않는다).
+export const PG_URL = PG_ENV ?? 'postgresql://env-not-set.invalid:5432/postgres';
 
 function baseOptions(dbName, poolMax) {
   return {
@@ -72,6 +77,7 @@ function baseOptions(dbName, poolMax) {
 
 /** 접속 가능하면 { ok: true }, 아니면 { ok: false, reason } */
 export async function probePostgres(timeoutMs = 3000) {
+  if (!PG_ENV) return { ok: false, reason: 'G01_TEST_DATABASE_URL 미지정' };
   let orm;
   try {
     orm = await MikroORM.init({ ...baseOptions(new URL(PG_URL).pathname.slice(1) || 'postgres', 1), connect: false });
@@ -91,6 +97,7 @@ export async function probePostgres(timeoutMs = 3000) {
 
 /** 테스트 전용 DB를 만들고 마이그레이션을 돌린다. `sql` 배열에 실행된 SQL(쿼리 로그)이 쌓인다. */
 export async function createTestDatabase() {
+  if (!PG_ENV) throw new Error('G01_TEST_DATABASE_URL 미지정 — 통합 테스트는 명시 env 가 있을 때만 접속한다');
   const adminDb = new URL(PG_URL).pathname.slice(1) || 'postgres';
   const name = `g01_it_${process.pid}_${Date.now()}`;
   const admin = await MikroORM.init(baseOptions(adminDb, 1));
