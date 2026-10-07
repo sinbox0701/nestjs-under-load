@@ -14,8 +14,8 @@ const { OptimisticVersionStrategy } = require('../dist/strategies/optimistic-ver
 const { createContentionWindow } = require('../dist/support/contention-window.js');
 
 describe('G01 strategy-registry', () => {
-  it('1단계 A 묶음 3개를 등록한다', () => {
-    assert.deepEqual(Object.keys(G01_STRATEGIES), ['naive-overwrite', 'optimistic-version', 'blind-retry']);
+  it('5개를 등록한다(A 묶음 3 + B 묶음 field-merge·edit-lease)', () => {
+    assert.deepEqual(Object.keys(G01_STRATEGIES), ['naive-overwrite', 'optimistic-version', 'blind-retry', 'field-merge', 'edit-lease']);
     for (const id of Object.keys(G01_STRATEGIES)) {
       const { cls } = resolveStrategy(id, undefined);
       assert.equal(new cls().id, id);
