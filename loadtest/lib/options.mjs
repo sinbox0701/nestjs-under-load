@@ -49,8 +49,13 @@ export function buildOptions(rawEnv = {}) {
   return {
     discardResponseBodies: false,
     scenarios: { [e.PHASE]: scenario },
-    // 빈 threshold 로 phase 별 서브메트릭을 강제로 만든다.
-    thresholds: { [`http_req_duration{phase:${e.PHASE}}`]: [] },
+    // 빈 threshold 로 서브메트릭을 강제로 만든다(k6 는 threshold 로 선언된 서브메트릭만 summary 에 낸다).
+    // phase 합계(0단계 run.mjs) + 성공·실패 지연 분리(오케스트레이터 readSummary).
+    thresholds: {
+      [`http_req_duration{phase:${e.PHASE}}`]: [],
+      [`http_req_duration{phase:${e.PHASE},expected_response:true}`]: [],
+      [`http_req_duration{phase:${e.PHASE},expected_response:false}`]: [],
+    },
     summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max', 'count'],
   };
 }
