@@ -71,7 +71,11 @@ test('AC-4: buildOptions open 스냅샷', () => {
           preAllocatedVUs: 50, maxVUs: 300, tags: { phase: 'main' },
         },
       },
-      thresholds: { 'http_req_duration{phase:main}': [] },
+      thresholds: {
+        'http_req_duration{phase:main}': [],
+        'http_req_duration{phase:main,expected_response:true}': [],
+        'http_req_duration{phase:main,expected_response:false}': [],
+      },
       summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max', 'count'],
     },
   );
@@ -83,7 +87,11 @@ test('AC-4: buildOptions closed 스냅샷', () => {
     {
       discardResponseBodies: false,
       scenarios: { warmup: { executor: 'constant-vus', vus: 20, duration: '10s', tags: { phase: 'warmup' } } },
-      thresholds: { 'http_req_duration{phase:warmup}': [] },
+      thresholds: {
+        'http_req_duration{phase:warmup}': [],
+        'http_req_duration{phase:warmup,expected_response:true}': [],
+        'http_req_duration{phase:warmup,expected_response:false}': [],
+      },
       summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max', 'count'],
     },
   );
