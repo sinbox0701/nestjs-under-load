@@ -222,7 +222,21 @@ outcomes:
     situation: hot-product-zipf
     verdict: broken
     expected: "상품 1에서 잃어버린 갱신이 대량으로 나고 sold_equals_decrement가 위반된다. 재고가 충분해 no_oversell은 통과할 수 있다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-54-21Z_g02_no-lock_i2
+      runs: [ 2026-10-07T06-54-21Z_g02_no-lock_i2_r1, 2026-10-07T06-54-21Z_g02_no-lock_i2_r2, 2026-10-07T06-54-21Z_g02_no-lock_i2_r3 ]
+      summary: 위반 3/3회 발생(sold-equals-decrement 상품 2·1·1개) · 원장 성공 6001·6001·6001건 / 총재고 500000 · 처리량 200 req/s(200~200) · p95 2.3ms(2.25~3.01) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 2, 1, 1 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 6001, 6001, 6001 ]
+      throughputRps: { median: 200, min: 200, max: 200 }
+      p95Ms: { median: 2.3, min: 2.25, max: 3.01 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.047, min: 0.046, max: 0.049 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100000, zipf(1.5) 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "한 행에 초당 100건 넘게 몰리므로 거의 모든 요청이 다른 요청과 겹친다. 원장 성공 합은 늘지만 실제 재고는 덜 줄어든다"
     focus:
       - { file: strategies/no-lock.strategy.ts, marker: read-then-write }
@@ -365,8 +379,22 @@ outcomes:
     situation: hot-product-zipf
     verdict: slow
     expected: "위반 0. 상품 1 요청의 지연(p95·p99)이 크게 늘고 pg_locks에 대기가 계속 보인다. lock_timeout(1000ms)을 넘으면 503이 섞인다"
-    measured: null
-    why: "상품 1 트랜잭션이 하나씩만 진행된다. 처리량 천장 ≈ 1/보유 시간이고, 보유 시간에 SELECT 응답·판정·UPDATE·원장 INSERT·COMMIT 왕복이 모두 들어 있어 conditional-update보다 천장이 낮다"
+    measured:
+      run: 2026-10-07T06-54-21Z_g02_row-lock_i2
+      runs: [ 2026-10-07T06-54-21Z_g02_row-lock_i2_r1, 2026-10-07T06-54-21Z_g02_row-lock_i2_r2, 2026-10-07T06-54-21Z_g02_row-lock_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 6001·6001·6001건 / 총재고 500000 · 처리량 200 req/s(200~200) · p95 2.47ms(2.38~2.52) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 6001, 6001, 6001 ]
+      throughputRps: { median: 200, min: 200, max: 200 }
+      p95Ms: { median: 2.47, min: 2.38, max: 2.52 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.047, min: 0.047, max: 0.049 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100000, zipf(1.5) 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "상품 1 트랜잭션이 하나씩만 진행된다. 처리량 천장 ≈ 1/보유 시간이고, 보유 시간에 SELECT 응답·판정·UPDATE·원장 INSERT·COMMIT 왕복이 모두 들어 있어 conditional-update보다 천장이 낮다 실측은 예상과 달랐다: 200 req/s에서 p95 약 2.5ms, 실패·503 0으로 지연이 늘지 않았다. 추정: 상품 1 도착(초당 약 114건) × 보유 시간(로컬 DB 왕복 1ms 안팎이라 수 ms)이면 이용률이 절반 아래라 줄이 쌓이지 않는다. 지연이 보이려면 도착률을 올리거나 보유 시간을 늘려야 한다(contention-window-30 참고)."
     focus:
       - { file: strategies/row-lock.strategy.ts, marker: for-update }
       - { file: strategies/row-lock.strategy.ts, marker: lock-held-span }
@@ -508,7 +536,21 @@ outcomes:
     situation: hot-product-zipf
     verdict: ok
     expected: "위반 0. 상품 1에서 대기는 생기지만 row-lock보다 지연이 낮고 처리량 천장이 높다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-54-21Z_g02_conditional-update_i2
+      runs: [ 2026-10-07T06-54-21Z_g02_conditional-update_i2_r1, 2026-10-07T06-54-21Z_g02_conditional-update_i2_r2, 2026-10-07T06-54-21Z_g02_conditional-update_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 6001·6001·6001건 / 총재고 500000 · 처리량 200 req/s(200~200) · p95 2.09ms(2.08~2.5) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 6001, 6001, 6001 ]
+      throughputRps: { median: 200, min: 200, max: 200 }
+      p95Ms: { median: 2.09, min: 2.08, max: 2.5 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.051, min: 0.05, max: 0.051 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100000, zipf(1.5) 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "잠금 보유 구간이 UPDATE~COMMIT뿐이다(SELECT 응답 왕복과 앱 판정이 밖에 있다). 남은 보유 시간의 상당 부분은 원장 INSERT와 COMMIT 왕복이다"
     focus:
       - { file: strategies/conditional-update.strategy.ts, marker: db-computed-set }
@@ -589,7 +631,21 @@ outcomes:
     situation: two-users-one-instance
     verdict: ok
     expected: "위반 0. 이 조건만 보면 맞는 코드처럼 보인다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-37-34Z_g02_app-memory-lock_i1
+      runs: [ 2026-10-07T06-37-34Z_g02_app-memory-lock_i1_r1, 2026-10-07T06-37-34Z_g02_app-memory-lock_i1_r2, 2026-10-07T06-37-34Z_g02_app-memory-lock_i1_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 1967.7 req/s(1923.3~1983) · p95 1.39ms(1.34~1.41) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 1967.7, min: 1923.3, max: 1983 }
+      p95Ms: { median: 1.39, min: 1.34, max: 1.41 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.176, min: 0.171, max: 0.176 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 2 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "프로세스가 하나뿐이라 같은 상품 요청이 메모리 mutex로 한 줄로 선다. 커밋 뒤에 풀기 때문에 다음 요청은 앞 차감이 반영된 값을 읽는다"
     focus:
       - { file: strategies/app-memory-lock.strategy.ts, marker: promise-chain-mutex }
@@ -647,8 +703,22 @@ outcomes:
     situation: hot-product-zipf
     verdict: broken
     expected: "위반 발생(sold_equals_decrement). 인스턴스 안에서는 줄을 서서 지연도 커진다"
-    measured: null
-    why: "상품 1 요청이 두 인스턴스에 나뉘어 각자 직렬화되므로, 두 줄의 맨 앞끼리는 늘 동시에 실행된다. 잃어버린 갱신과 앱 내부 대기가 함께 생긴다"
+    measured:
+      run: 2026-10-07T06-54-21Z_g02_app-memory-lock_i2
+      runs: [ 2026-10-07T06-54-21Z_g02_app-memory-lock_i2_r1, 2026-10-07T06-54-21Z_g02_app-memory-lock_i2_r2, 2026-10-07T06-54-21Z_g02_app-memory-lock_i2_r3 ]
+      summary: 위반 3/3회 발생(sold-equals-decrement 상품 3·1·1개) · 원장 성공 6001·6001·6001건 / 총재고 500000 · 처리량 200 req/s(200~200) · p95 2.31ms(2.29~2.36) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 3, 1, 1 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 6001, 6001, 6001 ]
+      throughputRps: { median: 200, min: 200, max: 200 }
+      p95Ms: { median: 2.31, min: 2.29, max: 2.36 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.048, min: 0.048, max: 0.049 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100000, zipf(1.5) 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "상품 1 요청이 두 인스턴스에 나뉘어 각자 직렬화되므로, 두 줄의 맨 앞끼리는 늘 동시에 실행된다. 잃어버린 갱신과 앱 내부 대기가 함께 생긴다 실측: 위반은 예상대로 3/3회(sold-equals-decrement 상품 1~3개)였지만, 인스턴스 안 대기로 지연이 커진다는 예상과 달리 p95 약 2.3ms로 늘지 않았다(인스턴스당 상품 1 요청이 초당 약 57건이라 줄이 짧다)."
     focus:
       - { file: strategies/app-memory-lock.strategy.ts, marker: process-local-map }
       - { file: strategies/app-memory-lock.strategy.ts, marker: same-read-then-write }
@@ -749,7 +819,21 @@ outcomes:
     situation: spike-200-two-instances
     verdict: ok
     expected: "위반 0. app-memory-lock이 깨지는 같은 조건에서 맞다. 결과는 서버 1대와 같다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-41-24Z_g02_redis-lock_i2
+      runs: [ 2026-10-07T06-41-24Z_g02_redis-lock_i2_r1, 2026-10-07T06-41-24Z_g02_redis-lock_i2_r2, 2026-10-07T06-41-24Z_g02_redis-lock_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 200 req/s(200~200) · p95 2.46ms(2.38~2.57) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 200, min: 200, max: 200 }
+      p95Ms: { median: 2.46, min: 2.38, max: 2.57 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.047, min: 0.047, max: 0.048 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 30s(상황 정의 shape=spike, 실행은 constant) · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "락이 Redis 키에 있어 app-1과 app-2가 같은 상품에서 같은 줄에 선다. 토큰이 요청(락 획득)마다 달라서 서로의 락을 지우지 않는다. 락의 범위가 공유 자원의 범위(상품 한 개를 건드리는 모든 인스턴스)와 같아진 것이 app-memory-lock과의 차이다"
     focus:
       - { file: strategies/redis-lock.strategy.ts, marker: owner-token }
@@ -759,8 +843,22 @@ outcomes:
     situation: hot-product-zipf
     verdict: slow
     expected: "위반 0. 상품 1에 초당 약 114건이 몰려 보유 시간(DB 왕복 4~5번 + Redis 왕복 2번 + 폴링 간격)이 천장에 가까워지고 지연이 늘어난다. 대기가 ttlMs(3000ms)를 넘기는 요청은 503이 섞일 수 있다"
-    measured: null
-    why: "보유 시간이 길수록 천장(≈ 1/보유 시간)이 낮아지는 점은 row-lock과 같고, 여기에 Redis 왕복과 5ms 재시도 간격이 더해진다. 대기자는 폴링이라 락이 풀려도 다음 재시도까지 락이 놀 수 있어 같은 보유 시간에서 천장이 DB 락보다 낮다. 대기 상한은 ttlMs와 같은 값이다"
+    measured:
+      run: 2026-10-07T06-54-21Z_g02_redis-lock_i2
+      runs: [ 2026-10-07T06-54-21Z_g02_redis-lock_i2_r1, 2026-10-07T06-54-21Z_g02_redis-lock_i2_r2, 2026-10-07T06-54-21Z_g02_redis-lock_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 6001·6001·6001건 / 총재고 500000 · 처리량 200 req/s(200~200) · p95 2.64ms(2.61~2.65) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 6001, 6001, 6001 ]
+      throughputRps: { median: 200, min: 200, max: 200 }
+      p95Ms: { median: 2.64, min: 2.61, max: 2.65 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.046, min: 0.046, max: 0.047 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100000, zipf(1.5) 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "보유 시간이 길수록 천장(≈ 1/보유 시간)이 낮아지는 점은 row-lock과 같고, 여기에 Redis 왕복과 5ms 재시도 간격이 더해진다. 대기자는 폴링이라 락이 풀려도 다음 재시도까지 락이 놀 수 있어 같은 보유 시간에서 천장이 DB 락보다 낮다. 대기 상한은 ttlMs와 같은 값이다 실측은 예상과 달랐다: p95 약 2.6ms, 실패·503 0으로 천장에 닿지 않았다. 추정: 로컬 Redis·DB 왕복이 1ms 안팎이라 보유 시간이 수 ms이고, 상품 1 초당 약 114건으로는 이용률이 낮다."
     focus:
       - { file: strategies/redis-lock.strategy.ts, marker: set-nx-px }
       - { file: strategies/redis-lock.strategy.ts, marker: release-after-commit }
@@ -799,7 +897,22 @@ outcomes:
     situation: contention-window-30-two-instances
     verdict: rejects
     expected: "위반 0. 천장은 Redis 키가 정하므로 서버 2대여도 1대와 같다. 대기가 ttlMs(3000ms)를 넘긴 요청이 503으로 거절되고 p95는 초 단위다. app-memory-lock이 같은 조건에서 깨지는 것과 대비된다"
-    measured: null
+    measured:
+      run: 2026-10-07T07-05-27Z_g02_redis-lock_i2
+      runs: [ 2026-10-07T07-05-27Z_g02_redis-lock_i2_r1, 2026-10-07T07-05-27Z_g02_redis-lock_i2_r2, 2026-10-07T07-05-27Z_g02_redis-lock_i2_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 189 req/s(188.5~189) · p95 2764.69ms(2633.73~2775.49) · 실패율 21.52%(20.42~21.54) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 189, min: 188.5, max: 189 }
+      p95Ms: { median: 2764.69, min: 2633.73, max: 2775.49 }
+      failRatePct: { median: 21.52, min: 20.42, max: 21.54 }
+      k6CpuAvgRatio: { median: 0.044, min: 0.044, max: 0.045 }
+      conditions: "로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
     why: "같은 상품의 두 인스턴스 요청이 같은 키에서 줄을 서므로 앱이 몇 대든 위반이 없다. 보유 시간 약 35ms 대 TTL 3000ms라 락이 중간에 풀릴 일은 없다. TTL이 보유 시간보다 짧아지면(큰 지연, GC, 느린 DB) 락이 풀린 채 트랜잭션이 계속되어 깨질 수 있고 그 시연은 G05가 맡는다. 늦게 끝난 쪽의 해제는 토큰이 달라 남의 락을 지우지 않는다"
     focus:
       - { file: strategies/redis-lock.strategy.ts, marker: set-nx-px }
@@ -834,7 +947,21 @@ outcomes:
     situation: spike-200-two-instances
     verdict: ok
     expected: "위반 0. 결과는 서버 1대와 같다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-41-24Z_g02_advisory-xact-lock_i2
+      runs: [ 2026-10-07T06-41-24Z_g02_advisory-xact-lock_i2_r1, 2026-10-07T06-41-24Z_g02_advisory-xact-lock_i2_r2, 2026-10-07T06-41-24Z_g02_advisory-xact-lock_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 200 req/s(200~200) · p95 2.8ms(2.58~2.97) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 200, min: 200, max: 200 }
+      p95Ms: { median: 2.8, min: 2.58, max: 2.97 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.05, min: 0.049, max: 0.05 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 30s(상황 정의 shape=spike, 실행은 constant) · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "락이 DB 안에 있으므로 어느 인스턴스에서 온 트랜잭션이든 같은 키에서 기다린다. 앱 쪽에 공유 저장소(Redis)가 필요 없다는 점이 redis-lock과의 차이다"
     focus:
       - { file: strategies/advisory-xact-lock.strategy.ts, marker: advisory-first-statement }
@@ -844,8 +971,22 @@ outcomes:
     situation: hot-product-zipf
     verdict: slow
     expected: "위반 0. 상품 1 요청이 한 줄로 서서 row-lock과 비슷하게 지연이 늘고 pg_locks에 advisory 대기가 계속 보인다"
-    measured: null
-    why: "보유 시간이 SELECT·UPDATE·원장 INSERT·COMMIT 왕복을 모두 포함해 row-lock과 같은 크기다. 대기하는 트랜잭션이 풀 커넥션을 쥔 채 기다리므로 한 상품의 대기자가 풀을 차지할 수 있다. 이 strategy는 lock_timeout을 걸지 않아 대기에 상한이 없고 거절 대신 기다린다"
+    measured:
+      run: 2026-10-07T06-54-21Z_g02_advisory-xact-lock_i2
+      runs: [ 2026-10-07T06-54-21Z_g02_advisory-xact-lock_i2_r1, 2026-10-07T06-54-21Z_g02_advisory-xact-lock_i2_r2, 2026-10-07T06-54-21Z_g02_advisory-xact-lock_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 6001·6001·6001건 / 총재고 500000 · 처리량 200 req/s(200~200) · p95 3.44ms(3.39~3.69) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 6001, 6001, 6001 ]
+      throughputRps: { median: 200, min: 200, max: 200 }
+      p95Ms: { median: 3.44, min: 3.39, max: 3.69 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.05, min: 0.048, max: 0.052 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100000, zipf(1.5) 분포, 요청당 1개 · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "보유 시간이 SELECT·UPDATE·원장 INSERT·COMMIT 왕복을 모두 포함해 row-lock과 같은 크기다. 대기하는 트랜잭션이 풀 커넥션을 쥔 채 기다리므로 한 상품의 대기자가 풀을 차지할 수 있다. 이 strategy는 lock_timeout을 걸지 않아 대기에 상한이 없고 거절 대신 기다린다 실측은 예상과 달랐다: p95 약 3.4ms, 실패 0으로 지연이 크게 늘지 않았다(row-lock보다 약 1ms 높다). 추정: row-lock과 같은 이유로 이용률이 낮아 대기열이 쌓이지 않는다."
     focus:
       - { file: strategies/advisory-xact-lock.strategy.ts, marker: rmw-under-advisory }
       - { file: strategies/advisory-xact-lock.strategy.ts, marker: auto-release-at-end }
@@ -884,7 +1025,22 @@ outcomes:
     situation: contention-window-30-two-instances
     verdict: slow
     expected: "위반 0. 천장은 DB의 advisory 키가 정하므로 서버 2대여도 같다. 풀이 20개로 늘어 한 상품의 대기자가 다른 상품을 막는 일은 줄지만 지연은 초 단위로 쌓인다"
-    measured: null
+    measured:
+      run: 2026-10-07T07-05-27Z_g02_advisory-xact-lock_i2
+      runs: [ 2026-10-07T07-05-27Z_g02_advisory-xact-lock_i2_r1, 2026-10-07T07-05-27Z_g02_advisory-xact-lock_i2_r2, 2026-10-07T07-05-27Z_g02_advisory-xact-lock_i2_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 0 (3/3회) · 원장 성공 500·500·500건 / 총재고 500 · 처리량 170.8 req/s(169.6~171.2) · p95 4962.56ms(4866.28~5506.84) · 실패율 14.6%(14.45~15.23) · 로컬 맥 상대 비교
+      violations:
+        no-negative-stock: [ 0, 0, 0 ]
+        sold-equals-decrement: [ 0, 0, 0 ]
+        no-oversell: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 500, 500, 500 ]
+      throughputRps: { median: 170.8, min: 169.6, max: 171.2 }
+      p95Ms: { median: 4962.56, min: 4866.28, max: 5506.84 }
+      failRatePct: { median: 14.6, min: 14.45, max: 15.23 }
+      k6CpuAvgRatio: { median: 0.061, min: 0.06, max: 0.061 }
+      conditions: "로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · open constant-arrival-rate 200/s × 20s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · maxVUs 2000 · 상품 5개 × 재고 100, 균등 분포, 요청당 1개 · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
     why: "락이 DB에 있어 앱 대수와 무관하게 상품별 한 줄이다. app-memory-lock이 같은 조건에서 깨지는 것과 대비된다. 보유 시간이 30ms 이상이라 천장(초당 약 28건)이 도착(약 40건)보다 낮다"
     focus:
       - { file: strategies/advisory-xact-lock.strategy.ts, marker: advisory-first-statement }

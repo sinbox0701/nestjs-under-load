@@ -160,7 +160,21 @@ outcomes:
     situation: two-people-one-doc
     verdict: broken
     expected: "응답은 전부 200, 409 0건인데 no_lost_update가 위반된다. 단순 모델 추정으로 성공 저장의 절반 가까이가 최종 문서에서 사라진다. edit_count·revision 불변식은 통과한다"
-    measured: null
+    measured:
+      run: 2026-10-07T05-44-45Z_g01_naive-overwrite_i1
+      runs: [ 2026-10-07T05-44-45Z_g01_naive-overwrite_i1_r1, 2026-10-07T05-44-45Z_g01_naive-overwrite_i1_r2, 2026-10-07T05-44-45Z_g01_naive-overwrite_i1_r3 ]
+      summary: 위반 3/3회 발생(no-lost-update 499·492·497건) · 원장 성공 998·984·994건 · 처리량 66.3 req/s(65.6~66.5) · p95 10.26ms(9.71~10.34) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 499, 492, 497 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 998, 984, 994 ]
+      throughputRps: { median: 66.3, min: 65.6, max: 66.5 }
+      p95Ms: { median: 10.26, min: 9.71, max: 10.34 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.034, min: 0.033, max: 0.035 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 2 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "두 사람이 같은 version을 GET으로 받고 각자 고쳐 PUT 한다. 서버는 본문의 version을 보지 않고 WHERE id만으로 UPDATE 하므로, 늦게 온 저장이 앞사람 배열을 통째로 바꾼다. 두 UPDATE가 같은 순간에 오면 뒤쪽이 앞 트랜잭션의 행 잠금을 기다렸다가 최신 행으로 WHERE를 다시 평가하지만, 조건이 id뿐이라 그대로 통과한다. 원장·이력은 같은 트랜잭션에서 둘 다 커밋되고 edit_count도 DB가 +1 하므로 기록 쪽 불변식은 맞는다. 사라진 것은 문서 내용뿐이고, 그래서 원장 토큰과 최종 문서를 대조하는 no_lost_update만 위반을 잡는다"
     focus:
       - { file: strategies/naive-overwrite.strategy.ts, marker: where-id-only }
@@ -176,8 +190,22 @@ outcomes:
     situation: twenty-people-one-doc
     verdict: broken
     expected: "성공 저장의 대부분(단순 모델 추정 90% 이상)이 최종 문서에서 사라진다. 거절(409·423)이 없어 오류율 0%이고 처리량도 버전을 검사하는 strategy와 같거나 높게(행 쓰기 한계 근처) 나와, 응답 지표만 보면 좋아 보인다"
-    measured: null
-    why: "편집 50ms 사이에 다른 사람의 저장이 여러 번 끼어든다. 마지막으로 저장한 사람의 '읽은 시점 배열 + 내 토큰'만 남고 그 사이 커밋은 모두 덮인다. 서버가 2대여도 결과의 성격은 같다. 막는 장치가 애초에 어디에도 없다. 판정 근거가 응답이 아니라 DB에 남은 사실(원장 대 최종 문서)이어야 하는 이유가 가장 크게 드러나는 칸이다"
+    measured:
+      run: 2026-10-07T05-54-01Z_g01_naive-overwrite_i2
+      runs: [ 2026-10-07T05-54-01Z_g01_naive-overwrite_i2_r1, 2026-10-07T05-54-01Z_g01_naive-overwrite_i2_r2, 2026-10-07T05-54-01Z_g01_naive-overwrite_i2_r3 ]
+      summary: 위반 3/3회 발생(no-lost-update 10289·10258·4061건) · 원장 성공 10831·10799·4274건 · 처리량 719.9 req/s(284.9~722.1) · p95 6.92ms(6.62~235.66) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 10289, 10258, 4061 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 10831, 10799, 4274 ]
+      throughputRps: { median: 719.9, min: 284.9, max: 722.1 }
+      p95Ms: { median: 6.92, min: 6.62, max: 235.66 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.135, min: 0.129, max: 0.156 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 20 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "편집 50ms 사이에 다른 사람의 저장이 여러 번 끼어든다. 마지막으로 저장한 사람의 '읽은 시점 배열 + 내 토큰'만 남고 그 사이 커밋은 모두 덮인다. 서버가 2대여도 결과의 성격은 같다. 막는 장치가 애초에 어디에도 없다. 판정 근거가 응답이 아니라 DB에 남은 사실(원장 대 최종 문서)이어야 하는 이유가 가장 크게 드러나는 칸이다 실측: 사라진 비율은 세 번 모두 약 95%로 예상과 같다. 다만 3회째 실행만 처리량 285 req/s·p95 236ms로 다른 두 번(약 720 req/s·7ms)과 크게 달랐다(같은 조건, 원인 미확인 — 로컬 자원 경합으로 추정)."
     focus:
       - { file: strategies/naive-overwrite.strategy.ts, marker: where-id-only }
       - { file: strategies/naive-overwrite.strategy.ts, marker: native-bypasses-version }
@@ -187,7 +215,21 @@ outcomes:
     situation: zipf-100-docs
     verdict: broken
     expected: "위반은 줄지만 0이 아니다. 핫 문서(문서 1·2)에 몰려서 단순 모델 추정으로 성공 저장의 약 40%가 사라진다. 차가운 문서는 거의 깨지지 않는다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-09-21Z_g01_naive-overwrite_i2
+      runs: [ 2026-10-07T06-09-21Z_g01_naive-overwrite_i2_r1, 2026-10-07T06-09-21Z_g01_naive-overwrite_i2_r2, 2026-10-07T06-09-21Z_g01_naive-overwrite_i2_r3 ]
+      summary: 위반 3/3회 발생(no-lost-update 4287·4373·4460건) · 원장 성공 10382·10501·10598건 · 처리량 700.1 req/s(692.1~706.5) · p95 8.61ms(8~9.48) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 4287, 4373, 4460 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 10382, 10501, 10598 ]
+      throughputRps: { median: 700.1, min: 692.1, max: 706.5 }
+      p95Ms: { median: 8.61, min: 8, max: 9.48 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.113, min: 0.112, max: 0.121 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 20 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 100개, zipf(1.1) 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "문서가 많아도 Zipf(s=1.1)에서는 문서 1·2가 요청의 약 1/3을 받는다. 같은 문서를 같은 편집 창 안에 두 사람이 고치는 일이 핫 문서에서 계속 생긴다. 대부분의 문서가 멀쩡해 '거의 괜찮다'처럼 보이지만, 불변식은 평균이 아니라 한 건이라도 있으면 위반이다"
     focus:
       - { file: strategies/naive-overwrite.strategy.ts, marker: where-id-only }
@@ -197,7 +239,21 @@ outcomes:
     situation: lease-short-ttl
     verdict: broken
     expected: "편집이 150ms로 길어 거의 모든 저장 사이에 다른 저장이 끼고, 단순 모델 추정으로 성공 저장의 약 80%가 사라진다. lease TTL 설정은 이 strategy와 무관하다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-18-47Z_g01_naive-overwrite_i1
+      runs: [ 2026-10-07T06-18-47Z_g01_naive-overwrite_i1_r1, 2026-10-07T06-18-47Z_g01_naive-overwrite_i1_r2, 2026-10-07T06-18-47Z_g01_naive-overwrite_i1_r3 ]
+      summary: 위반 3/3회 발생(no-lost-update 732·704·728건) · 원장 성공 915·880·910건 · 처리량 60.7 req/s(58.7~61) · p95 19ms(18.94~19.84) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 732, 704, 728 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 915, 880, 910 ]
+      throughputRps: { median: 60.7, min: 58.7, max: 61 }
+      p95Ms: { median: 19, min: 18.94, max: 19.84 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.032, min: 0.031, max: 0.043 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 5 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 150ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "덮어쓰기 창은 GET부터 저장 커밋까지, 곧 편집 시간이다. 편집이 길수록 그 사이 커밋 수가 늘고 덮이는 수도 는다. 격리 수준을 올려도 소용없다. 읽기와 저장이 다른 트랜잭션이고 그 사이가 사람의 시간이기 때문이다. ttlMs는 edit-lease 파라미터라 여기에는 적용되지 않는다"
     focus:
       - { file: strategies/naive-overwrite.strategy.ts, marker: tx-boundary }
@@ -208,7 +264,22 @@ outcomes:
     situation: contention-window-30
     verdict: broken
     expected: "편집 0ms인데도 성공 저장의 대부분(단순 모델 추정 약 90%)이 사라진다. 주입된 30ms만큼 지연이 늘 뿐 거절은 없다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-28-03Z_g01_naive-overwrite_i1
+      runs: [ 2026-10-07T06-28-03Z_g01_naive-overwrite_i1_r1, 2026-10-07T06-28-03Z_g01_naive-overwrite_i1_r2, 2026-10-07T06-28-03Z_g01_naive-overwrite_i1_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 3/3회 발생(no-lost-update 7848·7894·7757건) · 원장 성공 8722·8772·8621건 · 처리량 581.5 req/s(574.7~584.8) · p95 34.94ms(34.48~35.52) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 7848, 7894, 7757 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 8722, 8772, 8621 ]
+      throughputRps: { median: 581.5, min: 574.7, max: 584.8 }
+      p95Ms: { median: 34.94, min: 34.48, max: 35.52 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.105, min: 0.105, max: 0.109 }
+      conditions: "로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 10 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 0ms · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
     why: "naive는 저장 트랜잭션 안에서 문서를 읽지 않으므로 주입 지점은 UPDATE 바로 앞이다. 30ms 동안 다른 사람의 GET·저장이 계속 지나가고, 이 저장은 GET 때 받은 옛 배열로 덮는다. 기다리는 동안 행 잠금은 없다(UPDATE 전이다). 경합 창이 사람의 편집 시간만이 아니라 서버 안 처리 시간에서도 생긴다는 것을 보인다"
     focus:
       - { file: strategies/naive-overwrite.strategy.ts, marker: tx-boundary }
@@ -221,8 +292,22 @@ outcomes:
     situation: two-people-one-doc
     verdict: broken
     expected: "PUT의 절반 가까이가 409이고, 버전만 바꾼 재시도가 거의 다 통과하면서 앞사람 토큰을 지운다. 단순 모델 추정으로 성공 저장의 절반 가까이가 사라진다(naive와 비슷한 규모)"
-    measured: null
-    why: "서버는 optimistic-version과 완전히 같고 버전 검사도 제대로 한다. 문제는 클라이언트다. 409 본문의 currentVersion만 받아 처음 읽은 옛 배열 그대로 다시 보내므로, 재시도는 lockVersion 비교와 WHERE version = 현재값을 모두 통과하고 앞사람 토큰이 빠진 배열로 저장된다. 서버·DB 입장에서는 정상 저장이라 막을 방법이 없다. version은 '무엇을 보고 고쳤는가'의 증거인데, 클라이언트가 보지 않은 버전을 들고 왔다"
+    measured:
+      run: 2026-10-07T05-44-45Z_g01_blind-retry_i1
+      runs: [ 2026-10-07T05-44-45Z_g01_blind-retry_i1_r1, 2026-10-07T05-44-45Z_g01_blind-retry_i1_r2, 2026-10-07T05-44-45Z_g01_blind-retry_i1_r3 ]
+      summary: 위반 3/3회 발생(no-lost-update 293·292·298건) · 원장 성공 786·785·788건 · 처리량 85.1 req/s(85.1~85.2) · p95 7.79ms(7.75~8) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 293, 292, 298 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 786, 785, 788 ]
+      throughputRps: { median: 85.1, min: 85.1, max: 85.2 }
+      p95Ms: { median: 7.79, min: 7.75, max: 8 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.036, min: 0.035, max: 0.037 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 2 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "서버는 optimistic-version과 완전히 같고 버전 검사도 제대로 한다. 문제는 클라이언트다. 409 본문의 currentVersion만 받아 처음 읽은 옛 배열 그대로 다시 보내므로, 재시도는 lockVersion 비교와 WHERE version = 현재값을 모두 통과하고 앞사람 토큰이 빠진 배열로 저장된다. 서버·DB 입장에서는 정상 저장이라 막을 방법이 없다. version은 '무엇을 보고 고쳤는가'의 증거인데, 클라이언트가 보지 않은 버전을 들고 왔다 실측은 예상과 달랐다: 사라진 비율이 naive-overwrite(약 50%)보다 낮은 약 37%(성공 785~788건 중 292~298건)였다. 추정: 첫 PUT이 409 없이 통과한 저장(PUT의 약 절반)은 아무것도 지우지 않고, 두 사람뿐이라 통과한 재시도 하나가 지우는 커밋도 상대의 1건 정도다."
     focus:
       - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
       - { file: strategies/optimistic-version.strategy.ts, marker: flush-where-version }
@@ -240,8 +325,22 @@ outcomes:
     situation: twenty-people-one-doc
     verdict: broken
     expected: "재시도(1회 상한) 사이에도 다른 저장이 끼어 재시도마저 409로 포기하는 편집이 많다. 통과한 재시도마다 그 사이 커밋이 사라져, 단순 모델 추정으로 성공 수는 optimistic-version보다 적고(약 1/3~2/3) 성공의 80% 이상이 최종 문서에 없다"
-    measured: null
-    why: "사람이 많으면 409 뒤 재시도까지의 몇 ms 사이에도 다른 커밋이 일어난다. 재시도가 통과하면 첫 GET 이후의 모든 커밋을 옛 배열로 덮는다. 409 비율이 높아 겉으로는 '경합을 잘 감지하는 시스템'처럼 보이지만 결과는 naive와 같은 종류의 유실이다. 서버 2대여도 같다"
+    measured:
+      run: 2026-10-07T05-54-01Z_g01_blind-retry_i2
+      runs: [ 2026-10-07T05-54-01Z_g01_blind-retry_i2_r2, 2026-10-07T05-54-01Z_g01_blind-retry_i2_r3 ]
+      summary: 위반 2/2회 발생(no-lost-update 1695·1847건) · 원장 성공 2172·2331건 · 처리량 970.8 req/s(964.7~976.8) · p95 8.81ms(8.48~9.14) · 실패율 0%(0~0) · 무효 1회 제외 · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 1695, 1847 ]
+        edit-count-matches-ledger: [ 0, 0 ]
+        revision-matches-ledger: [ 0, 0 ]
+        no-duplicate-request-id: [ 0, 0 ]
+      ledgerSuccess: [ 2172, 2331 ]
+      throughputRps: { median: 970.8, min: 964.7, max: 976.8 }
+      p95Ms: { median: 8.81, min: 8.48, max: 9.14 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.174, min: 0.174, max: 0.174 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 20 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "사람이 많으면 409 뒤 재시도까지의 몇 ms 사이에도 다른 커밋이 일어난다. 재시도가 통과하면 첫 GET 이후의 모든 커밋을 옛 배열로 덮는다. 409 비율이 높아 겉으로는 '경합을 잘 감지하는 시스템'처럼 보이지만 결과는 naive와 같은 종류의 유실이다. 서버 2대여도 같다 실측은 예상과 달랐다: 성공 수가 optimistic-version보다 오히려 많았다(유효 2회 2,172·2,331건 대 1,886~1,932건). 사라진 비율은 약 78%로 예상(80% 이상)과 비슷하다. 추정: 맹목 재시도는 재GET·재적용 없이 곧바로 보내 창이 몇 ms뿐이라 통과율이 높고, optimistic-version은 재GET~재PUT 왕복 동안 다시 409를 맞아 재시도 3회를 소진하는 일이 많다."
     focus:
       - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
       - { file: strategies/optimistic-version.strategy.ts, marker: lock-optimistic }
@@ -251,7 +350,21 @@ outcomes:
     situation: zipf-100-docs
     verdict: broken
     expected: "핫 문서에서 409 → 맹목 재시도가 일어날 때마다 유실. 단순 모델 추정으로 성공 저장의 35~40%가 사라진다. 차가운 문서는 409도 유실도 거의 없다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-09-21Z_g01_blind-retry_i2
+      runs: [ 2026-10-07T06-09-21Z_g01_blind-retry_i2_r1, 2026-10-07T06-09-21Z_g01_blind-retry_i2_r2, 2026-10-07T06-09-21Z_g01_blind-retry_i2_r3 ]
+      summary: 위반 3/3회 발생(no-lost-update 2737·2988·3089건) · 원장 성공 8729·9047·9056건 · 처리량 866.6 req/s(852.9~884) · p95 5.93ms(5.37~6.92) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 2737, 2988, 3089 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 8729, 9047, 9056 ]
+      throughputRps: { median: 866.6, min: 852.9, max: 884 }
+      p95Ms: { median: 5.93, min: 5.37, max: 6.92 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.141, min: 0.141, max: 0.142 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 20 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 100개, zipf(1.1) 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "재시도는 충돌이 난 곳(핫 문서)에서만 일어나므로 유실도 거기에 몰린다. 409가 날 때마다 그 사이 커밋된 수정이 하나 이상 사라진다고 보면 된다. 낙관 락 서버를 갖췄어도 클라이언트의 재시도 규약이 틀리면 보호가 사라진다"
     focus:
       - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
@@ -261,7 +374,21 @@ outcomes:
     situation: lease-short-ttl
     verdict: broken
     expected: "편집 150ms 동안 거의 늘 다른 저장이 끼어 첫 PUT 대부분이 409이고, 맹목 재시도가 통과하면서 크게 유실된다(단순 모델 추정: 성공의 절반 이상). ttlMs는 무관하다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-18-47Z_g01_blind-retry_i1
+      runs: [ 2026-10-07T06-18-47Z_g01_blind-retry_i1_r1, 2026-10-07T06-18-47Z_g01_blind-retry_i1_r2, 2026-10-07T06-18-47Z_g01_blind-retry_i1_r3 ]
+      summary: 위반 3/3회 발생(no-lost-update 149·158·154건) · 원장 성공 324·336·332건 · 처리량 84.3 req/s(82.8~85.4) · p95 16.65ms(16~18.05) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 149, 158, 154 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 324, 336, 332 ]
+      throughputRps: { median: 84.3, min: 82.8, max: 85.4 }
+      p95Ms: { median: 16.65, min: 16, max: 18.05 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.033, min: 0.032, max: 0.033 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 5 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 150ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "편집이 길수록 첫 PUT이 ①(메모리 비교)에서 409가 날 확률이 높고, 바로 이어지는 재시도는 창이 몇 ms라 대개 통과한다. 통과하는 순간 150ms 동안 쌓인 앞사람 수정이 옛 배열에 덮인다. ttlMs는 edit-lease 파라미터라 여기에는 적용되지 않는다"
     focus:
       - { file: strategies/optimistic-version.strategy.ts, marker: lock-optimistic }
@@ -272,8 +399,23 @@ outcomes:
     situation: contention-window-30
     verdict: broken
     expected: "같은 순간 들어온 저장끼리 30ms 창에서 부딪쳐 409가 대부분이고 재시도도 자주 409로 끝나 성공은 적다. 그래도 재시도로 통과한 저장이 앞사람 토큰을 지워 위반은 0이 아니다(단순 모델 추정: 성공의 약 절반)"
-    measured: null
-    why: "재시도 PUT도 트랜잭션 안에서 읽고(①) 30ms 기다린 뒤 flush(②) 한다. 그 사이 다른 커밋이 있으면 ②에서 0행이 되고 재시도 상한(1회) 때문에 포기한다. 그 틈을 피한 재시도만 통과하는데, 통과하면 본문이 첫 GET 시점 배열이라 그 사이 커밋을 지운다"
+    measured:
+      run: 2026-10-07T06-28-03Z_g01_blind-retry_i1
+      runs: [ 2026-10-07T06-28-03Z_g01_blind-retry_i1_r1, 2026-10-07T06-28-03Z_g01_blind-retry_i1_r2, 2026-10-07T06-28-03Z_g01_blind-retry_i1_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 3/3회 발생(no-lost-update 111·130·119건) · 원장 성공 846·830·846건 · 처리량 433.5 req/s(425.1~433.7) · p95 37.26ms(37.03~38.07) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 111, 130, 119 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 846, 830, 846 ]
+      throughputRps: { median: 433.5, min: 425.1, max: 433.7 }
+      p95Ms: { median: 37.26, min: 37.03, max: 38.07 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.086, min: 0.085, max: 0.086 }
+      conditions: "로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 10 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 0ms · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
+    why: "재시도 PUT도 트랜잭션 안에서 읽고(①) 30ms 기다린 뒤 flush(②) 한다. 그 사이 다른 커밋이 있으면 ②에서 0행이 되고 재시도 상한(1회) 때문에 포기한다. 그 틈을 피한 재시도만 통과하는데, 통과하면 본문이 첫 GET 시점 배열이라 그 사이 커밋을 지운다 실측은 예상과 달랐다: 사라진 비율이 약 14%(성공 830~846건 중 111~130건)로 예상(약 절반)보다 훨씬 낮았다. 추정: 주입된 30ms가 재시도 PUT에도 다시 걸려 재시도 대부분이 또 409로 끝나고(409 약 7,600건), 통과한 소수의 재시도만 앞사람 토큰을 지운다."
     focus:
       - { file: strategies/optimistic-version.strategy.ts, marker: flush-where-version }
       - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
@@ -284,7 +426,21 @@ outcomes:
     situation: two-people-one-doc
     verdict: ok
     expected: "위반 0. PUT의 절반 가까이가 409지만(편집 50ms 안에 상대가 거의 늘 먼저 저장한다, 단순 모델 추정) 다시 GET → 재적용 → PUT으로 거의 다 성공한다. 409는 대부분 ①(메모리 비교)에서 난다"
-    measured: null
+    measured:
+      run: 2026-10-07T05-44-45Z_g01_optimistic-version_i1
+      runs: [ 2026-10-07T05-44-45Z_g01_optimistic-version_i1_r1, 2026-10-07T05-44-45Z_g01_optimistic-version_i1_r2, 2026-10-07T05-44-45Z_g01_optimistic-version_i1_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 950·939·944건 · 처리량 125.1 req/s(124.3~125.8) · p95 6.72ms(6.44~6.82) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 950, 939, 944 ]
+      throughputRps: { median: 125.1, min: 124.3, max: 125.8 }
+      p95Ms: { median: 6.72, min: 6.44, max: 6.82 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.048, min: 0.047, max: 0.048 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 2 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "GET과 PUT 사이에 상대가 커밋했으면 트랜잭션 안 findOne이 읽은 version이 본문 version과 달라 ①에서 바로 OptimisticLockError가 난다(SQL은 SELECT 하나). 두 PUT이 같은 순간에 와서 ①을 둘 다 통과해도 flush의 UPDATE … WHERE version = ?에서 뒤쪽이 행 잠금을 기다린 뒤 최신 행으로 재평가돼 0행(②)이다. 409를 받은 클라이언트는 최신본을 다시 읽어 내 토큰을 붙이므로 앞사람 수정이 남는다. edit_count를 앱이 계산한 상수(읽은 값 + 1)로 써도 안전한 것은 WHERE version이 같은 버전에서 출발한 쓰기를 하나만 통과시키기 때문이다"
     focus:
       - { file: strategies/optimistic-version.strategy.ts, marker: lock-optimistic }
@@ -301,8 +457,22 @@ outcomes:
     situation: twenty-people-one-doc
     verdict: ok
     expected: "위반 0. 409가 성공 수와 비슷하거나 더 많다(단순 모델 추정: 성공 1건당 1~3건, 서버 지연·지터가 크면 위쪽, 실측으로 확인), 성공 처리량은 사람 수에 비례해 늘지 않고 문서 한 행의 쓰기 한계 근처에서 멈춘다. 재시도 상한(3회)을 다 쓰고 포기하는 편집은 소수"
-    measured: null
-    why: "사람이 늘면 편집 50ms 안에 다른 커밋이 여러 번 일어나 첫 PUT은 거의 늘 ①에서 409다. 다시 GET → 곧바로 PUT 하는 재시도는 창이 몇 ms라 대부분 통과한다. 같은 행에 대한 UPDATE는 행 잠금으로 한 번에 하나씩이고, 409로 버려진 GET·PUT이 일을 늘리므로 성공 처리량에는 천장이 있다. 판정은 DB 행이 하므로 서버 2대여도 같다"
+    measured:
+      run: 2026-10-07T05-54-01Z_g01_optimistic-version_i2
+      runs: [ 2026-10-07T05-54-01Z_g01_optimistic-version_i2_r1, 2026-10-07T05-54-01Z_g01_optimistic-version_i2_r2, 2026-10-07T05-54-01Z_g01_optimistic-version_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 1930·1886·1932건 · 처리량 1012 req/s(977.1~1018.8) · p95 46.92ms(46.87~51.17) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 1930, 1886, 1932 ]
+      throughputRps: { median: 1012, min: 977.1, max: 1018.8 }
+      p95Ms: { median: 46.92, min: 46.87, max: 51.17 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.289, min: 0.275, max: 0.29 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 20 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "사람이 늘면 편집 50ms 안에 다른 커밋이 여러 번 일어나 첫 PUT은 거의 늘 ①에서 409다. 다시 GET → 곧바로 PUT 하는 재시도는 창이 몇 ms라 대부분 통과한다. 같은 행에 대한 UPDATE는 행 잠금으로 한 번에 하나씩이고, 409로 버려진 GET·PUT이 일을 늘리므로 성공 처리량에는 천장이 있다. 판정은 DB 행이 하므로 서버 2대여도 같다 실측은 예상과 달랐다: 409가 성공 1건당 약 6건(첫 반복 409 12,257건 대 성공 1,930건)으로 예상(1~3건)보다 많았다. 추정: 서버 2대·20명이 한 행에 몰려 재GET~재PUT 왕복 동안 다른 커밋이 끼는 일이 단순 모델 가정보다 잦다."
     focus:
       - { file: strategies/optimistic-version.strategy.ts, marker: two-failure-points }
       - { file: strategies/optimistic-version.strategy.ts, marker: flush-where-version }
@@ -322,7 +492,21 @@ outcomes:
     situation: zipf-100-docs
     verdict: ok
     expected: "위반 0. 409는 핫 문서에 몰리고 대부분 재시도 한 번에 성공한다. 포기는 거의 없다(단순 모델 추정)"
-    measured: null
+    measured:
+      run: 2026-10-07T06-09-21Z_g01_optimistic-version_i2
+      runs: [ 2026-10-07T06-09-21Z_g01_optimistic-version_i2_r1, 2026-10-07T06-09-21Z_g01_optimistic-version_i2_r2, 2026-10-07T06-09-21Z_g01_optimistic-version_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 9321·9289·9700건 · 처리량 1089.8 req/s(1089.1~1107.1) · p95 10.76ms(8.71~10.84) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 9321, 9289, 9700 ]
+      throughputRps: { median: 1089.8, min: 1089.1, max: 1107.1 }
+      p95Ms: { median: 10.76, min: 8.71, max: 10.84 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.227, min: 0.222, max: 0.232 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 20 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 100개, zipf(1.1) 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "차가운 문서는 충돌이 거의 없어 GET → PUT 한 번에 끝난다. 핫 문서에서만 ①·②가 걸리고, 재시도 창이 짧아 회복된다. 정합성은 문서 수·분포와 상관없이 같은 방식(WHERE version)으로 지켜진다"
     focus:
       - { file: strategies/optimistic-version.strategy.ts, marker: flush-where-version }
@@ -333,7 +517,21 @@ outcomes:
     situation: lease-short-ttl
     verdict: ok
     expected: "위반 0. 편집이 150ms로 길어 첫 PUT의 대부분이 409지만 재시도로 거의 다 회복한다(단순 모델 추정). ttlMs는 무관하다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-18-47Z_g01_optimistic-version_i1
+      runs: [ 2026-10-07T06-18-47Z_g01_optimistic-version_i1_r1, 2026-10-07T06-18-47Z_g01_optimistic-version_i1_r2, 2026-10-07T06-18-47Z_g01_optimistic-version_i1_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 844·825·820건 · 처리량 158.3 req/s(156.4~159.6) · p95 6.91ms(6.66~7.04) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 844, 825, 820 ]
+      throughputRps: { median: 158.3, min: 156.4, max: 159.6 }
+      p95Ms: { median: 6.91, min: 6.66, max: 7.04 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.046, min: 0.046, max: 0.046 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 5 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 150ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "낙관 락은 편집 동안 아무것도 잡지 않으므로 편집이 길어도 다른 사람을 막지 않는다. 대신 편집이 길수록 그 사이 커밋이 늘어 409가 는다. 재적용(최신 배열 뒤에 내 토큰 붙이기)이 순간이라 회복이 싸다. 실제 편집에서 재적용이 사람의 병합 작업이라면 이 409가 곧 사용자의 수고다"
     focus:
       - { file: strategies/optimistic-version.strategy.ts, marker: lock-optimistic }
@@ -344,7 +542,22 @@ outcomes:
     situation: contention-window-30
     verdict: rejects
     expected: "위반 0. 409가 성공보다 훨씬 많고, 재시도 3회를 다 쓰고 포기하는 편집이 성공보다 많을 수 있다(단순 모델 추정: 성공은 초당 수십 건). 409의 대부분이 ①이 아니라 ②(flush 0행)에서 난다(conflict 이벤트의 at=flush)"
-    measured: null
+    measured:
+      run: 2026-10-07T06-28-03Z_g01_optimistic-version_i1
+      runs: [ 2026-10-07T06-28-03Z_g01_optimistic-version_i1_r1, 2026-10-07T06-28-03Z_g01_optimistic-version_i1_r2, 2026-10-07T06-28-03Z_g01_optimistic-version_i1_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 0 (3/3회) · 원장 성공 832·847·857건 · 처리량 621.5 req/s(609.5~630.4) · p95 36.73ms(36.2~37.59) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 832, 847, 857 ]
+      throughputRps: { median: 621.5, min: 609.5, max: 630.4 }
+      p95Ms: { median: 36.73, min: 36.2, max: 37.59 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.111, min: 0.11, max: 0.114 }
+      conditions: "로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 10 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 0ms · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
     why: "주입 지점이 트랜잭션 안 읽기(①) 뒤, flush(②) 앞이다. 같은 순간 들어온 저장들이 ①을 함께 통과한 뒤 30ms 동안 서로 모른 채 기다린다. 먼저 flush 한 하나만 1행이고 나머지는 행 잠금을 기다렸다가 재평가에서 0행이 된다. 재시도도 같은 30ms 창을 다시 지나므로 또 진다. 실패 지점이 두 개인 이유가 여기서 보인다. ①은 미리 걸러 주는 최적화일 뿐이고 동시 도착을 가르는 진짜 보장은 ②다"
     focus:
       - { file: strategies/optimistic-version.strategy.ts, marker: flush-where-version }
@@ -357,7 +570,21 @@ outcomes:
     situation: two-people-one-doc
     verdict: ok
     expected: "위반 0. 409는 두 사람이 같은 필드를 골랐을 때만 난다(필드 4개 중 무작위라 단순 모델 추정 optimistic-version의 약 1/4)"
-    measured: null
+    measured:
+      run: 2026-10-07T05-44-45Z_g01_field-merge_i1
+      runs: [ 2026-10-07T05-44-45Z_g01_field-merge_i1_r1, 2026-10-07T05-44-45Z_g01_field-merge_i1_r2, 2026-10-07T05-44-45Z_g01_field-merge_i1_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 988·990·996건 · 처리량 82.3 req/s(81.3~83.1) · p95 8.43ms(8.31~8.72) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 988, 990, 996 ]
+      throughputRps: { median: 82.3, min: 81.3, max: 83.1 }
+      p95Ms: { median: 8.43, min: 8.31, max: 8.72 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.037, min: 0.037, max: 0.037 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 2 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "PATCH는 바뀐 필드 하나만 SET 하고, WHERE는 문서 version이 아니라 그 필드가 마지막으로 바뀐 버전을 본다. 다른 필드를 동시에 고친 UPDATE는 행 잠금을 기다렸다가 최신 행으로 재평가돼도 그 필드의 field_versions가 그대로라 통과하고, SET에 없는 앞사람 필드는 최신 값 그대로 남는다. 같은 필드라면 앞사람이 field_versions를 올렸으므로 0행 → 409다"
     focus:
       - { file: strategies/field-merge.strategy.ts, marker: field-version-where }
@@ -374,8 +601,22 @@ outcomes:
     situation: twenty-people-one-doc
     verdict: ok
     expected: "위반 0. 같은 필드 경쟁자가 약 5명이라 409는 여전히 많고(단순 모델 추정 optimistic-version과 비슷한 수준까지. 근거: 편집 50ms 동안 문서 전체 커밋이 십수 건이면 같은 필드 커밋도 몇 건은 끼어 첫 PATCH가 대부분 409가 된다. 재시도 창 몇 ms 안에 같은 필드 커밋이 낄 확률은 1/4로 줄어 회복은 쉽다) 행 잠금 직렬화로 처리량 한계도 같다. 재시도 끝에 포기하는 편집은 optimistic-version보다 적다(추정)"
-    measured: null
-    why: "필드 단위 병합은 충돌 단위를 줄일 뿐, 행 하나에 쓰기가 몰리는 구조는 그대로다. 모든 PATCH가 같은 행을 UPDATE 하므로 행 잠금으로 줄을 서고 처리량 천장은 optimistic-version과 같다. 같은 필드 경쟁자가 많으면 409 이득도 작아진다. 이 팩의 PUT(문서 전체)은 모든 필드 버전을 올려서, PUT과 PATCH가 섞이면 PUT 이전 버전을 본 PATCH는 409가 된다"
+    measured:
+      run: 2026-10-07T05-54-01Z_g01_field-merge_i2
+      runs: [ 2026-10-07T05-54-01Z_g01_field-merge_i2_r1, 2026-10-07T05-54-01Z_g01_field-merge_i2_r2, 2026-10-07T05-54-01Z_g01_field-merge_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 3669·3491·3602건 · 처리량 975.6 req/s(948.7~991.6) · p95 48.02ms(46.35~50.85) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 3669, 3491, 3602 ]
+      throughputRps: { median: 975.6, min: 948.7, max: 991.6 }
+      p95Ms: { median: 48.02, min: 46.35, max: 50.85 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.325, min: 0.314, max: 0.33 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 20 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "필드 단위 병합은 충돌 단위를 줄일 뿐, 행 하나에 쓰기가 몰리는 구조는 그대로다. 모든 PATCH가 같은 행을 UPDATE 하므로 행 잠금으로 줄을 서고 처리량 천장은 optimistic-version과 같다. 같은 필드 경쟁자가 많으면 409 이득도 작아진다. 이 팩의 PUT(문서 전체)은 모든 필드 버전을 올려서, PUT과 PATCH가 섞이면 PUT 이전 버전을 본 PATCH는 409가 된다 실측은 예상과 달랐다: 409(첫 반복 10,626건)는 optimistic-version(12,257건)과 비슷했지만 성공은 약 1.9배(3,491~3,669건 대 1,886~1,932건)로 처리량 한계가 같지 않았다. 추정: 재시도 PATCH는 바뀐 필드만 검사해 재충돌이 1/4로 줄어 재시도가 거의 한 번에 통과하고, 포기 없이 행 쓰기 한계까지 성공을 채운다."
     focus:
       - { file: strategies/field-merge.strategy.ts, marker: same-field-409 }
       - { file: strategies/field-merge.strategy.ts, marker: put-bumps-all }
@@ -395,7 +636,21 @@ outcomes:
     situation: zipf-100-docs
     verdict: ok
     expected: "위반 0. 버전 충돌로 409를 내는 다른 strategy(optimistic-version·blind-retry)보다 409가 적다(naive-overwrite와 edit-lease는 이 상황에서 409를 내지 않으므로 비교 대상이 아니다)(단순 모델 추정 optimistic-version의 절반 안팎). 근거: 충돌하려면 같은 문서에 더해 같은 필드(4개 중 1개)까지 겹쳐야 하고, 핫 문서에 몰린 경쟁자 몇 명이 필드로 갈리면 그만큼 409가 빠진다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-09-21Z_g01_field-merge_i2
+      runs: [ 2026-10-07T06-09-21Z_g01_field-merge_i2_r1, 2026-10-07T06-09-21Z_g01_field-merge_i2_r2, 2026-10-07T06-09-21Z_g01_field-merge_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 10804·10708·10591건 · 처리량 919.1 req/s(913.2~939.2) · p95 5.02ms(4.44~5.49) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 10804, 10708, 10591 ]
+      throughputRps: { median: 919.1, min: 913.2, max: 939.2 }
+      p95Ms: { median: 5.02, min: 4.44, max: 5.49 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.168, min: 0.165, max: 0.176 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 20 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 100개, zipf(1.1) 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "충돌하려면 같은 문서 · 같은 필드 · 같은 편집 창이 모두 겹쳐야 한다. 핫 문서에서도 필드가 갈리면 둘 다 성공한다. 단, 필드 경계가 의미 경계와 맞을 때만 이 이득이 정당하다. 서로 의존하는 필드(예: 금액과 합계)를 따로 병합하면 각각은 맞아도 합친 문서가 틀릴 수 있고, no_lost_update는 그것을 잡지 못한다"
     focus:
       - { file: strategies/field-merge.strategy.ts, marker: field-version-where }
@@ -406,8 +661,22 @@ outcomes:
     situation: lease-short-ttl
     verdict: ok
     expected: "위반 0. 편집이 길어 409가 많지만 optimistic-version보다 적고(단순 모델 추정 약 2/3. 근거: 경쟁자가 4명뿐이라 150ms 창 안에 다른 커밋은 거의 늘 끼지만 같은 필드 커밋은 그중 일부라, 1/4까지는 줄지 않는다) 재시도로 회복한다. ttlMs는 무관하다"
-    measured: null
-    why: "편집 150ms 동안 같은 필드를 다른 사람이 고칠 확률은 문서 전체가 바뀔 확률보다 낮다. 다른 필드의 커밋은 이 PATCH를 막지 않는다. ttlMs는 edit-lease 파라미터라 여기에는 적용되지 않는다"
+    measured:
+      run: 2026-10-07T06-18-47Z_g01_field-merge_i1
+      runs: [ 2026-10-07T06-18-47Z_g01_field-merge_i1_r1, 2026-10-07T06-18-47Z_g01_field-merge_i1_r2, 2026-10-07T06-18-47Z_g01_field-merge_i1_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 892·890·894건 · 처리량 110.2 req/s(109.6~110.9) · p95 13.47ms(13.25~13.85) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 892, 890, 894 ]
+      throughputRps: { median: 110.2, min: 109.6, max: 110.9 }
+      p95Ms: { median: 13.47, min: 13.25, max: 13.85 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.041, min: 0.04, max: 0.041 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 5 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 150ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
+    why: "편집 150ms 동안 같은 필드를 다른 사람이 고칠 확률은 문서 전체가 바뀔 확률보다 낮다. 다른 필드의 커밋은 이 PATCH를 막지 않는다. ttlMs는 edit-lease 파라미터라 여기에는 적용되지 않는다 실측: 위반 0. 409는 optimistic-version의 약 1/2(첫 반복 758건 대 1,472건)로 예상(약 2/3)보다 조금 적었다."
     focus:
       - { file: strategies/field-merge.strategy.ts, marker: field-version-where }
       - { file: strategies/field-merge.strategy.ts, marker: same-field-409 }
@@ -417,7 +686,22 @@ outcomes:
     situation: contention-window-30
     verdict: rejects
     expected: "위반 0. 같은 필드를 고른 저장끼리만 부딪치므로 optimistic-version보다 성공이 많지만(단순 모델 추정 약 3배) 409와 재시도 끝 포기는 여전히 많다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-28-03Z_g01_field-merge_i1
+      runs: [ 2026-10-07T06-28-03Z_g01_field-merge_i1_r1, 2026-10-07T06-28-03Z_g01_field-merge_i1_r2, 2026-10-07T06-28-03Z_g01_field-merge_i1_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 0 (3/3회) · 원장 성공 2528·2484·2464건 · 처리량 537.7 req/s(537~546.3) · p95 40.32ms(39.18~40.45) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 2528, 2484, 2464 ]
+      throughputRps: { median: 537.7, min: 537, max: 546.3 }
+      p95Ms: { median: 40.32, min: 39.18, max: 40.45 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.137, min: 0.137, max: 0.137 }
+      conditions: "로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 10 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 0ms · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
     why: "주입된 30ms는 트랜잭션 안 UPDATE 앞이라 그동안 행 잠금은 없다. 그 사이 같은 필드에 다른 커밋이 있으면 재평가에서 0행이다. 필드 4개가 각자 줄을 서는 셈이라 문서 전체 버전을 비교하는 optimistic-version보다 낫지만, 한 필드 안에서는 같은 문제다"
     focus:
       - { file: strategies/field-merge.strategy.ts, marker: tx-boundary }
@@ -430,7 +714,21 @@ outcomes:
     situation: two-people-one-doc
     verdict: ok
     expected: "위반 0, 409 0. 한 사람이 편집하는 동안 다른 사람은 423을 받고 20ms 간격으로 다시 노크한다. 편집이 직렬화되어 문서 처리량은 optimistic-version의 약 절반(단순 모델 추정)"
-    measured: null
+    measured:
+      run: 2026-10-07T05-44-45Z_g01_edit-lease_i1
+      runs: [ 2026-10-07T05-44-45Z_g01_edit-lease_i1_r1, 2026-10-07T05-44-45Z_g01_edit-lease_i1_r2, 2026-10-07T05-44-45Z_g01_edit-lease_i1_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 494·494·489건 · 처리량 108.5 req/s(107.3~108.8) · p95 5.63ms(5.59~6.12) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 494, 494, 489 ]
+      throughputRps: { median: 108.5, min: 107.3, max: 108.8 }
+      p95Ms: { median: 5.63, min: 5.59, max: 6.12 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.039, min: 0.038, max: 0.04 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 2 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "acquire는 '비었거나 · 내 것이거나 · 만료됐으면 가져간다'를 UPDATE 한 문장(자동 커밋)으로 한다. 두 사람이 동시에 acquire 하면 뒤 UPDATE가 최신 행으로 재평가돼 0행이 된다. 잠금을 쥔 사람만 GET → 편집 → 저장하므로 같은 버전을 두 사람이 읽는 장면 자체가 없다. 대가는 기다림이다. 423은 저장 실패가 아니라 '지금 다른 사람이 쓰는 중, 나중에 다시'라 409와 코드를 나눴다. acquire·save·release가 각각 version을 +1 하므로(엔티티에 version 컬럼이 매핑돼 있다) 편집 한 번에 version이 3씩 오른다"
     focus:
       - { file: strategies/edit-lease.strategy.ts, marker: acquire-autocommit }
@@ -449,7 +747,21 @@ outcomes:
     situation: twenty-people-one-doc
     verdict: slow
     expected: "위반 0. 20명이 한 문서를 한 명씩 편집하므로 문서 처리량이 초당 약 1 / (편집 50ms + 폴링 틈), 곧 15~20건으로 고정되고(단순 모델 추정) 423이 성공의 수십 배 찍힌다. 대기 p95가 초 단위로 오르고 10초 대기 상한에 걸려 포기하는 사람이 생길 수 있다"
-    measured: null
+    measured:
+      run: 2026-10-07T05-54-01Z_g01_edit-lease_i2
+      runs: [ 2026-10-07T05-54-01Z_g01_edit-lease_i2_r1, 2026-10-07T05-54-01Z_g01_edit-lease_i2_r2, 2026-10-07T05-54-01Z_g01_edit-lease_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 525·527·523건 · 처리량 913.2 req/s(895.2~924.9) · p95 3.95ms(3.92~4.08) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 525, 527, 523 ]
+      throughputRps: { median: 913.2, min: 895.2, max: 924.9 }
+      p95Ms: { median: 3.95, min: 3.92, max: 4.08 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.109, min: 0.106, max: 0.115 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 20 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "서버는 줄을 세우지 않는다. 423을 받은 사람은 각자 20ms마다 다시 노크하고, 잠금이 풀린 순간 먼저 노크한 사람이 가져간다. 도착 순서(FIFO)가 보장되지 않으니 운 나쁜 사람은 계속 밀릴 수 있다(굶주림). 기다리는 동안 DB 커넥션·트랜잭션을 쥐지 않는 것은 장점이다(G02의 행 잠금 대기는 커넥션을 쥔다). 잠금이 DB 행에 있으므로 서버 2대여도 같다"
     focus:
       - { file: strategies/edit-lease.strategy.ts, marker: held-423 }
@@ -470,7 +782,21 @@ outcomes:
     situation: zipf-100-docs
     verdict: slow
     expected: "위반 0. 차가운 문서는 바로 잠금을 얻지만 문서 1·2에 사람이 쌓여 그 문서의 대기가 초 단위로 길어진다. 닫힌 모델이라 핫 문서에서 기다리는 사람이 늘수록 전체 처리량도 optimistic-version보다 크게 낮다(단순 모델 추정 약 1/4)"
-    measured: null
+    measured:
+      run: 2026-10-07T06-09-21Z_g01_edit-lease_i2
+      runs: [ 2026-10-07T06-09-21Z_g01_edit-lease_i2_r1, 2026-10-07T06-09-21Z_g01_edit-lease_i2_r2, 2026-10-07T06-09-21Z_g01_edit-lease_i2_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 2149·2214·2148건 · 처리량 1026.3 req/s(1024.7~1031) · p95 3.07ms(2.88~3.23) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 2149, 2214, 2148 ]
+      throughputRps: { median: 1026.3, min: 1024.7, max: 1031 }
+      p95Ms: { median: 3.07, min: 2.88, max: 3.23 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.118, min: 0.117, max: 0.119 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 2대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 20 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 100개, zipf(1.1) 분포, 편집 50ms · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "닫힌 모델에서는 기다리는 사람이 다른 일을 하지 않는다. 핫 문서의 잠금 대기에 VU가 묶이면 차가운 문서로 갈 요청도 함께 줄어 전체 처리량이 떨어진다. 낙관 락은 같은 핫 문서에서 409를 내고 바로 재시도하지만, lease는 편집 시간 전체를 한 줄로 세운다. 경합이 잦은 문서에 lease를 쓰면 그 문서의 처리량은 1 / 편집 시간에 묶인다"
     focus:
       - { file: strategies/edit-lease.strategy.ts, marker: held-423 }
@@ -481,7 +807,21 @@ outcomes:
     situation: lease-short-ttl
     verdict: rejects
     expected: "위반 0인데 저장 성공이 거의 0. 편집(150ms)이 TTL(100ms)보다 길어 모든 보유자의 저장이 만료 뒤에 도착한다. 그 사이 다른 사람이 만료된 잠금을 회수(fence + 1)하므로 대부분 409 lease_lost, 아무도 회수하지 않았으면 lease_expired다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-18-47Z_g01_edit-lease_i1
+      runs: [ 2026-10-07T06-18-47Z_g01_edit-lease_i1_r1, 2026-10-07T06-18-47Z_g01_edit-lease_i1_r2, 2026-10-07T06-18-47Z_g01_edit-lease_i1_r3 ]
+      summary: 위반 0 (3/3회) · 원장 성공 0·0·0건 · 처리량 186 req/s(185.1~187.2) · p95 5.27ms(4.64~5.54) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 0, 0, 0 ]
+      throughputRps: { median: 186, min: 185.1, max: 187.2 }
+      p95Ms: { median: 5.27, min: 4.64, max: 5.54 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.047, min: 0.046, max: 0.049 }
+      conditions: 로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 5 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 150ms · 기본값과 다른 strategy 파라미터 {"ttlMs":100} · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용
     why: "TTL은 '쥔 채 사라진 사람'의 잠금을 회수하는 장치인데, 편집보다 짧으면 정상 편집 중인 사람의 잠금까지 회수한다. 늦은 보유자는 아직 잠금을 쥐었다고 믿고 저장하지만 save의 WHERE locked_by · fence · lease_until > clock_timestamp()가 0행이 되고, 같은 트랜잭션에서 다시 읽어 lease_lost와 lease_expired를 가린 뒤 롤백한다(원장에 흔적 없음). 그 뒤 release도 fence가 달라 새 보유자의 잠금을 풀지 못한다. 정합성은 지켜지지만 아무도 저장하지 못한다. TTL은 최대 편집 시간 + 여유보다 길어야 하고, 너무 길면 이탈자의 잠금 회수가 늦어진다(긴 편집은 같은 holder의 재acquire로 연장할 수 있지만 fence가 오르므로 새 fence를 써야 한다)"
     focus:
       - { file: strategies/edit-lease.strategy.ts, marker: save-where-fence }
@@ -499,7 +839,22 @@ outcomes:
     situation: contention-window-30
     verdict: slow
     expected: "위반 0. 주입된 30ms가 저장 트랜잭션 안, 곧 잠금(lease) 보유 시간에 더해져 문서 처리량이 초당 약 25~30건으로 고정되고(단순 모델 추정) 나머지 9명은 423을 받으며 기다린다. TTL(30초)보다 훨씬 짧아 만료는 없다"
-    measured: null
+    measured:
+      run: 2026-10-07T06-28-03Z_g01_edit-lease_i1
+      runs: [ 2026-10-07T06-28-03Z_g01_edit-lease_i1_r1, 2026-10-07T06-28-03Z_g01_edit-lease_i1_r2, 2026-10-07T06-28-03Z_g01_edit-lease_i1_r3 ]
+      injected: { contentionWindowMs: 30 }
+      summary: 경합 창 30ms 주입됨 · 위반 0 (3/3회) · 원장 성공 775·783·763건 · 처리량 474.3 req/s(463.5~479.4) · p95 33.16ms(32.84~33.49) · 실패율 0%(0~0) · 로컬 맥 상대 비교
+      violations:
+        no-lost-update: [ 0, 0, 0 ]
+        edit-count-matches-ledger: [ 0, 0, 0 ]
+        revision-matches-ledger: [ 0, 0, 0 ]
+        no-duplicate-request-id: [ 0, 0, 0 ]
+      ledgerSuccess: [ 775, 783, 763 ]
+      throughputRps: { median: 474.3, min: 463.5, max: 479.4 }
+      p95Ms: { median: 33.16, min: 32.84, max: 33.49 }
+      failRatePct: { median: 0, min: 0, max: 0 }
+      k6CpuAvgRatio: { median: 0.076, min: 0.076, max: 0.076 }
+      conditions: "로컬 맥(unknown, Docker 14 vCPU / 10.7 GiB, profile default, cpuset 2-5) · app 1대(각 cpus 1) · postgres cpus 2 · nginx round-robin · closed constant-vus 10 × 30s · 웜업 5s(별도 실행) · 3회 반복 · k6 timeout 10000ms · 문서 1개, 균등 분포, 편집 0ms · 경합 창 지연 30ms 주입됨(after-read: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안) · 절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용"
     why: "lease는 편집 시간 + 저장 처리 시간 동안 쥐어진다. 서버 안 처리가 느려지면(경합 창, DB 지연) 그대로 다른 사람의 대기로 번진다. 같은 조건에서 optimistic-version은 409와 포기가 쌓였는데 edit-lease는 거절 대신 대기로 바뀐다. 같은 경합을 어느 쪽 비용으로 낼지의 선택이다. save는 clock_timestamp()로 유효성을 재므로 트랜잭션 안에서 30ms를 기다린 뒤에도 실제 시각으로 판단한다. now()였다면 트랜잭션 시작 시각이라 그만큼 늦게 만료를 알아챈다"
     focus:
       - { file: strategies/edit-lease.strategy.ts, marker: tx-boundary }
