@@ -1,19 +1,26 @@
-# nestjs-under-load — docker compose (0단계)
+# nestjs-under-load — docker compose (1단계)
 #
-# 프로필 없이 뜨는 서비스 집합(app×2, nginx, postgres, k6)이 DESIGN §4.1의 `minimal` 프로필 원형이다.
-# 실행 메타데이터에는 `profile: minimal`로 남는다. prometheus/grafana는 `--profile obs`일 때만 뜬다(0단계 선택).
+# 프로필(DESIGN §4.1, D1): Docker 메모리를 약 10.7GiB 로 보고 나눈다. 프로필이 다르면 결과를 서로 비교하지 않는다
+# (메타데이터 `stack.profiles` 가 비교 조건).
+#   (없음)  app×3(활성 수는 오케스트레이터가 stop/start 로 조절)·nginx·postgres·redis·k6·orchestrator·socket-proxy·web
+#   obs     prometheus·grafana·postgres-exporter·redis-exporter·nginx-exporter·cadvisor
+#   trace   tempo·loki·alloy (설정 파일은 infra/tempo·loki·alloy)
 #
 #   docker compose -f infra/compose/docker-compose.yml up -d --build
 #   docker compose -f infra/compose/docker-compose.yml --profile obs up -d
+#   docker compose -f infra/compose/docker-compose.yml --profile obs --profile trace up -d
 #
-# 보안(DESIGN §13): 호스트 포트는 전부 127.0.0.1 바인딩. lab-net·obs-net은 internal(egress 없음).
-# 0단계 단순화: cpuset 고정 없음(메타데이터 cpuset: none), socket-proxy·orchestrator 없음(호스트의 run.mjs가 docker CLI로 제어).
+# 망(DESIGN §4.2, §13):
+#   lab-net   실험 대상(app·nginx·postgres·redis·k6·exporter·orchestrator). internal: true
+#   obs-net   관측(prometheus·grafana·tempo·loki·alloy·cadvisor 와 app·k6·exporter·orchestrator). internal: true
+#   sock-net  socket-proxy ↔ orchestrator 전용. internal: true
+#   ctl-net   internal 아님. 호스트 포트를 여는 서비스(web·orchestrator·grafana·nginx·postgres)만 붙는다.
+# 호스트 포트는 전부 127.0.0.1 바인딩. docker.sock 마운트는 socket-proxy·alloy·cadvisor 만 갖는다(AC-3).
+# 검사: `node infra/compose/check-config.mjs`
+#
+# cpuset(D9): 기본값은 Docker Desktop VM vCPU 14개 기준이고 .env(CPUSET_*)로 바꾼다. 비우면 cpuset 없음.
+#   k6 0-1 | app+nginx 2-5 | postgres+redis 6-8 | 관측 스택 9-11 | 제어 12-13
 name: nestjs-under-load
-
-x-limits:
-  app: &app-limits
-    cpus: 1.0
-    mem_limit: 512m
 
 services:
   app:
@@ -21,11 +28,13 @@ services:
       context: ../..
       dockerfile: apps/app/Dockerfile
     image: nestjs-under-load/app:dev
-    # 여러 인스턴스(`--scale app=N`). 활성 수는 run.mjs가 조절한다. container_name을 두지 않는다.
-    scale: 2
+    # 최대 수를 미리 만든다. 활성 수는 오케스트레이터가 stop/start 로 조절한다(기본 2). container_name 을 두지 않는다.
+    scale: 3
     init: true
     restart: "no"
-    <<: *app-limits
+    cpus: 1.0
+    mem_limit: 512m
+    cpuset: ${CPUSET_APP-2-5}
     environment:
       PORT: "3000"
       POSTGRES_HOST: postgres
@@ -33,14 +42,15 @@ services:
       POSTGRES_DB: lab_run
       POSTGRES_USER: lab_app
       POSTGRES_PASSWORD: ${LAB_APP_PASSWORD:-lab_app_local}
+      # 값이 있으면 HTTP 로 RunConfig 를 받는다(C1). 0단계 run.mjs 경로는 `ORCHESTRATOR_URL=` 로 비워 파일을 읽게 한다.
+      ORCHESTRATOR_URL: ${ORCHESTRATOR_URL-http://orchestrator:4001}
       RUN_CONFIG_PATH: /lab/active/run-config.json
       # 힙 한도는 mem_limit보다 작게(DESIGN §4.1)
       NODE_OPTIONS: --max-old-space-size=384
     volumes:
-      # RunConfig: run.mjs가 runs/_active/run-config.json을 쓰고, app은 재시작 때 읽는다.
-      # 파일이 아니라 디렉터리를 마운트한다(파일 교체 시 inode가 바뀌어도 새 내용이 보이도록).
+      # 0단계 RunConfig 파일(run.mjs). 파일이 아니라 디렉터리를 마운트한다(파일 교체 시 inode가 바뀌어도 새 내용이 보이도록).
       - ../../runs/_active:/lab/active:ro
-    networks: [lab-net]
+    networks: [lab-net, obs-net]
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,17 +64,25 @@ services:
     image: nginx:1.28-alpine
     cpus: 0.5
     mem_limit: 128m
+    cpuset: ${CPUSET_APP-2-5}
     volumes:
       - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
       - "127.0.0.1:8081:80"   # 수동 호출·run.mjs readiness 확인용
     networks: [lab-net, ctl-net]
     depends_on: [app]
+    healthcheck:
+      # stub_status 포트(8088, 호스트 미공개)로 확인한다. app 이 모두 꺼져 있어도 nginx 자체는 건강하다.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8088/stub_status"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
 
   postgres:
     image: postgres:17
     cpus: 2.0
     mem_limit: 2g
+    cpuset: ${CPUSET_DB-6-8}
     shm_size: 256m
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
     environment:
@@ -72,6 +90,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres_local}
       POSTGRES_DB: postgres
       LAB_APP_PASSWORD: ${LAB_APP_PASSWORD:-lab_app_local}
+      LAB_OBSERVER_PASSWORD: ${LAB_OBSERVER_PASSWORD:-lab_observer_local}
+      EXPORTER_PASSWORD: ${EXPORTER_PASSWORD:-exporter_local}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ../postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
@@ -86,23 +106,133 @@ services:
       timeout: 2s
       retries: 20
 
+  redis:
+    image: redis:8.2.1-alpine
+    cpus: 1.0
+    mem_limit: 512m
+    cpuset: ${CPUSET_DB-6-8}
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    volumes:
+      - ../redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks: [lab-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
   k6:
-    # 상주 컨테이너: run.mjs가 `docker compose exec k6 k6 run ...`으로 실행한다(컨테이너 생성 불필요, DESIGN §4.1).
-    image: grafana/k6:1.3.0
-    entrypoint: ["tail", "-f", "/dev/null"]
+    # 상주 실행기(C7, lab-net :7070, 호스트 포트 없음). 스크립트·env 를 받아 `k6 run` 을 자식 프로세스로 돌린다.
+    # 이미지 정의(infra/k6/Dockerfile: node:24-slim + k6, non-root node)는 T-119. /runs 는 그 사용자가 쓸 수 있어야 한다.
+    build:
+      context: ../..
+      dockerfile: infra/k6/Dockerfile
+    image: nestjs-under-load/k6:dev
     cpus: 2.0
     mem_limit: 1g
+    cpuset: ${CPUSET_K6-0-1}
+    environment:
+      K6_RUNNER_PORT: "7070"
+      K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
     volumes:
+      # packs 와 loadtest 는 같은 루트 아래여야 한다(k6 템플릿이 ../../../../loadtest/lib 를 상대 import, T-126).
       - ../../packs:/packs:ro
+      - ../../loadtest:/loadtest:ro
       - ../../runs:/runs
     networks: [lab-net, obs-net]
 
-  # ── 선택(0단계는 파일만 준비): --profile obs ──
+  orchestrator:
+    # 실행 제어 평면. 공개 4000(ctl-net, 호스트 127.0.0.1:4000), 내부 4001(lab-net, 호스트 포트 없음). 이미지는 T-138.
+    # 컨테이너 제어는 socket-proxy 경유만(docker.sock 을 직접 마운트하지 않는다, §13).
+    # /repo 읽기 전용 마운트(D2): git sha/dirty 와 팩 정의를 읽는다. 쓰기는 /runs 만.
+    build:
+      context: ../..
+      dockerfile: orchestrator/Dockerfile
+    image: nestjs-under-load/orchestrator:dev
+    init: true
+    cpus: 1.0
+    mem_limit: 512m
+    cpuset: ${CPUSET_CTL-12-13}
+    environment:
+      PUBLIC_PORT: "4000"
+      INTERNAL_PORT: "4001"
+      DOCKER_HOST: tcp://socket-proxy:2375
+      COMPOSE_PROJECT_NAME: nestjs-under-load
+      REPO_DIR: /repo
+      RUNS_DIR: /runs
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_SUPERUSER: postgres
+      POSTGRES_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres_local}
+      LAB_OBSERVER_PASSWORD: ${LAB_OBSERVER_PASSWORD:-lab_observer_local}
+      LAB_APP_PASSWORD: ${LAB_APP_PASSWORD:-lab_app_local}
+      EXPORTER_PASSWORD: ${EXPORTER_PASSWORD:-exporter_local}
+      K6_RUNNER_URL: http://k6:7070
+      PROMETHEUS_URL: http://prometheus:9090
+      GRAFANA_URL: http://grafana:3000
+    volumes:
+      - ../..:/repo:ro
+      - ../../runs:/runs
+    ports:
+      - "127.0.0.1:4000:4000"
+    networks: [lab-net, obs-net, ctl-net, sock-net]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      socket-proxy:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  socket-proxy:
+    # Docker 소켓 프록시(D10). wollomatic/socket-proxy 는 정규식 allowlist 라 허용한 경로만 통과한다.
+    # (tecnativa 는 CONTAINERS=1 + POST=1 이면 컨테이너 create 도 같이 열려서 쓰지 않는다.)
+    # 버전 접두(/v1.xx)는 선택이다(dockerode 는 붙이지 않는다).
+    # 허용: GET 컨테이너 목록·inspect, POST 컨테이너 start·stop·restart·kill. 나머지(create·exec·이미지·볼륨)는 403.
+    image: wollomatic/socket-proxy:1.11.0
+    cpus: 0.1
+    mem_limit: 32m
+    cpuset: ${CPUSET_CTL-12-13}
+    # Docker Desktop 의 소켓은 root 소유라 읽으려면 root 로 돈다. 이 컨테이너는 sock-net(internal)에만 붙는다.
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - -loglevel=info
+      - -listenip=0.0.0.0
+      - -allowfrom=orchestrator
+      - -watchdoginterval=30
+      - -allowGET=(/v1\..{1,2})?/containers/(json|[a-zA-Z0-9_.-]+/json)
+      - -allowHEAD=(/v1\..{1,2})?/_ping
+      - -allowPOST=(/v1\..{1,2})?/containers/[a-zA-Z0-9_.-]+/(start|stop|restart|kill)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [sock-net]
+
+  web:
+    # 화면 11개(정적 빌드 + nginx). /api·/ws 는 orchestrator:4000 으로 프록시한다. 이미지는 T-120.
+    build:
+      context: ../..
+      dockerfile: web/Dockerfile
+    image: nestjs-under-load/web:dev
+    cpus: 0.25
+    mem_limit: 128m
+    cpuset: ${CPUSET_CTL-12-13}
+    ports:
+      - "127.0.0.1:8080:80"
+    networks: [ctl-net]
+
+  # ── obs 프로필 ──
   prometheus:
     image: prom/prometheus:v3.5.0
     profiles: [obs]
     cpus: 1.0
     mem_limit: 1g
+    cpuset: ${CPUSET_OBS-9-11}
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --web.enable-remote-write-receiver
@@ -117,6 +247,7 @@ services:
     profiles: [obs]
     cpus: 0.5
     mem_limit: 512m
+    cpuset: ${CPUSET_OBS-9-11}
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-grafana_local}
       GF_AUTH_ANONYMOUS_ENABLED: "true"
@@ -129,13 +260,118 @@ services:
     networks: [obs-net, ctl-net]
     depends_on: [prometheus]
 
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.17.1
+    profiles: [obs]
+    cpus: 0.25
+    mem_limit: 128m
+    cpuset: ${CPUSET_OBS-9-11}
+    environment:
+      # pg_monitor 만 가진 전용 역할(initdb 가 만든다)
+      DATA_SOURCE_NAME: postgresql://exporter:${EXPORTER_PASSWORD:-exporter_local}@postgres:5432/postgres?sslmode=disable
+    networks: [lab-net, obs-net]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.77.0
+    profiles: [obs]
+    cpus: 0.25
+    mem_limit: 128m
+    cpuset: ${CPUSET_OBS-9-11}
+    command:
+      - --redis.addr=redis://redis:6379
+      - --count-keys=db0=lock:*
+    networks: [lab-net, obs-net]
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.5.1
+    profiles: [obs]
+    cpus: 0.25
+    mem_limit: 64m
+    cpuset: ${CPUSET_OBS-9-11}
+    command:
+      - --nginx.scrape-uri=http://nginx:8088/stub_status
+    networks: [lab-net, obs-net]
+    depends_on:
+      nginx:
+        condition: service_healthy
+
+  cadvisor:
+    # macOS Docker Desktop 에서 수집되는 지표 범위는 실험 필요(DESIGN §14 #3).
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    profiles: [obs]
+    cpus: 0.5
+    mem_limit: 256m
+    cpuset: ${CPUSET_OBS-9-11}
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=5s
+    volumes:
+      - /:/rootfs:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [obs-net]
+
+  # ── trace 프로필(설정 파일은 T-116) ──
+  tempo:
+    image: grafana/tempo:2.8.2
+    profiles: [trace]
+    cpus: 0.5
+    mem_limit: 512m
+    cpuset: ${CPUSET_OBS-9-11}
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ../tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempodata:/var/tempo
+    networks: [obs-net]
+
+  loki:
+    image: grafana/loki:3.5.5
+    profiles: [trace]
+    cpus: 0.5
+    mem_limit: 512m
+    cpuset: ${CPUSET_OBS-9-11}
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ../loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - lokidata:/loki
+    networks: [obs-net]
+
+  alloy:
+    # docker 로그 수집: discovery.docker + loki.source.docker. docker.sock 읽기 마운트(§13).
+    image: grafana/alloy:v1.10.2
+    profiles: [trace]
+    cpus: 0.25
+    mem_limit: 256m
+    cpuset: ${CPUSET_OBS-9-11}
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ../alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [obs-net]
+    depends_on: [loki]
+
 networks:
   lab-net:
     internal: true
   obs-net:
+    internal: true
+  sock-net:
     internal: true
   ctl-net: {}
 
 volumes:
   pgdata: {}
   promdata: {}
+  tempodata: {}
+  lokidata: {}
