@@ -4,6 +4,8 @@
 
 같은 API에 **처리 방식(strategy)만 바꿔 가며** 같은 조건에서 부하를 넣고, 정합성(잃어버린 수정, 중복, 초과 판매 등)과 지연·처리량을 나란히 비교합니다. 부하는 [k6](https://k6.io/)로 넣고, 결과는 실험 화면에서 봅니다.
 
+> **로컬 전용입니다. 공용 네트워크·서버에 띄우지 마세요.** 모든 포트는 `127.0.0.1`에만 열립니다. 오케스트레이터 API와 Grafana(익명 Viewer)에는 인증이 없고, 사용자가 편집한 부하 스크립트를 실행하며 컨테이너를 재시작하는 권한이 있습니다. 외부에 노출하면 무방비입니다. 자세한 내용은 [보안 경고](#보안-경고)를 보세요.
+
 ![코드 실험실 전체 화면. 위쪽에 경합 창 30ms 주입 · 서버 2대 상황과 주입됨 배지, 왼쪽 탐색기, 가운데 no-lock 처리 코드와 강조 줄, 오른쪽 판정 패널에 처리 방식 4개의 판정과 실측·주입됨 배지가 보인다](docs/images/code-lab-overview.png)
 
 *코드 실험실 — "경합 창 30ms 주입 · 서버 2대" 상황에서 `no-lock`(락 없음) 코드와 판정을 보는 화면. 판정 옆에 "실측"과 "주입됨" 배지가 붙습니다*
@@ -17,13 +19,20 @@
 ## 목차
 
 - [원칙](#원칙)
+- [누가 짰나](#누가-짰나)
 - [빠른 시작](#빠른-시작)
   - [1. 요구 사항](#1-요구-사항)
   - [2. 설치](#2-설치)
   - [3. 웹 화면만 보기](#3-웹-화면만-보기)
-  - [4. 실험 돌리기](#4-실험-돌리기)
-  - [5. 정리](#5-정리)
+  - [4. 스택 띄우기](#4-스택-띄우기)
+  - [5. 실행에서 비교까지](#5-실행에서-비교까지)
+  - [6. 명령줄로 돌리기](#6-명령줄로-돌리기)
+  - [7. 실측을 학습 데이터에 기록](#7-실측을-학습-데이터에-기록)
+  - [8. 테스트](#8-테스트)
+  - [9. 정리](#9-정리)
+- [보안 경고](#보안-경고)
 - [화면 보는 법](#화면-보는-법)
+  - [화면 탭 7개](#화면-탭-7개)
   - [코드 실험실](#코드-실험실)
   - [무대(재생)](#무대재생)
   - [디자인 시안](#디자인-시안)
@@ -40,6 +49,19 @@
 - **상대 비교만 말한다.** 로컬 단일 머신의 절대 수치는 운영 용량이 아닙니다. 결과에는 측정 조건을 함께 적습니다.
 - **로컬 전용.** 사용자가 편집한 부하 스크립트를 실행하는 구조라서 외부에 노출하지 않습니다. 모든 포트는 `127.0.0.1`에만 열립니다.
 
+## 누가 짰나
+
+이 저장소의 코드는 **AI가 작성**했습니다. 이 저장소를 만든 사람은 코드를 쓰는 사람이 아니라 **학습자**입니다. 코드 실험실로 읽으며 배우고, 직접 쓰는 것은 실험 노트뿐입니다.
+
+| 영역 | 작성 |
+|---|---|
+| 처리 코드(`packs/**/strategies`), `invariants.sql`, 엔티티·마이그레이션·시드, 엔진·오케스트레이터·인프라·웹 화면, k6 템플릿, 스크립트 | AI |
+| `learn.yaml`의 `expected`(예상)·`why`·`choose` | AI (실측 전 추론이라 "예상" 배지가 붙습니다) |
+| `learn.yaml`의 `measured`(실측) | 실행 결과에서 `scripts/measured.mjs`가 채웁니다. 사람도 AI도 손으로 쓰지 않습니다 |
+| `docs/experiments/**` 실험 노트 | 사용자 (예측 → 실측 → 원인. 예측은 실행 전에 커밋) |
+
+AI가 쓴 커밋에는 `Co-Authored-By` 트레일러가 붙습니다. 자세한 표는 [DESIGN §5.4](docs/DESIGN.md)에 있습니다.
+
 ## 빠른 시작
 
 웹 화면만 볼 때는 Node와 pnpm만 있으면 됩니다. 실험을 직접 돌릴 때만 Docker가 필요합니다.
@@ -51,9 +73,19 @@
 | Node.js | 24 이상 | `package.json`의 `engines.node` |
 | pnpm | 10 | `corepack enable`로 켜면 `packageManager`에 적힌 버전을 씁니다 |
 | Docker Desktop | Compose v2 포함 | 실험 실행에만 필요 |
-| Docker 자원 | 8 vCPU / 10GB 이상 권장 | 아래 설명 참고 |
+| Docker 자원 | **메모리 약 10GiB 이상**, vCPU 14개 기준 | 아래 설명 참고 |
 
-**자원이 부족하면:** 기본 compose 구성 자체가 `minimal` 프로필입니다(app×2, nginx, postgres, k6). Prometheus·Grafana는 `--profile obs`를 줄 때만 뜹니다. 실행 결과에는 `profile: minimal`이 기록됩니다.
+**메모리:** 컨테이너 메모리 limit 합계가 기본 구성 약 5.8GiB, 관측(`obs`) 포함 약 7.8GiB, 전부(`obs`+`trace`) 약 9.1GiB입니다. Docker Desktop의 메모리를 10GiB 이상으로 올려 두세요. 프로필별 표는 [infra/compose/README.md](infra/compose/README.md)에 있습니다.
+
+**vCPU가 14개보다 적을 때:** 기본값은 컨테이너를 서로 다른 CPU 집합에 고정(cpuset)합니다(k6 `0-1`, app·nginx `2-5`, postgres·redis `6-8`, 관측 `9-11`, 제어 `12-13`). Docker Desktop VM의 vCPU가 14개보다 적으면 없는 CPU 번호를 요구해서 컨테이너가 뜨지 않을 수 있습니다. 그때는 `infra/compose/.env`(아래 4-1)에서 값을 실제 vCPU에 맞추거나, 다음처럼 **비워 두세요.** 비우면 cpuset 없이 `cpus` 제한만 걸리고, 실행 메타데이터에 `cpuset: none`이 남습니다. cpuset이 없으면 k6와 실험 대상이 CPU를 다툴 수 있으므로, 이 상태의 결과는 기본 상태와 비교하지 않습니다.
+
+```
+CPUSET_K6=
+CPUSET_APP=
+CPUSET_DB=
+CPUSET_OBS=
+CPUSET_CTL=
+```
 
 **머신 차이:** Apple Silicon은 성능 코어·효율 코어 편차가, Linux 네이티브 Docker는 cpuset 의미 차이가 있습니다. 그래서 결과마다 측정 조건(CPU, Docker vCPU·메모리, 프로필)을 함께 남깁니다.
 
@@ -95,13 +127,116 @@ pnpm --dir web dev
 ```
 
 - 무대: <http://127.0.0.1:5173/>
-- 코드 실험실: <http://127.0.0.1:5173/#lab> (화면 왼쪽 위 탭으로도 바꿀 수 있습니다)
+- 코드 실험실: <http://127.0.0.1:5173/#lab> (화면 위쪽 탭으로도 바꿀 수 있습니다)
 
 5173 포트가 이미 쓰이고 있으면 Vite가 다음 빈 포트를 고르고, 출력에 그 주소를 보여 줍니다. 포트를 직접 정하려면 `pnpm --dir web dev --port 5190`처럼 붙입니다.
 
-### 4. 실험 돌리기
+무대와 코드 실험실 밖의 탭(실행 설정·서버 속·지표·실행 기록·비교)은 오케스트레이터가 있어야 동작합니다. 오케스트레이터 없이 화면 모양만 보려면 주소에 `?mock`을 붙입니다(예: <http://127.0.0.1:5173/?mock#run>). 가짜 데이터이므로 실측이 아닙니다.
 
-실험은 `scripts/run.mjs` 하나로 돌립니다. 이 스크립트가 호스트에서 `docker compose`를 불러 아래를 차례로 합니다.
+### 4. 스택 띄우기
+
+실험은 docker compose 스택(오케스트레이터가 부하·DB 초기화·불변식 검사를 맡습니다)에서 돌립니다. 모든 서비스는 `infra/compose/docker-compose.yml` 하나에 있고, **프로필**로 묶여 있습니다.
+
+| 프로필 | 서비스 | 화면·주소 |
+|---|---|---|
+| (기본) | app(최대 3대, 활성 2대), nginx, postgres, **redis**, k6, orchestrator, socket-proxy, web | 웹 <http://127.0.0.1:8080>, 오케스트레이터 API `127.0.0.1:4000`, nginx(수동 호출용) `127.0.0.1:8081` |
+| `obs` | prometheus, grafana, postgres·redis·nginx exporter, cadvisor | Grafana <http://127.0.0.1:3001> (지표 탭이 임베드합니다) |
+| `trace` | tempo, loki, alloy | 추적·로그. 계측 수준 `full`에서 쓰입니다 |
+
+프로필이 다르면 실행 결과를 비교하지 않습니다(메타데이터 `stack.profiles`가 비교 조건입니다).
+
+**4-1. (선택) 설정 파일.** DB 비밀번호와 cpuset 기본값은 로컬 전용입니다. 바꾸려면 `infra/compose/.env.example`을 `infra/compose/.env`로 복사해 고칩니다.
+
+```bash
+cp infra/compose/.env.example infra/compose/.env
+```
+
+**4-2. 기동.** 관측까지 함께 띄우는 것을 권합니다(지표 탭, 스크레이프 누락 판정, Grafana 주석이 `obs`에 기대고 있습니다).
+
+```bash
+docker compose -f infra/compose/docker-compose.yml --profile obs up -d --build --wait
+```
+
+기본 구성만 띄우려면 `--profile obs`를 뺍니다. 추적·로그까지 보려면 `--profile obs --profile trace`를 줍니다. `--wait`는 서비스가 healthy가 될 때까지 기다렸다가 돌아옵니다.
+
+- **redis는 기본 구성에 들어 있습니다.** Redis를 쓰는 처리 방식(`redis-lock` 등)이 있고, 실행 메타데이터의 `images.redis`는 redis가 떠 있어야 채워집니다. redis 없이 띄우면 그 칸이 비어 "미채움"으로 보고됩니다.
+- **`ORCHESTRATOR_URL`:** app은 이 값이 있으면 오케스트레이터에서 RunConfig를 받아오고(기본 `http://orchestrator:4001`), 값이 비어 있으면 파일(`runs/_active/run-config.json`)을 읽습니다. 화면·API 경로에서는 건드리지 않습니다. 6-4의 `scripts/run.mjs`를 쓸 때만 비워서 실행합니다.
+- **프로젝트 이름:** 기본 프로젝트 이름은 `nestjs-under-load`입니다. `docker compose -p <이름>`으로 바꿔 띄우면 같은 값을 `COMPOSE_PROJECT_NAME`으로도 export 하세요(오케스트레이터가 app 컨테이너를 찾는 라벨, Alloy 로그 필터가 이 이름을 씁니다).
+
+  ```bash
+  export COMPOSE_PROJECT_NAME=내이름
+  docker compose -p "$COMPOSE_PROJECT_NAME" -f infra/compose/docker-compose.yml --profile obs up -d --build --wait
+  ```
+
+- **git worktree에서 띄울 때:** 오케스트레이터는 레포를 읽기 전용으로 마운트해서 git 커밋 SHA와 변경 여부를 읽습니다. worktree의 `.git`은 컨테이너 밖 경로를 가리켜서 읽을 수 없으므로, 그때는 호스트에서 값을 export 합니다. 일반 `git clone`에서는 필요 없습니다. 값이 없으면 SHA는 `unknown`으로 기록됩니다.
+
+  ```bash
+  export GIT_SHA=$(git rev-parse HEAD)
+  export GIT_DIRTY=$([ -z "$(git status --porcelain)" ] && echo false || echo true)
+  ```
+
+기동이 끝나면 <http://127.0.0.1:8080>을 엽니다. 정적 구성 검사(포트 바인딩·망·소켓 마운트)는 `node infra/compose/check-config.mjs`로 합니다.
+
+### 5. 실행에서 비교까지
+
+학습 흐름은 이렇습니다. 화면 위쪽 탭을 왼쪽에서 오른쪽으로 따라가면 됩니다.
+
+1. **코드 실험실에서 예상을 읽습니다.** 상황(서버 대수, 경합 창 등)을 고르고, 처리 방식마다 "맞음·깨짐·느림"이 왜 그렇게 예상되는지 봅니다(`예상` 배지).
+2. **실행 설정에서 예측을 적고 실행합니다.** 시나리오·처리 방식(여러 개 가능)·앱 대수·부하·데이터·계측 수준을 고르고, 맨 아래에 **예측 한 줄**(필수)을 씁니다. `실행`을 누르면 세션이 시작됩니다.
+3. **서버 속에서 진행을 봅니다.** 실행 중인 요청의 처리 단계 타임라인, 락 차단 트리, 커넥션 풀 게이지가 실시간으로 나옵니다.
+4. **지표에서 Grafana 대시보드를 봅니다**(`obs` 프로필 필요).
+5. **실행 기록에서 끝난 실행을 고릅니다.** 같은 세션의 배치를 체크하고 비교로 보냅니다.
+6. **비교에서 정합성부터 읽습니다.** 불변식 결과가 처리량보다 위에 나옵니다. 조건이 다른 두 실행은 "비교 불가"로 표시됩니다. 앱 대수처럼 일부러 바꾼 조건은 비교 축으로 지정해야 합니다.
+7. **코드 실험실로 돌아가 예상과 실측을 견줍니다.** 실측을 학습 데이터에 기록하면(7절) 근거 배지가 "예상"에서 "실측 run#…"으로 바뀝니다.
+8. **실험 노트를 씁니다**(사용자 몫). 양식은 [실험 노트 양식](docs/EXPERIMENT_TEMPLATE.md)입니다.
+
+![비교 화면. no-lock·row-lock·conditional-update를 앱 2대 닫힌 모델로 3회씩 돌린 결과. 1번 정합성 영역에 no-lock만 위반 3건, 나머지는 통과로 나오고 그 아래에 유효성, 처리량·지연, 실패 영역이 이어진다](docs/images/compare-g02.png)
+
+*비교 화면 — 정합성(불변식)이 가장 위에 있고, 위반이 있는 처리 방식에는 "정합성 위반" 표시가 붙어 처리량 순위에서 제외됩니다*
+
+**비교가 "비교 불가"일 때.** 같은 처리 방식 그룹 안에서 파라미터가 다르면(`strategy.params`, `timeouts.lockMs`) 막히고, 처리 방식 id가 서로 다르면 이 두 항목은 비교 조건에서 제외합니다.
+
+**프로브 끄기 비교.** PG 락 프로브를 켠 실행과 끈 실행을 `pgProbe.enabled` 축으로 비교할 때는 프로브 간격(`intervalMs`)을 같은 값으로 두세요. 간격이 다르면 비교 조건이 달라져 막힙니다.
+
+### 6. 명령줄로 돌리기
+
+화면 없이 같은 오케스트레이터 API를 부르는 스크립트들이 `scripts/` 아래에 있습니다. 모두 스택(4절)이 떠 있어야 하고, 기본 주소는 `http://127.0.0.1:4000`입니다.
+
+**6-1. 1단계 완료 기준 재현.** 기준 1~6(G02 정합성·앱 1대 대 2대·메타데이터 완결성·무효 판정·dropped 합산)을 순서대로 실행하고 증거 JSON을 `runs/_acceptance/<시각>.json`에 남깁니다. 실패한 기준은 고치지 않고 원인 단서와 함께 기록합니다.
+
+```bash
+node scripts/acceptance/phase1.mjs
+```
+
+기준 5(k6 포화 → 무효)만은 k6 컨테이너의 cpus를 일부러 0.2로 낮춰 띄운 뒤 따로 돌립니다. 끝나면 override 없이 k6를 다시 띄웁니다.
+
+```bash
+docker compose -f infra/compose/docker-compose.yml -f scripts/acceptance/k6-cpu-0.2.override.yml --profile obs up -d k6
+node scripts/acceptance/phase1.mjs --only c5 --out runs/_acceptance/c5.json
+docker compose -f infra/compose/docker-compose.yml --profile obs up -d k6
+```
+
+단계 목록과 옵션은 `node scripts/acceptance/phase1.mjs --help`로 봅니다. 노트 재료용 단계도 있습니다(`--only probe,g01`: G02 PG 락 프로브 켜기/끄기 대조, G01 처리 방식 5개).
+
+**6-2. 학습 데이터의 상황 전부 실측.** `learn.yaml`에 적힌 상황(서버 대수·부하·데이터·지연 주입)을 그대로 요청으로 바꿔 돌립니다. 먼저 요청만 확인합니다.
+
+```bash
+node scripts/acceptance/situations.mjs --dry-run
+node scripts/acceptance/situations.mjs --only g02
+```
+
+세션 id가 `runs/_situations/<시각>.json`에 남습니다. 이 스크립트는 `learn.yaml`을 고치지 않습니다. 7절의 `measured.mjs`로 세션마다 기록합니다.
+
+**6-3. 계측 오버헤드 측정.** 계측 수준(`off`·`metrics`·`full`)이 얹는 비용을 재서 [docs/overhead.md](docs/overhead.md)에 기록합니다. `obs`와 `trace` 프로필이 필요합니다.
+
+```bash
+docker compose -f infra/compose/docker-compose.yml --profile obs --profile trace up -d --build
+node scripts/overhead/run.mjs --explore --rates 300,500,600
+node scripts/overhead/run.mjs --rate-low 400 --rate-high 400
+node scripts/overhead/run.mjs --render runs/_overhead/<시각>_main.json
+```
+
+**6-4. 0단계 실행기 `scripts/run.mjs`.** 오케스트레이터 없이 호스트에서 `docker compose`를 불러 직접 돌리는 최소 경로입니다. RunConfig를 오케스트레이터가 아니라 파일로 전달하므로 **`ORCHESTRATOR_URL`을 비워서** 실행합니다. 1단계 스택(오케스트레이터 포함)이 이미 떠 있다면 먼저 내리세요(9절). 이 스크립트가 하는 일:
 
 1. app 이미지 빌드, postgres·k6·nginx 기동
 2. 실행마다 DB를 템플릿에서 새로 복제(초기화)
@@ -110,7 +245,7 @@ pnpm --dir web dev
 5. 불변식 SQL(`invariants.sql`)로 DB에 남은 사실을 검사
 6. 결과를 `runs/<runId>/`에 저장, 같은 조건을 3회 반복
 
-**4-1. 먼저 무엇을 할지 보기(dry-run).** Docker를 부르지 않고 단계와 명령만 출력합니다.
+먼저 무엇을 할지 봅니다(dry-run, Docker를 부르지 않고 단계와 명령만 출력합니다).
 
 ```bash
 node scripts/run.mjs --dry-run --strategies no-lock --reps 1
@@ -125,22 +260,10 @@ node scripts/run.mjs --dry-run --strategies no-lock --reps 1
 ▶ 스택 준비: app 이미지 빌드, postgres·k6·nginx 기동
 ```
 
-전체 옵션은 `node scripts/run.mjs --help`로 봅니다.
-
-**4-2. (선택) 스택을 미리 띄우기.** `run.mjs`가 필요한 서비스를 알아서 띄우므로 이 단계는 생략해도 됩니다.
+전체 옵션은 `node scripts/run.mjs --help`로 봅니다. 아래 명령은 학습 데이터의 "몰림 200 req/s · 서버 1대"와 "마감 직전 몰림 200 req/s · 서버 2대" 상황에 맞춘 예입니다. 처리 방식 4개 × 앱 1대·2대 × 3회 = 24회를 돌립니다.
 
 ```bash
-docker compose -f infra/compose/docker-compose.yml up -d --build --wait
-```
-
-`--wait`를 주면 서비스가 healthy가 될 때까지 기다렸다가 돌아옵니다(app 2대·nginx·postgres·k6).
-
-DB 비밀번호 등은 로컬 전용 기본값이 들어 있습니다. 바꾸려면 `infra/compose/.env.example`을 `infra/compose/.env`로 복사해 고칩니다.
-
-**4-3. 실험 실행.** 아래 명령은 학습 데이터의 "몰림 200 req/s · 서버 1대"와 "마감 직전 몰림 200 req/s · 서버 2대" 상황에 맞춘 예입니다. 처리 방식 4개 × 앱 1대·2대 × 3회 = 24회를 돌립니다.
-
-```bash
-node scripts/run.mjs --rate 200 --duration 20s --warmup 5s --max-vus 2000 --instances 1,2
+ORCHESTRATOR_URL= node scripts/run.mjs --rate 200 --duration 20s --warmup 5s --max-vus 2000 --instances 1,2
 ```
 
 - `--rate 200`: 초당 200건을 일정하게 보냅니다(open model — 응답을 기다리지 않고 정해진 속도로 요청을 넣는 방식).
@@ -148,10 +271,10 @@ node scripts/run.mjs --rate 200 --duration 20s --warmup 5s --max-vus 2000 --inst
 - 경합 창을 넓혀 보려면 `--inject-delay after-read:30`을 더합니다(읽은 직후 30ms 인위 지연, 결과에 "주입됨"으로 남습니다). 학습 데이터의 "경합 창 30ms 주입" 상황(200 req/s × 20s, 상품 5개 × 재고 100)과 같은 조건이므로, 한 처리 방식·서버 2대·1회만 빠르게 확인하려면 이렇게 돌립니다.
 
 ```bash
-node scripts/run.mjs --rate 200 --duration 20s --warmup 5s --max-vus 2000 --instances 2 --strategies no-lock --reps 1 --inject-delay after-read:30
+ORCHESTRATOR_URL= node scripts/run.mjs --rate 200 --duration 20s --warmup 5s --max-vus 2000 --instances 2 --strategies no-lock --reps 1 --inject-delay after-read:30
 ```
 
-실행 중에는 `docker compose`·k6 진행 출력이 길게 흐릅니다. 실행마다 마지막에 요약 한 줄이 찍힙니다. 위반이 없으면 `불변식: 모두 통과`로, 있으면 위반 이름과 개수가 나옵니다.
+실행마다 마지막에 요약 한 줄이 찍힙니다. 위반이 없으면 `불변식: 모두 통과`로, 있으면 위반 이름과 개수가 나옵니다.
 
 ```
     불변식: 모두 통과 | k6 성공 ... 품절 ... 실패 0 드롭 0 | k6 CPU 0.04×limit | 유효
@@ -166,18 +289,22 @@ node scripts/run.mjs --rate 200 --duration 20s --warmup 5s --max-vus 2000 --inst
 
 위 빠른 확인 명령은 `완료: 1회 → ...`로 끝납니다.
 
-**4-4. 결과 위치.** `runs/`는 git에 올라가지 않는 로컬 산출물입니다.
+**결과 위치.** `runs/`는 git에 올라가지 않는 로컬 산출물입니다.
 
 | 경로 | 내용 |
 |---|---|
 | `runs/<runId>/metadata.json` | 측정 조건, 불변식 결과, k6 수치, 유효성 판정 |
 | `runs/<runId>/summary.json` | k6 원본 요약 |
 | `runs/<runId>/run-config.json` | 그 실행에 쓴 RunConfig |
-| `runs/_sessions/<sessionId>.json` | 세션 전체 실행 목록 |
+| `runs/_sessions/<sessionId>.json` | 0단계 세션 전체 실행 목록 |
+| `runs/_meta/lab.sqlite` | 1단계 오케스트레이터가 기록한 세션·배치·실행 |
+| `runs/_acceptance/`, `runs/_situations/`, `runs/_overhead/` | 6-1~6-3 스크립트의 증거 |
 
 `runId`는 `<시각>_g02_<처리 방식>_i<앱 대수>_r<반복 번호>` 형식입니다(예: `2026-10-06T16-20-36Z_g02_no-lock_i2_r1`).
 
-**4-5. 실측을 학습 데이터에 기록.** 세션 결과를 `learn.yaml`의 `measured`에 옮깁니다. 먼저 `--write` 없이 무엇을 쓸지 확인합니다.
+### 7. 실측을 학습 데이터에 기록
+
+세션 결과를 `learn.yaml`의 `measured`에 옮깁니다(오케스트레이터는 레포에 쓰지 않으므로 호스트에서 이 스크립트가 합니다). 세션 id는 6-4의 `runs/_sessions/`(0단계) 또는 화면·API 세션(1단계, `runs/_meta/lab.sqlite`)의 것을 씁니다. 먼저 `--write` 없이 무엇을 쓸지 확인합니다.
 
 ```bash
 node scripts/measured.mjs --session <sessionId>
@@ -190,9 +317,7 @@ node scripts/measured.mjs --session <sessionId>
 (--write 없이 실행: 파일을 바꾸지 않음)
 ```
 
-전체 24회 세션이면 처리 방식 × 상황 묶음마다 한 줄씩 나오고 `3회`로 집계됩니다. 이 스크립트에는 `--help`가 없습니다(알 수 없는 옵션이라 실패). 옵션은 `--session`, `--write`뿐입니다.
-
-내용이 맞으면 기록합니다.
+전체 24회 세션이면 처리 방식 × 상황 묶음마다 한 줄씩 나오고 `3회`로 집계됩니다. 이 스크립트에는 `--help`가 없습니다(알 수 없는 옵션이라 실패). 옵션은 `--session`, `--write`, `--runs`뿐입니다. 내용이 맞으면 기록합니다.
 
 ```bash
 node scripts/measured.mjs --session <sessionId> --write
@@ -200,24 +325,72 @@ node scripts/measured.mjs --session <sessionId> --write
 
 조건(앱 대수, 도착률, 데이터 크기, 지연 주입)이 학습 데이터의 상황과 정확히 맞는 묶음만 기록되고, 무효 실행은 집계에서 빠집니다. 같은 상황에 이미 3회 실측이 들어 있으면 `--write`가 그 값을 새 세션 값으로 바꿉니다. 반복 1회짜리 확인 세션은 `--write` 없이 출력만 확인하세요.
 
-**4-6. 웹에서 확인.** 웹 dev 서버를 다시 열거나 새로고침하면, 코드 실험실 판정 패널의 근거 배지가 "예상"에서 "실측 run#…"으로 바뀝니다.
+웹 dev 서버를 다시 열거나 새로고침하면, 코드 실험실 판정 패널의 근거 배지가 "예상"에서 "실측 run#…"으로 바뀝니다.
 
-### 5. 정리
+### 8. 테스트
 
 ```bash
-docker compose -f infra/compose/docker-compose.yml down
+pnpm typecheck && pnpm test
 ```
 
-DB 볼륨까지 지우려면 `down -v`를 씁니다. 다음 실행 때 템플릿 DB를 다시 만듭니다.
+게이트(`pnpm typecheck && pnpm test`)는 PG·Redis·Docker 없이 돕니다. PG·Redis가 필요한 통합 테스트는 **명시한 환경변수가 있을 때만** 실행하고, 없으면 접속 시도 없이 건너뜁니다. 실행 중인 compose 스택의 기본 포트(55432, 6379)에 자동으로 붙지 않습니다. 통합 테스트를 돌리려면 일회용 컨테이너를 띄우고 그 주소를 env로 줍니다(테스트가 `CREATE DATABASE`를 하므로 스택의 DB를 가리키지 마세요).
+
+| 환경변수 | 대상 |
+|---|---|
+| `G02_TEST_DATABASE_URL` | G02 팩 통합 테스트(PG) |
+| `G02_TEST_REDIS_URL` | G02 `redis-lock` 통합 테스트(Redis) |
+| `G01_TEST_DATABASE_URL` | G01 팩 통합 테스트(PG) |
+| `APP_TEST_DATABASE_URL` | app 템플릿 준비 통합 테스트(PG) |
+
+```bash
+docker run -d --rm --name nul-test-pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:55499:5432 postgres:17
+docker run -d --rm --name nul-test-redis -p 127.0.0.1:56379:6379 redis:8.2.1-alpine
+G02_TEST_DATABASE_URL=postgresql://postgres:pw@127.0.0.1:55499/postgres \
+G01_TEST_DATABASE_URL=postgresql://postgres:pw@127.0.0.1:55499/postgres \
+APP_TEST_DATABASE_URL=postgresql://postgres:pw@127.0.0.1:55499/postgres \
+G02_TEST_REDIS_URL=redis://127.0.0.1:56379 \
+pnpm test
+docker stop nul-test-pg nul-test-redis
+```
+
+### 9. 정리
+
+```bash
+docker compose -f infra/compose/docker-compose.yml --profile obs --profile trace down
+```
+
+프로필을 붙인 채 내려야 그 프로필의 서비스까지 내려갑니다. DB 볼륨까지 지우려면 `down -v`를 씁니다. 다음 실행 때 템플릿 DB를 다시 만듭니다.
+
+## 보안 경고
+
+- **공용 네트워크·서버에 띄우지 마세요.** 이 스택은 내 머신 안에서만 쓰도록 만들었습니다.
+- 모든 호스트 포트는 `127.0.0.1`에만 바인딩됩니다(web 8080, 오케스트레이터 4000, nginx 8081, Grafana 3001, postgres 55432). `0.0.0.0`으로 바꾸지 마세요.
+- **오케스트레이터 API에는 인증이 없습니다.** 실행을 시작하고 컨테이너를 재시작·중지할 수 있습니다. 요청의 `Origin`·`Host`는 로컬 주소만 허용하지만, 이것은 브라우저 경유 공격을 줄이는 장치일 뿐 인증이 아닙니다.
+- **Grafana는 익명 Viewer로 열려 있습니다**(읽기 전용, 로그인 없음). 실행 주석은 오케스트레이터가 서비스 계정 토큰으로 씁니다.
+- 사용자가 편집한 k6 스크립트를 실행합니다. k6 컨테이너는 인터넷으로 나가는 경로가 없는 내부 망(`internal: true`)에만 붙어 있습니다.
+- Docker 소켓은 `socket-proxy`·`alloy`(읽기)·`cadvisor`(읽기) 컨테이너만 마운트합니다. 오케스트레이터는 소켓 대신 `socket-proxy`를 거치고, 프록시는 컨테이너 조회와 `start`·`stop`·`restart`·`kill`만 통과시킵니다(생성·exec·이미지 API는 403).
+- DB 비밀번호 등은 `.env.example`의 **로컬 전용 기본값**입니다. 실제 비밀 정보가 아닙니다. 실제 비밀번호를 이 파일이나 저장소에 넣지 마세요.
+
+전체 마운트 목록과 완화책은 [DESIGN §13](docs/DESIGN.md)에 있습니다.
 
 ## 화면 보는 법
 
-웹은 두 화면으로 나뉩니다. 왼쪽 위 탭으로 바꿉니다.
+### 화면 탭 7개
 
-| 화면 | 주소 | 하는 일 |
-|---|---|---|
-| 코드 실험실 | `/#lab` | 상황별로 어떤 코드가 왜 맞고 틀리는지 읽기 |
-| 무대 | `/` | 시나리오를 골라 실행하고, 처리 단계를 느린 속도로 재생해 보기 |
+웹은 위쪽 탭 7개로 나뉩니다. 주소의 `#` 뒤 이름으로도 바로 갈 수 있습니다(예: `/#compare`).
+
+| 탭 | 주소 | 하는 일 | 필요한 것 |
+|---|---|---|---|
+| 무대 | `/` | 시나리오를 골라 처리 단계를 느린 속도로 재생해 보기(시뮬레이션) | 없음 |
+| 실행 설정 | `/#run` | 시나리오·처리 방식·앱 대수·부하·데이터·계측 수준·예측을 정하고 실제로 실행 | 오케스트레이터 |
+| 서버 속 | `/#live` | 실행 중인 요청의 처리 단계 타임라인, 락 차단 트리, 커넥션 풀 게이지 | 오케스트레이터 |
+| 지표 | `/#metrics` | 그 실행의 Grafana 대시보드(개요·RED·USE-앱·USE-PG·부하)를 임베드 | 오케스트레이터 + `obs` 프로필 |
+| 실행 기록 | `/#history` | 끝난 실행 목록. 골라서 비교로 보내기 | 오케스트레이터 |
+| 비교 | `/#compare` | 정합성(불변식)을 처리량보다 먼저 두고 실행끼리 견주기. 조건이 다르면 "비교 불가" | 오케스트레이터 |
+| 코드 실험실 | `/#lab` | 상황별로 어떤 코드가 왜 맞고 틀리는지 읽기, "예상"과 "실측" 구분 | 없음 |
+
+무대와 코드 실험실은 저장소 안의 기록·학습 데이터만 읽으므로 Docker 없이 보입니다. 화면 위쪽에 "시뮬레이션"(무대)과 "실측"(서버 속·비교) 배지가 붙어, 가상 기록과 실제 실행값을 섞어 읽지 않게 합니다. 아래에서는 코드 실험실과 무대를 자세히 설명합니다. 실행 설정·서버 속·지표·실행 기록·비교는 위 5절의 흐름을 따라가면 됩니다.
+
 
 ### 코드 실험실
 
@@ -481,13 +654,13 @@ python3 -m http.server 5191 --bind 127.0.0.1 -d design
 | `conditional-update` | 맞음 · 위반 0 · p95 33.94ms | 맞음 · 위반 0 · p95 33.75ms |
 | `app-memory-lock` | 느림 · 위반 0 · p95 4672.62ms · 실패율 13.68% | 깨짐 · 위반 3/3회 · p95 107.1ms |
 
-위 값은 모두 `learn.yaml`에 기록된 3회 중앙값입니다. 조건: 로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal), 앱 각 cpus 1, postgres cpus 2, nginx round-robin, open 모델 200 req/s × 20s(웜업 5s), 3회 반복, 상품 5개 × 재고 100(균등 분포), 요청당 1개, 경합 창 30ms 주입(after-read), k6 timeout 10s. 서버 2대의 `no-lock`은 원장 성공이 총재고 500을 넘은 1083~1114건이었습니다. 절대 수치가 아니라 같은 조건의 처리 방식끼리 비교하는 용도입니다. "느림"의 실패율은 k6 요청 실패 비율이고, `row-lock`은 `lock_timeout` 503이 0건이라 대기가 길어져 생긴 실패입니다(대기의 대부분이 커넥션 풀 획득).
+위 값은 모두 `learn.yaml`에 기록된 3회 중앙값이고, 0단계 실행기(`scripts/run.mjs`)로 쟀습니다. 조건: 로컬 맥(Apple M3 Max, Docker 14 vCPU / 7.7 GiB, profile minimal), 앱 각 cpus 1, postgres cpus 2, nginx round-robin, open 모델 200 req/s × 20s(웜업 5s), 3회 반복, 상품 5개 × 재고 100(균등 분포), 요청당 1개, 경합 창 30ms 주입(after-read), k6 timeout 10s. 서버 2대의 `no-lock`은 원장 성공이 총재고 500을 넘은 1083~1114건이었습니다. 절대 수치가 아니라 같은 조건의 처리 방식끼리 비교하는 용도입니다. "느림"의 실패율은 k6 요청 실패 비율이고, `row-lock`은 `lock_timeout` 503이 0건이라 대기가 길어져 생긴 실패입니다(대기의 대부분이 커넥션 풀 획득).
 
 **상대 비교로만 읽습니다.** 같은 머신·같은 자원 제한·같은 계측 수준에서 "처리 방식 A가 B보다 p95가 낮았다(3회 범위)"처럼 읽습니다. 처리량이나 지연의 절대값을 운영 용량으로 옮기지 않습니다.
 
 > 이 결과는 **로컬 단일 머신**(Docker Desktop VM, CPU·메모리 limit 고정)에서 **처리 방식 간 상대 비교**를 위해 측정한 값입니다. 운영 환경의 처리 용량을 뜻하지 않습니다.
 
-**측정 조건은 결과에 붙어 다닙니다.** 실측 요약에는 머신(CPU, Docker vCPU·메모리), 프로필, 컨테이너별 CPU 제한, 부하 모델과 도착률, 실행 길이, 웜업, 반복 횟수, 데이터 크기·분포가 함께 적힙니다. 조건이 다른 실행끼리는 비교하지 않습니다.
+**측정 조건은 결과에 붙어 다닙니다.** 실측 요약에는 머신(CPU, Docker vCPU·메모리), 프로필(기본·`obs`·`trace`), 컨테이너별 CPU 제한, 부하 모델과 도착률, 실행 길이, 웜업, 반복 횟수, 데이터 크기·분포가 함께 적힙니다. 조건이 다른 실행끼리는 비교하지 않습니다.
 
 **무효 실행은 결과에서 빠집니다.** `metadata.json`의 `validity`에 판정과 사유가 남습니다.
 
@@ -501,7 +674,7 @@ python3 -m http.server 5191 --bind 127.0.0.1 -d design
 
 ## 지금 들어 있는 시나리오
 
-**G02 재고 차감 경합** (`packs/generic/g02-stock-decrement`) — 같은 주문 API에 처리 방식 4개를 갈아 끼웁니다.
+**G02 재고 차감 경합** (`packs/generic/g02-stock-decrement`) — 같은 주문 API에 처리 방식을 갈아 끼웁니다.
 
 | 처리 방식 | 한 줄 설명 |
 |---|---|
@@ -509,17 +682,29 @@ python3 -m http.server 5191 --bind 127.0.0.1 -d design
 | `row-lock` | `SELECT … FOR UPDATE`로 행을 잠그고 차감합니다 |
 | `conditional-update` | `UPDATE … SET stock = stock - 1 WHERE id = ? AND stock >= 1` 한 문장으로 판정과 차감을 같이 합니다 |
 | `app-memory-lock` | 앱 프로세스 메모리의 mutex로 줄 세웁니다. 서버가 2대 이상이면 서로의 mutex를 못 봅니다 |
+| `redis-lock` | Redis `SET NX PX`로 분산 락을 잡습니다(redis가 필요해서 기본 실행 목록에서는 빠지고 명시해야 돕니다) |
+| `advisory-xact-lock` | PostgreSQL `pg_advisory_xact_lock(상품 ID)`로 트랜잭션 동안 잠급니다 |
 
-상황은 8개입니다(동시 2명, 몰림 200 req/s × 서버 1·2대, 핫 상품 집중, DB 지연, 짧은 lock_timeout, 경합 창 30ms 주입 × 서버 1·2대). 0단계 `run.mjs`는 open model·균등 분포·경합 창 지연 주입만 지원합니다. 그래서 지금 실측이 있는 상황은 몰림 200 req/s(서버 1·2대)와 경합 창 30ms 주입(서버 1·2대)입니다. 30ms 주입 상황에서는 `row-lock`·`app-memory-lock`(서버 1대)의 판정이 "느림"(p95 수 초, 요청 타임아웃 실패 13~20%)으로, `app-memory-lock`(서버 2대)은 "깨짐"으로 나옵니다. 값과 조건은 위 "결과 읽는 법"에 있습니다. closed 모델, Zipf 분포, toxiproxy DB 지연, strategy 파라미터를 바꾸는 상황은 아직 "예상"만 있고, 1단계 실행기에서 다룰 예정입니다.
+상황은 8개입니다(동시 2명, 몰림 200 req/s × 서버 1·2대, 핫 상품 집중, DB 지연, 짧은 lock_timeout, 경합 창 30ms 주입 × 서버 1·2대). 1단계 실행기는 open·closed 부하와 균등·Zipf 분포, 경합 창 지연 주입, 처리 방식 파라미터를 지원하므로 학습 데이터의 상황 대부분이 실측으로 채워집니다(`situations.mjs`, 6-2). toxiproxy로 DB 지연을 넣는 상황처럼 3단계에서야 가능한 칸은 "예상"으로 남아 있습니다. 어느 칸이 실측인지는 코드 실험실의 매트릭스에서 봅니다.
 
-**G01 같은 문서 동시 수정** — 무대 화면과 디자인 시안에서 장면으로만 보여 줍니다. 처리 코드는 시안용 예시입니다.
+**G01 같은 문서 동시 수정** (`packs/generic/g01-shared-document`) — 여럿이 같은 문서를 읽고 각자 고쳐 저장할 때 늦게 저장한 쪽이 앞사람 수정을 덮어쓰는(잃어버린 수정) 조건을 다룹니다. 응답이 모두 200이라 겉으로는 아무 일도 없어 보이므로, 판정은 DB에 남은 사실(원장의 성공 토큰과 최종 문서)로 합니다.
+
+| 처리 방식 | 한 줄 설명 |
+|---|---|
+| `naive-overwrite` | 버전을 비교하지 않고 덮어씁니다(기준선) |
+| `blind-retry` | 충돌(409) 뒤 버전만 바꿔 같은 본문을 다시 보냅니다. 서버는 버전 감지와 같고 클라이언트 동작만 다릅니다 |
+| `optimistic-version` | 버전을 비교하고 충돌이면 409. 클라이언트가 다시 읽고 재적용합니다 |
+| `field-merge` | 바뀐 필드만 보내 같은 필드끼리만 충돌시킵니다 |
+| `edit-lease` | 편집 전에 잠금을 잡고, 거절은 423, 늦은 저장은 fence 토큰으로 막습니다 |
+
+G01은 무대 화면(시뮬레이션)과 실제 실행(실행 설정) 두 경로로 모두 볼 수 있고, 코드 실험실에는 상황 5개 × 처리 방식 5개의 판정과 실측이 들어 있습니다. 무대 쪽 G01 결과 카드의 실측 영역은 아직 비어 있습니다.
 
 ## 로드맵
 
 | 단계 | 이름 | 내용 |
 |---|---|---|
-| 0 (진행 중) | 최소 경로 + 코드 실험실 | G02 4개 처리 방식, `run.mjs`, 코드 실험실 |
-| 1 | 기반 | 측정 규율·관측 스택, 실행 설정·비교 화면, G01 |
+| 0 (완료) | 최소 경로 + 코드 실험실 | G02 4개 처리 방식, `run.mjs`, 코드 실험실 |
+| 1 (구현 완료, 실험 노트는 사용자 몫) | 기반 | 측정 규율·관측 스택, 오케스트레이터, 실행 설정·서버 속·지표·기록·비교 화면, G01, 계측 오버헤드 |
 | 2 | 쓰기·락 | 엔진 추출, 데드락·분산 락·멱등키·대량 쓰기 시나리오 |
 | 3 | 과부하·확장 | 커넥션 고갈, PgBouncer, 타임아웃·재시도, 레이트 리밋, 이벤트 루프 블로킹 |
 | 4 | 읽기·비동기 | 캐시 스탬피드, 아웃박스, 인덱스·실행계획, 읽기 복제본 |
@@ -530,6 +715,8 @@ python3 -m http.server 5191 --bind 127.0.0.1 -d design
 관련 문서:
 
 - [설계서](docs/DESIGN.md) — 구조, 측정 원칙, 관측, 화면, 학습 데이터 규약
+- [1단계 인터페이스 계약](docs/CONTRACTS-phase1.md) — RunConfig·REST·실행 메타데이터·지표 이름
+- [계측 오버헤드](docs/overhead.md) — 계측 수준별 비용 실측
 - [시나리오 카탈로그](docs/SCENARIOS.md) — 범용 팩 + 세무 팩(상태 전이·승인 규칙이 많은 업무 도메인 예시)
 - [실험 노트 양식](docs/EXPERIMENT_TEMPLATE.md)
 - [디자인 시스템](design/DESIGN_SYSTEM.md)
@@ -539,12 +726,15 @@ python3 -m http.server 5191 --bind 127.0.0.1 -d design
 ```
 nestjs-under-load/
 ├─ apps/app/            실험 대상 NestJS 앱
-├─ packs/generic/       시나리오 팩(처리 방식, 불변식 SQL, k6 스크립트, learn.yaml)
-├─ infra/compose/       docker compose 구성(모든 포트 127.0.0.1 바인딩)
-├─ scripts/             run.mjs(실행기), measured.mjs(실측 → learn.yaml)
-├─ web/                 코드 실험실·무대 화면(React + Vite)
+├─ engine/contracts/    1단계 계약(zod 스키마·fixture), 오케스트레이터·앱·웹이 함께 씁니다
+├─ orchestrator/        실행 제어 평면(실행 수명주기, DB 초기화, k6 실행, 불변식, 메타데이터, 이벤트 허브)
+├─ packs/generic/       시나리오 팩(처리 방식, 불변식 SQL, k6 스크립트, learn.yaml): G01, G02
+├─ loadtest/            k6 공용 헬퍼(분포, 도착률·동시 사용자 프로파일)
+├─ infra/               compose 구성(모든 포트 127.0.0.1 바인딩), postgres·nginx·redis·관측 스택 설정, k6 실행기
+├─ scripts/             run.mjs(0단계 실행기), measured.mjs(실측 → learn.yaml), acceptance/(완료 기준·상황 실측), overhead/(계측 오버헤드)
+├─ web/                 화면 7개(React + Vite)
 ├─ design/              디자인 시스템과 무대 시안(mockup.html)
-├─ docs/                설계서, 로드맵, 시나리오 카탈로그, 실험 노트
+├─ docs/                설계서, 계약, 로드맵, 시나리오 카탈로그, 오버헤드, 실험 노트
 └─ runs/                실행 결과(로컬 전용, git 제외)
 ```
 

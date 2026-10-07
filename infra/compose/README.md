@@ -25,6 +25,8 @@ node infra/compose/check-config.mjs                                             
 
 기본값은 vCPU 14개 기준이다: k6 `0-1` · app+nginx `2-5` · postgres+redis `6-8` · 관측 `9-11` · 제어 `12-13`. `.env` 의 `CPUSET_*` 로 바꾸고, 비우면 cpuset 없음이다.
 
+vCPU 가 14개보다 적으면 없는 CPU 번호 때문에 컨테이너가 뜨지 않을 수 있다. 그때는 `.env` 에서 `CPUSET_K6=` 처럼 다섯 변수(`CPUSET_K6`·`CPUSET_APP`·`CPUSET_DB`·`CPUSET_OBS`·`CPUSET_CTL`)를 비우거나 실제 vCPU 에 맞춘다. 비우면 cpus 제한만 걸리고 메타데이터에 `cpuset: none` 이 남으며, 기본 상태의 결과와는 비교하지 않는다.
+
 ## 망
 
 lab-net·obs-net·sock-net 은 `internal: true`. ctl-net 에는 호스트 포트를 여는 web(8080)·orchestrator(4000)·nginx(8081)·grafana(3001)·postgres(55432)만 붙는다.
