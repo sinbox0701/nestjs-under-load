@@ -11,6 +11,7 @@ import { ScenarioInfoSchema, type BatchSummary, type RunConfigV1, type RunRow } 
 
 import { loadPackCatalog, registerApiRoutes, createRunConfigBoard } from '../dist/api/index.js';
 import { createRouters, startHttpServers } from '../dist/http/index.js';
+import { computeMeasuredCells, runFacts } from '../dist/learn/index.js';
 import type { K6Runner, MetadataStore, RunEngine, StartResult } from '../dist/ports.js';
 
 const repoDir = path.resolve(import.meta.dirname, '../..');
@@ -317,7 +318,8 @@ describe('C2 API', () => {
       m.data.distribution = 'uniform';
       m.invariants = [{ id: 'sold-equals-decrement', severity: 'critical', violations, passed: violations === 0 }];
       m.validity = { ...m.validity, valid, droppedCountedAsFailure: false };
-      m.k6 = { httpReqs: 3000 + n * 30, failed: 0, droppedIterations: 0, latencyMs: { p95: 2 + n } };
+      // v1 모양(ports K6Summary)
+      m.k6 = { requests: 3000 + n * 30, throughputRps: 100 + n, httpFailures: 0, dropped: 0, latencyMs: { success: { p50: 1, p95: 2 + n, p99: 9, n: 3000 }, failed: { p50: null, p95: null, p99: null, n: 0 } } };
       m.ledgerVsClient = { ledger: { success: 500 } };
       store.metadata.set(m.runId, m);
       store.runs.push({ ...runRow, runId: m.runId, batchId: 'L', repetition: n, strategy: 'no-lock', appInstances: 1, model: 'closed', status: 'done' });
@@ -337,7 +339,7 @@ describe('C2 API', () => {
     assert.deepEqual(cell.measured.runs, ['L_r1', 'L_r2']);
     assert.equal(cell.measured.run, 'L');
     assert.deepEqual(cell.measured.violations, { 'sold-equals-decrement': [0, 2] });
-    assert.deepEqual(cell.measured.throughputRps, { median: 101.5, min: 101, max: 102 });
+    assert.deepEqual(cell.measured.throughputRps, { median: 101.5, min: 101, max: 102 }); // v1 k6.throughputRps 그대로
     assert.deepEqual(cell.measured.p95Ms, { median: 3.5, min: 3, max: 4 });
     assert.match(cell.measured.summary, /위반 1\/2회 발생/);
     assert.match(cell.measured.summary, /무효 1회 제외/);
@@ -366,5 +368,58 @@ describe('C2 API', () => {
 
   it('공개 리스너에는 /internal 라우트가 없다', async () => {
     assert.equal((await call(pub, 'GET', '/internal/run-config?instance=a')).status, 404);
+  });
+});
+
+describe('learn measured 계산', () => {
+  const mk = (batchId: string, reps: number, validity: boolean[], model = 'v1') => {
+    const mds = [];
+    for (let n = 1; n <= reps; n++) {
+      const m = clone(md1);
+      Object.assign(m, { runId: `${batchId}_r${n}`, batchId, repetition: n, strategy: { id: 'no-lock', params: {} } });
+      m.topology.appInstances = 1;
+      m.load = { ...m.load, model: 'closed', vus: 2, duration: '30s' };
+      m.interventions = [];
+      m.data.rows = { products: 5 };
+      m.data.seedOptions = { products: 5, stockPerProduct: 100 };
+      m.validity = { ...m.validity, valid: validity[n - 1] ?? true };
+      m.k6 = model === 'v1' ? { requests: 3000, throughputRps: 100, httpFailures: 0, dropped: 0, latencyMs: { success: { p95: 3 } } } : { httpReqs: 3000, failed: 0, droppedIterations: 0, latencyMs: { p95: 3 } };
+      mds.push(m);
+    }
+    return mds;
+  };
+  const situations = loadPackCatalog(repoDir).learnSituations('g02-stock-decrement')!;
+
+  it('v1 k6 모양과 v0 k6 모양에서 같은 수치를 읽는다(v0 처리량 = httpReqs / duration)', () => {
+    const a = runFacts(mk('a', 1, [], 'v1')[0]);
+    const b = runFacts(mk('b', 1, [], 'v0')[0]);
+    assert.equal(a.throughputRps, 100);
+    assert.equal(b.throughputRps, 100); // 3000 / 30s
+    assert.equal(a.p95Ms, 3);
+    assert.equal(b.p95Ms, 3);
+    assert.equal(a.failRatePct, 0);
+  });
+
+  it('실패율은 http 실패 + (counted 일 때) dropped 를 시도 수로 나눈다', () => {
+    const m = mk('a', 1, [])[0];
+    m.k6 = { requests: 900, throughputRps: 30, httpFailures: 50, dropped: 100, latencyMs: { success: { p95: 1 } } };
+    m.validity.droppedCountedAsFailure = true;
+    assert.equal(runFacts(m).failRatePct, 15); // (50+100)/(900+100)
+    m.validity.droppedCountedAsFailure = false;
+    assert.equal(runFacts(m).failRatePct, 5);
+  });
+
+  it('같은 셀에 batch 가 여럿이면 유효 반복이 가장 많은 것, 동률이면 최신', () => {
+    const three = mk('three', 3, []);
+    const tmpNewer = mk('tmp', 1, []); // 더 최신이지만 1회
+    const cells = computeMeasuredCells(situations, [tmpNewer, three]);
+    assert.equal(cells.length, 1);
+    assert.equal(cells[0]!.measured.run, 'three');
+
+    // 3회 중 2회가 무효면 유효 반복은 1 → 최신 1회 배치와 동률이라 최신이 이긴다
+    const threeBad = mk('bad', 3, [true, false, false]);
+    assert.equal(computeMeasuredCells(situations, [tmpNewer, threeBad])[0]!.measured.run, 'tmp');
+    // 동률 3 vs 3 → 앞(최신)
+    assert.equal(computeMeasuredCells(situations, [mk('new', 3, []), three])[0]!.measured.run, 'new');
   });
 });

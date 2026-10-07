@@ -28,13 +28,23 @@ export function durationToSeconds(d: string): number {
 export const CONTENTION_POINT = 'after-read';
 const isContentionWindow = (d: Md) => d.type === 'inject-delay' && d.point === CONTENTION_POINT;
 
+const numOf = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/**
+ * 실행 하나의 핵심 수치. metadata.k6 모양 둘을 받는다(MetadataStore 의 batch-summary 와 같은 규칙).
+ * - v1(ports K6Summary): { requests, throughputRps, httpFailures, dropped, latencyMs: { success: { p95 } } }
+ * - 0단계 v0: { httpReqs, failed, droppedIterations, latencyMs: { p95 } }
+ * 처리량 = 본 실행 응답 수 / 본 실행 길이(초). v1 은 k6.throughputRps 그대로, v0 는 httpReqs / duration.
+ */
 export function runFacts(md: Md) {
   const k6 = md.k6 ?? {};
   const durationSec = durationToSeconds(md.load.duration);
-  const dropped = k6.droppedIterations ?? 0;
-  const attempted = (k6.httpReqs ?? 0) + dropped;
+  const requests = numOf(k6.requests) ?? numOf(k6.httpReqs);
+  const dropped = numOf(k6.dropped) ?? numOf(k6.droppedIterations) ?? 0;
+  const attempted = (requests ?? 0) + dropped;
   // dropped 는 maxVUs 가 충분할 때만 실패로 센다(DESIGN §7.2). 부족하면 애초에 무효 실행이다.
-  const failed = (k6.failed ?? 0) + (md.validity?.droppedCountedAsFailure ? dropped : 0);
+  const failed = (numOf(k6.httpFailures) ?? numOf(k6.failed) ?? 0) + (md.validity?.droppedCountedAsFailure ? dropped : 0);
+  const lat = k6.latencyMs ?? {};
   const violations: Record<string, number | null> = Object.fromEntries(
     (md.invariants ?? []).filter((i: Md) => i.severity !== 'info').map((i: Md) => [i.id, i.violations]),
   );
@@ -45,9 +55,8 @@ export function runFacts(md: Md) {
     violations,
     violationTotal: Object.values(violations).reduce<number>((a, b) => a + (b ?? 0), 0),
     ledgerSuccess: (ledger?.success ?? null) as number | null,
-    // 처리량 = 본 실행 구간에 응답을 받은 요청 수 / 본 실행 길이
-    throughputRps: k6.httpReqs != null ? (k6.httpReqs as number) / durationSec : null,
-    p95Ms: (k6.latencyMs?.p95 ?? null) as number | null,
+    throughputRps: numOf(k6.throughputRps) ?? (requests != null && durationSec > 0 ? requests / durationSec : null),
+    p95Ms: numOf(lat.success?.p95) ?? numOf(lat.p95),
     failRatePct: attempted > 0 ? (failed / attempted) * 100 : null,
     k6CpuAvgRatio: (md.validity?.k6CpuAvgRatio ?? null) as number | null,
   };
@@ -161,19 +170,23 @@ export function buildMeasured(mds: Md[], situation: Situation): Record<string, u
 
 /**
  * batch 들 → 셀 목록. `batchesNewestFirst` 는 최신 batch 가 앞이다.
- * 같은 (strategy, situation) 에 여러 batch 가 대응하면 최신 것만 쓴다(measured.mjs 의 "덮어쓴다"와 같은 결과).
+ * 같은 (strategy, situation) 에 batch 가 여럿 대응하면 **유효 반복 수가 가장 많은 batch**, 동률이면 최신을 쓴다
+ * (1회짜리 임시 batch 가 3회 batch 를 덮지 않게 한다).
  */
 export function computeMeasuredCells(situations: Situation[], batchesNewestFirst: Md[][]): MeasuredCell[] {
-  const cells = new Map<string, MeasuredCell>();
+  const cells = new Map<string, MeasuredCell & { validReps: number }>();
   for (const mds of batchesNewestFirst) {
     if (mds.length === 0) continue;
     const key = batchKey(mds[0]!);
     const situation = matchSituation(situations, key);
     if (!situation) continue;
-    const id = `${key.strategy}\u0000${situation.id}`;
-    if (cells.has(id)) continue;
     const measured = buildMeasured(mds, situation);
-    if (measured) cells.set(id, { strategy: key.strategy, situation: situation.id, measured });
+    if (!measured) continue;
+    const validReps = (measured.runs as string[]).length;
+    const id = `${key.strategy}\u0000${situation.id}`;
+    const prev = cells.get(id);
+    // 엄격히 더 많을 때만 바꾼다: 동률이면 먼저 본(더 최신) 것이 남는다.
+    if (!prev || validReps > prev.validReps) cells.set(id, { strategy: key.strategy, situation: situation.id, measured, validReps });
   }
-  return [...cells.values()];
+  return [...cells.values()].map(({ validReps: _v, ...cell }) => cell);
 }
