@@ -30,25 +30,28 @@ export class NoLockStrategy implements G02Strategy {
   async execute(cmd: OrderCommand, ctx: StrategyContext): Promise<OrderResult> { // @event arrived
     const entity = { type: 'Product', id: String(cmd.productId) };
     ctx.events.emit('arrived', { entity });
-    return ctx.em.transactional(async (em) => { // @learn tx-boundary — 재고 변경과 원장을 한 트랜잭션(READ COMMITTED)으로 묶는다. 트랜잭션만으로는 동시 차감을 막지 못한다
-      const product = await em.findOneOrFail(Product, cmd.productId); // @event db_read
-      ctx.events.emit('db_read', { entity });
-      const seen = product.stock; // @learn read-then-write — 락 없이 읽은 값. 여기서 UPDATE까지가 경합 창이고, 그 사이 다른 커밋이 끼어도 모른다
-      const delayStart = performance.now();
-      await ctx.contentionWindow('after-read'); // @event injected_delay
-      const delayed = performance.now() - delayStart;
-      if (delayed >= 0.5) ctx.events.emit('injected_delay', { entity, injected: true, durMs: delayed });
-      if (seen < cmd.qty) { // @learn app-side-check — 판정 근거가 '읽었던 과거 값'이다. 최신 재고가 아니다
-        await ctx.ledger.record(em, cmd, 'sold_out');
-        ctx.events.emit('committed', { entity });
-        return 'sold_out' as const;
-      }
-      product.stock = seen - cmd.qty; // @learn app-computed-set — 앱이 계산한 상수를 SET 한다. DB의 현재값과 상관없이 덮어쓰므로 잃어버린 갱신이 난다
-      await em.flush(); // @event db_write
-      ctx.events.emit('db_write', { entity });
-      await ctx.ledger.record(em, cmd, 'success'); // @learn ledger-same-tx — 원장 INSERT(요청 ID·txid)는 모든 strategy가 같은 비용으로 같은 트랜잭션에서 한다
+    try {
+      const result = await ctx.em.transactional(async (em) => { // @learn tx-boundary — 재고 변경과 원장을 한 트랜잭션(READ COMMITTED)으로 묶는다. 트랜잭션만으로는 동시 차감을 막지 못한다
+        const product = await em.findOneOrFail(Product, cmd.productId); // @event db_read
+        ctx.events.emit('db_read', { entity });
+        const seen = product.stock; // @learn read-then-write — 락 없이 읽은 값. 여기서 UPDATE까지가 경합 창이고, 그 사이 다른 커밋이 끼어도 모른다
+        const delay = await ctx.contentionWindow('after-read'); // @event injected_delay
+        if (delay?.injected) ctx.events.emit('injected_delay', { entity, injected: true, durMs: delay.durMs });
+        if (seen < cmd.qty) { // @learn app-side-check — 판정 근거가 '읽었던 과거 값'이다. 최신 재고가 아니다
+          await ctx.ledger.record(em, cmd, 'sold_out');
+          return 'sold_out' as const;
+        }
+        product.stock = seen - cmd.qty; // @learn app-computed-set — 앱이 계산한 상수를 SET 한다. DB의 현재값과 상관없이 덮어쓰므로 잃어버린 갱신이 난다
+        await em.flush(); // @event db_write
+        ctx.events.emit('db_write', { entity });
+        await ctx.ledger.record(em, cmd, 'success'); // @learn ledger-same-tx — 원장 INSERT(요청 ID·txid)는 모든 strategy가 같은 비용으로 같은 트랜잭션에서 한다
+        return 'success' as const;
+      }); // @event committed rolled_back
       ctx.events.emit('committed', { entity });
-      return 'success' as const;
-    }); // @event committed rolled_back
+      return result;
+    } catch (err) {
+      ctx.events.emit('rolled_back', { entity });
+      throw err;
+    }
   }
 }

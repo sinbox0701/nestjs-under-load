@@ -52,12 +52,6 @@ const STRATEGY_FILES = {
   'conditional-update': 'conditional-update.strategy.ts',
 };
 
-/** 마커 주석에는 있지만 emit 호출이 없는 phase. 마커 줄을 못 고치는 제약 때문에 생긴 알려진 빈틈이다. */
-const KNOWN_GAPS = {
-  // 트랜잭션이 `return ctx.em.transactional(...)` 한 문장이라 예외 경로(롤백)를 잡을 자리가 없다.
-  'no-lock': ['rolled_back'],
-};
-
 function recorder() {
   const events = [];
   return { events, sink: { enabled: true, emit: (phase, fields) => events.push({ phase, ...fields }) } };
@@ -145,6 +139,64 @@ describe('G02 strategy 이벤트 방출(가짜 DB)', () => {
     }
   });
 
+  test('committed·lock_released 는 실제 COMMIT 뒤에 나온다', async () => {
+    const conn = fake.orm.em.getConnection();
+    const origCommit = conn.commit;
+    try {
+      for (const id of Object.keys(STRATEGY_FILES)) {
+        const log = [];
+        conn.commit = async (...a) => {
+          log.push('COMMIT');
+          return origCommit(...a);
+        };
+        fake.db.products.clear();
+        fake.seed(5);
+        const { strategy, params } = makeStrategy(id);
+        const sink = { enabled: true, emit: (phase) => log.push(phase) };
+        await strategy.execute(cmd(1, 1), makeCtx(fake.orm.em, { params, events: sink }));
+        const at = log.indexOf('COMMIT');
+        assert.ok(at >= 0, id);
+        for (const p of ['committed', 'lock_released']) {
+          if (log.includes(p)) assert.ok(log.indexOf(p) > at, `${id}: ${p} 가 COMMIT 보다 앞: ${log.join(',')}`);
+        }
+      }
+    } finally {
+      conn.commit = origCommit;
+    }
+  });
+
+  test('no-lock·conditional-update: 예외면 rolled_back, committed 는 없다', async () => {
+    for (const id of ['no-lock', 'conditional-update']) {
+      fake.db.products.clear(); // 상품 없음: no-lock 은 findOneOrFail 예외, conditional-update 는 404
+      const { strategy, params } = makeStrategy(id);
+      const { events, sink } = recorder();
+      await assert.rejects(strategy.execute(cmd(1, 1), makeCtx(fake.orm.em, { params, events: sink })), undefined, id);
+      const phases = events.map((e) => e.phase);
+      assert.ok(phases.includes('rolled_back'), id);
+      assert.ok(!phases.includes('committed'), id);
+    }
+  });
+
+  test('conditional-update: lock_acquired 가 db_write 앞, 정상 경로 순서', async () => {
+    const { events } = await run('conditional-update');
+    assert.deepEqual(events.map((e) => e.phase), ['arrived', 'lock_acquired', 'db_write', 'committed', 'lock_released']);
+  });
+
+  test('row-lock: 잠금을 못 얻으면 lock_released 를 내지 않는다(lock_timeout → rolled_back 순)', async () => {
+    fake.db.products.clear();
+    fake.seed(5);
+    fake.db.failOn = /for update/;
+    fake.db.failError = Object.assign(new Error('lock timeout'), { code: '55P03' });
+    try {
+      const { strategy, params } = makeStrategy('row-lock');
+      const { events, sink } = recorder();
+      await assert.rejects(strategy.execute(cmd(1, 1), makeCtx(fake.orm.em, { params, events: sink })));
+      assert.deepEqual(events.map((e) => e.phase), ['arrived', 'lock_timeout', 'rolled_back']);
+    } finally {
+      fake.db.failOn = null;
+    }
+  });
+
   test('AC-4 주입 지연이 걸리면 injected_delay 가 injected=true 로 나온다', async () => {
     for (const id of Object.keys(STRATEGY_FILES)) {
       const { events } = await run(id, { delays: [{ point: 'after-read', ms: 15 }] });
@@ -175,7 +227,7 @@ describe('AC-2 마커 phase 집합 = emit phase 집합(소스 스캔)', () => {
       const missing = [...marked].filter((p) => !emitted.has(p)).sort();
       const extra = [...emitted].filter((p) => !marked.has(p)).sort();
       assert.deepEqual(extra, [], `${id}: 마커에 없는 phase 를 emit`);
-      assert.deepEqual(missing, KNOWN_GAPS[id] ?? [], `${id}: emit 없는 마커 phase`);
+      assert.deepEqual(missing, [], `${id}: emit 없는 마커 phase`);
     });
   }
 });
