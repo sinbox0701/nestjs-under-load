@@ -118,9 +118,16 @@ export type TemplateStatus = { exists: boolean; isTemplate: boolean };
 
 /** 관리자 권한 PG 작업. 실행 DB 이름(`lab_run`)은 설정에서 온다. */
 export interface DbAdmin {
-  /** 템플릿 DB 이름 규칙(`tpl_<시나리오 짧은 이름>_<해시>`)을 한 곳에서 정한다: 시나리오·seed·seedOptions 가 같으면 같은 이름. */
-  templateName(scenarioId: string, data: RunRequest['data']): string;
+  /**
+   * 템플릿 DB 이름 규칙(`tpl_<시나리오 짧은 이름>_<해시>`)을 한 곳에서 정한다: 시나리오·seed·seedOptions·
+   * 팩 마이그레이션 파일 내용(`<invariantsSqlPath 의 폴더>/migrations/*.ts`)이 같으면 같은 이름.
+   */
+  templateName(scenario: ScenarioDef, data: RunRequest['data']): Promise<string>;
   templateStatus(name: string): Promise<TemplateStatus>;
+  /** 빈 템플릿 DB 를 `CREATE DATABASE … OWNER <appUser>` 로 만든다(마이그레이션·시드는 app 의 prepare-template). */
+  createTemplateDb(name: string): Promise<void>;
+  /** 템플릿 DB 잔재 정리: is_template 를 풀고 `DROP DATABASE IF EXISTS … WITH (FORCE)`. 없으면 no-op. */
+  dropTemplateDb(name: string): Promise<void>;
   /** prepare-template 이 끝난 DB 를 `is_template=true` 로 표시. */
   markTemplate(name: string): Promise<void>;
   /**
