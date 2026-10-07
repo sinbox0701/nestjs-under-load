@@ -1,6 +1,6 @@
 // 실제 PostgreSQL 통합 테스트: naive-overwrite · optimistic-version · blind-retry.
-// 도커(compose postgres, 127.0.0.1:55432)가 꺼져 있으면 skip 하고 그 사실을 출력한다.
-// 다른 DB를 쓰려면 G01_TEST_DATABASE_URL=postgresql://user:pass@host:port/db (CREATE DATABASE 권한 필요).
+// G01_TEST_DATABASE_URL 이 있을 때만 실행하고, 없으면 접속 시도 없이 skip 한다(기본 포트로 자동 접속하지 않는다).
+// 예: G01_TEST_DATABASE_URL=postgresql://postgres:pw@127.0.0.1:55499/postgres (일회용 PG 컨테이너, CREATE DATABASE 권한 필요).
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 
