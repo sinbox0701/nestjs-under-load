@@ -1,12 +1,13 @@
 // buildMetadata·completeness·summarizeBatch 테스트.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { BatchSummarySchema, RunMetadataV1Schema, RunRequestSchema } from '@under-load/contracts';
 import type { RunMetadataV1 } from '@under-load/contracts';
 
-import { buildMetadata, completeness, summarizeBatch } from '../dist/metadata/index.js';
+import { buildMetadata, completeness, durationToMs, summarizeBatch } from '../dist/metadata/index.js';
 
 const fixture = (name: string): unknown => JSON.parse(readFileSync(new URL(`../../engine/contracts/fixtures/${name}`, import.meta.url), 'utf8'));
 const request = RunRequestSchema.parse(fixture('run-request.json'));
@@ -92,7 +93,8 @@ describe('summarizeBatch', () => {
     BatchSummarySchema.parse(summary);
     assert.deepEqual(summary.runIds, [v0.runId]);
     assert.equal(summary.validity.validReps, 1);
-    assert.equal(summary.throughputRps?.median, 200.0211124108886);
+    // 처리량 = httpReqs(4001) / 본 실행 20s. k6 http_reqs.rate(200.02...)가 아니다.
+    assert.equal(summary.throughputRps?.median, 4001 / 20);
     assert.deepEqual(summary.latencyMs.success.n, [4001]);
     assert.deepEqual(summary.failures.total, [0]);
     assert.equal(summary.invariants.length, 5);
@@ -104,5 +106,32 @@ describe('summarizeBatch', () => {
     assert.deepEqual(summary.runIds, []);
     assert.equal(summary.throughputRps, null);
     assert.deepEqual(summary.badges, ['closed-latency-caution']);
+  });
+});
+
+describe('처리량 정의(0단계 measured.mjs 와 동일)', () => {
+  const rec = { batchId: 'b', sessionId: 's', scenario: 'g02-stock-decrement', strategy: 'x', appInstances: 1, loadModel: 'open' as const, reps: 1 };
+
+  it('v1 은 k6.throughputRps 를 그대로 쓴다', () => {
+    const md = RunMetadataV1Schema.parse({ ...(fixture('metadata.v1.json') as object), k6: { throughputRps: 123.4, httpFailures: 0, dropped: 0 } });
+    assert.equal(summarizeBatch(rec, [md]).throughputRps?.median, 123.4);
+  });
+
+  // 0단계 실제 runs/ 가 있을 때만(공개 레포에는 없다). learn.yaml measured 의 throughputRps 와 같은 규칙으로 대조한다.
+  const runsDir = process.env.LAB_PHASE0_RUNS ?? new URL('../../runs/', import.meta.url).pathname;
+  const have = existsSync(runsDir);
+  it('0단계 실제 metadata.json 의 처리량이 measured.mjs 규칙(httpReqs / 길이)과 일치한다', { skip: !have && '0단계 runs/ 없음' }, () => {
+    let checked = 0;
+    for (const dir of readdirSync(runsDir)) {
+      const file = join(runsDir, dir, 'metadata.json');
+      if (!existsSync(file)) continue;
+      const md = JSON.parse(readFileSync(file, 'utf8')) as { k6?: { httpReqs?: number }; load: { duration: string; model: 'open' | 'closed' } };
+      if (md.k6?.httpReqs == null) continue;
+      const sec = durationToMs(md.load.duration)! / 1000;
+      const got = summarizeBatch({ ...rec, loadModel: md.load.model }, [md as never]).throughputRps?.median;
+      assert.equal(got, md.k6.httpReqs / sec, dir);
+      checked++;
+    }
+    assert.ok(checked > 0);
   });
 });

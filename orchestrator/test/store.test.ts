@@ -141,7 +141,7 @@ describe('SqliteMetadataStore', () => {
     assert.deepEqual(summary?.runIds, [v0.runId]);
     assert.equal(summary?.reps, 3);
     assert.equal(summary?.validity.validReps, 1);
-    assert.equal(summary?.throughputRps?.median, 200.0211124108886);
+    assert.equal(summary?.throughputRps?.median, 4001 / 20);
     assert.deepEqual((await store.getSessionBatches(v0.sessionId)).map((b) => b.batchId), [v0.batchId]);
   });
 
