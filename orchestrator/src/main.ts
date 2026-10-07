@@ -342,7 +342,7 @@ export type MetadataAdapterContext = {
   stackProfiles: readonly StackProfile[];
   /** 세션 시작 때 갱신한 git 정보 */
   git: () => GitInfo;
-  catalog: Pick<PackCatalog, 'info'>;
+  catalog: Pick<PackCatalog, 'info' | 'get'>;
   redisMaxmemoryPolicy: string | null;
   /** 오케스트레이터가 도는 Docker VM 의 아키텍처·CPU 모델(테스트 고정용) */
   host?: { arch: string | null; cpu: string | null };
@@ -411,12 +411,16 @@ export function createMetadataBuilder(c: MetadataAdapterContext): MetadataBuilde
     const scrapeGaps: RunMetadataV1['validity']['checks']['scrapeGaps'] =
       sg?.status === 'ok' ? { gaps: sg.gaps, ...(sg.details ? { details: sg.details } : {}) } : sg || !obsOn ? NOT_MEASURED : null;
 
+    // strategy.params·timeouts.lockMs 는 manifest 기본값을 병합한 실효값을 적는다(요청이 비워도 기본값이 남는다).
+    const sid = input.strategy.id;
+    const defaults = c.catalog.get(input.request.scenario)?.strategies.find((s) => s.id === sid)?.params ?? {};
+    const effectiveParams = { ...defaults, ...(input.request.strategyParams[sid] ?? {}), ...input.strategy.params };
     const md = buildMetadata({
       runId: input.runId,
       batchId: input.batchId,
       sessionId: input.sessionId,
       repetition: input.repetition,
-      request: input.request,
+      request: { ...input.request, strategyParams: { ...input.request.strategyParams, [sid]: effectiveParams } },
       strategy: input.strategy.id,
       appInstances: input.appInstances,
       startedAt: input.startedAt,

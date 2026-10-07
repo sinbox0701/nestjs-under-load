@@ -506,6 +506,9 @@ describe('어댑터', () => {
       k6: { ...input.k6, summary: null },
     });
     assert.deepEqual(md2.redis, { used: false, maxmemoryPolicy: null });
+    // T-153 AC-3: strategyParams 를 비운 row-lock 도 manifest 기본값(lockTimeoutMs)을 실효값으로 적는다
+    assert.equal(md2.strategy.params.lockTimeoutMs, 1000);
+    assert.equal(md2.timeouts.lockMs, 1000);
     assert.deepEqual(md2.validity.checks.scrapeGaps, { gaps: 1, details: { series: 3 } });
     assert.equal(md2.k6, null);
     assert.deepEqual(md2.stack.profiles, ['obs']);
