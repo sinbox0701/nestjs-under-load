@@ -1,0 +1,254 @@
+{
+  "comparable": true,
+  "axis": "topology.appInstances",
+  "diffs": [
+    {
+      "path": "topology.appInstances",
+      "values": [
+        1,
+        2
+      ],
+      "kind": "axis"
+    },
+    {
+      "path": "git.sha",
+      "values": [
+        "789edc9",
+        "8ba31a9"
+      ],
+      "kind": "warning"
+    }
+  ],
+  "codeVersionDiffers": true,
+  "batches": [
+    {
+      "batchId": "2026-10-07T09-00-00Z_g02_app-memory-lock_i1",
+      "scenario": "g02-stock-decrement",
+      "strategy": "app-memory-lock",
+      "appInstances": 1,
+      "loadModel": "closed",
+      "reps": 3,
+      "runIds": [
+        "2026-10-07T09-00-00Z_g02_app-memory-lock_i1_r1",
+        "2026-10-07T09-00-00Z_g02_app-memory-lock_i1_r2",
+        "2026-10-07T09-00-00Z_g02_app-memory-lock_i1_r3"
+      ],
+      "invariants": [
+        {
+          "id": "sold-equals-decrement",
+          "severity": "critical",
+          "violations": [
+            0,
+            0,
+            0
+          ],
+          "passed": [
+            true,
+            true,
+            true
+          ]
+        },
+        {
+          "id": "ledger-matches-k6",
+          "severity": "info",
+          "violations": [
+            null,
+            null,
+            null
+          ],
+          "passed": [
+            null,
+            null,
+            null
+          ]
+        }
+      ],
+      "validity": {
+        "validReps": 3,
+        "invalidReasons": [
+          [],
+          [],
+          []
+        ]
+      },
+      "throughputRps": {
+        "median": 1702.4,
+        "min": 1690.1,
+        "max": 1711.8
+      },
+      "latencyMs": {
+        "success": {
+          "p50": {
+            "median": 21.3,
+            "min": 20.9,
+            "max": 22.4
+          },
+          "p95": {
+            "median": 48.2,
+            "min": 46,
+            "max": 51.7
+          },
+          "p99": {
+            "median": 77.5,
+            "min": 70.2,
+            "max": 83.1
+          },
+          "n": [
+            51020,
+            50710,
+            51310
+          ]
+        },
+        "failed": {
+          "p95": null,
+          "n": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "failures": {
+        "http": [
+          0,
+          0,
+          0
+        ],
+        "dropped": [
+          0,
+          0,
+          0
+        ],
+        "droppedCountedAsFailure": [
+          true,
+          true,
+          true
+        ],
+        "total": [
+          0,
+          0,
+          0
+        ]
+      },
+      "interventions": [],
+      "badges": [
+        "closed-latency-caution"
+      ]
+    },
+    {
+      "batchId": "2026-10-07T09-00-00Z_g02_app-memory-lock_i2",
+      "scenario": "g02-stock-decrement",
+      "strategy": "app-memory-lock",
+      "appInstances": 2,
+      "loadModel": "closed",
+      "reps": 3,
+      "runIds": [
+        "2026-10-07T09-00-00Z_g02_app-memory-lock_i2_r1",
+        "2026-10-07T09-00-00Z_g02_app-memory-lock_i2_r2",
+        "2026-10-07T09-00-00Z_g02_app-memory-lock_i2_r3"
+      ],
+      "invariants": [
+        {
+          "id": "sold-equals-decrement",
+          "severity": "critical",
+          "violations": [
+            1,
+            0,
+            0
+          ],
+          "passed": [
+            false,
+            true,
+            true
+          ]
+        },
+        {
+          "id": "ledger-matches-k6",
+          "severity": "info",
+          "violations": [
+            null,
+            null,
+            null
+          ],
+          "passed": [
+            null,
+            null,
+            null
+          ]
+        }
+      ],
+      "validity": {
+        "validReps": 3,
+        "invalidReasons": [
+          [],
+          [],
+          []
+        ]
+      },
+      "throughputRps": {
+        "median": 1702.4,
+        "min": 1690.1,
+        "max": 1711.8
+      },
+      "latencyMs": {
+        "success": {
+          "p50": {
+            "median": 21.3,
+            "min": 20.9,
+            "max": 22.4
+          },
+          "p95": {
+            "median": 48.2,
+            "min": 46,
+            "max": 51.7
+          },
+          "p99": {
+            "median": 77.5,
+            "min": 70.2,
+            "max": 83.1
+          },
+          "n": [
+            51020,
+            50710,
+            51310
+          ]
+        },
+        "failed": {
+          "p95": null,
+          "n": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "failures": {
+        "http": [
+          0,
+          0,
+          0
+        ],
+        "dropped": [
+          0,
+          0,
+          0
+        ],
+        "droppedCountedAsFailure": [
+          true,
+          true,
+          true
+        ],
+        "total": [
+          0,
+          0,
+          0
+        ]
+      },
+      "interventions": [],
+      "badges": [
+        "closed-latency-caution"
+      ]
+    }
+  ],
+  "honestyNote": "로컬 단일 머신의 상대 비교다. 절대 수치로 읽지 않는다."
+}

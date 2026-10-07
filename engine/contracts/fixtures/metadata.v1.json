@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+  "batchId": "2026-10-07T09-00-00Z_g02_row-lock_i2",
+  "sessionId": "2026-10-07T09-00-00Z_a1b2",
+  "repetition": 1,
+  "scenario": "g02-stock-decrement",
+  "strategy": { "id": "row-lock", "params": { "lockTimeoutMs": 1000 } },
+  "git": { "sha": "789edc9", "dirty": false },
+  "images": {
+    "app": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "postgres": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "k6": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "nginx": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "redis": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "profile": "default",
+  "stack": { "profiles": ["obs"] },
+  "host": {
+    "dockerNcpu": 14,
+    "dockerMemBytes": 8214323200,
+    "os": "darwin",
+    "arch": "arm64",
+    "cpu": "apple-silicon(P/E)",
+    "dockerDesktopVersion": "4.48.0"
+  },
+  "limits": {
+    "app": { "cpus": 1, "mem": "512m", "cpuset": "2-3" },
+    "nginx": { "cpus": 0.5, "mem": "128m", "cpuset": "none" },
+    "postgres": { "cpus": 2, "mem": "2g", "cpuset": "4-5" },
+    "k6": { "cpus": 2, "mem": "1g", "cpuset": "0-1" }
+  },
+  "topology": { "appInstances": 2, "lb": "round-robin", "dbPath": "direct", "proxy": "off", "replica": false },
+  "pool": { "min": 2, "max": 10, "acquireTimeoutMs": 2000 },
+  "postgres": {
+    "configHash": "sha256:bfddde1d29added60b3859d077d537272f17ec559f95bf6362519d70cd4c09da",
+    "maxConnections": 100,
+    "sharedBuffers": "512MB",
+    "observerConnections": 2,
+    "appRoleConnectionLimit": -1
+  },
+  "timeouts": { "k6RequestMs": 10000, "serverRequestMs": 5000, "poolAcquireMs": 2000, "statementMs": 3000, "lockMs": 1000, "idleInTxMs": 10000 },
+  "redis": { "used": false, "maxmemoryPolicy": null },
+  "data": {
+    "seed": 42,
+    "seedHash": "sha256:4f95acf045b592f70365b33e2ab4fd55fe850189a37ebce0254bc72b42c22ba6",
+    "templateDb": "tpl_g02_4f95acf045b5",
+    "seedOptions": { "products": 5, "warmupProducts": 5, "stockPerProduct": 100 },
+    "rows": { "products": 5, "warmupProducts": 5 },
+    "distribution": "uniform",
+    "scenarioParams": { "qty": 1 }
+  },
+  "load": {
+    "model": "closed",
+    "executor": "constant-vus",
+    "profile": "constant",
+    "vus": 50,
+    "rate": null,
+    "timeUnit": null,
+    "preAllocatedVUs": null,
+    "maxVUs": null,
+    "duration": "30s",
+    "warmup": "10s(별도 실행)",
+    "thinkTimeMs": [0, 0]
+  },
+  "k6Script": { "hash": "sha256:2dc3997eb56f2c6f24cc604dac697534483edd4e1a6762cbb5be6a83e95a9758", "edited": false },
+  "instrumentation": "metrics",
+  "pgProbe": { "enabled": true, "intervalMs": 5000 },
+  "interventions": [{ "type": "inject-delay", "point": "after-read", "ms": 30 }],
+  "chaos": [],
+  "coldStart": false,
+  "osCacheControlled": false,
+  "validity": {
+    "valid": true,
+    "reasons": [],
+    "k6CpuAvgRatio": 0.41,
+    "droppedCountedAsFailure": true,
+    "checks": {
+      "k6Cpu": { "cores": 2, "wallSec": 30.2, "usageSec": 24.8, "avgRatio": 0.41, "throttledPeriodRatio": 0 },
+      "scrapeGaps": { "gaps": 0 }
+    }
+  },
+  "invariants": [
+    { "id": "no-negative-stock", "severity": "critical", "violations": 0, "passed": true },
+    { "id": "sold-equals-decrement", "severity": "critical", "violations": 0, "passed": true },
+    { "id": "ledger-matches-k6", "severity": "info", "violations": null, "passed": null, "value": { "success": 500, "sold_out": 1210, "total": 1710 } }
+  ],
+  "ledgerVsClient": { "ledger": { "success": 500, "soldOut": 1210 }, "client": { "success": 500, "soldOut": 1210, "failed": 0, "dropped": 0 } },
+  "k6": { "exitCode": 0, "httpReqs": 1710 },
+  "prediction": "no-lock이 2대에서 위반할 것이다",
+  "steps": [
+    { "name": "app 정지", "at": "2026-10-07T09:00:00.100Z" },
+    { "name": "summary·메타데이터 저장", "at": "2026-10-07T09:00:45.900Z" }
+  ],
+  "artifacts": {
+    "runConfig": "runs/2026-10-07T09-00-00Z_g02_row-lock_i2_r1/run-config.json",
+    "k6Summary": "runs/2026-10-07T09-00-00Z_g02_row-lock_i2_r1/summary.json",
+    "k6Html": "runs/2026-10-07T09-00-00Z_g02_row-lock_i2_r1/report.html",
+    "events": "runs/2026-10-07T09-00-00Z_g02_row-lock_i2_r1/events.ndjson",
+    "agg": "runs/2026-10-07T09-00-00Z_g02_row-lock_i2_r1/agg.ndjson",
+    "probe": "runs/2026-10-07T09-00-00Z_g02_row-lock_i2_r1/probe.ndjson",
+    "promSnapshot": "runs/2026-10-07T09-00-00Z_g02_row-lock_i2_r1/prom.json",
+    "metadata": "runs/2026-10-07T09-00-00Z_g02_row-lock_i2_r1/metadata.json"
+  },
+  "startedAt": "2026-10-07T09:00:00.100Z",
+  "endedAt": "2026-10-07T09:00:45.900Z"
+}

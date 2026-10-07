@@ -1,0 +1,49 @@
+[
+  {
+    "id": "g02-stock-decrement",
+    "pack": "generic",
+    "title": "재고·좌석 차감 경합",
+    "minAppInstances": 2,
+    "strategies": [
+      {
+        "id": "no-lock",
+        "label": "락 없음 (읽고-계산하고-쓰기)",
+        "kind": "broken",
+        "bypassesOrm": false,
+        "requires": [],
+        "params": {}
+      },
+      {
+        "id": "row-lock",
+        "label": "행 잠금 SELECT ... FOR UPDATE",
+        "kind": "fixed",
+        "bypassesOrm": false,
+        "requires": [],
+        "params": {
+          "lockTimeoutMs": {
+            "type": "integer",
+            "default": 1000
+          }
+        }
+      }
+    ],
+    "load": {
+      "models": [
+        "open",
+        "closed"
+      ],
+      "defaults": {
+        "rate": 100,
+        "timeUnit": "1s",
+        "duration": "30s",
+        "preAllocatedVUs": 50,
+        "maxVUs": 200
+      }
+    },
+    "seedDefaults": {
+      "products": 5,
+      "warmupProducts": 5,
+      "stockPerProduct": 100
+    }
+  }
+]

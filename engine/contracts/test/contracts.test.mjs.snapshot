@@ -1,0 +1,487 @@
+exports[`AC-4 상수 > 스냅샷: 상수 표 전체 1`] = `
+{
+  "INSTRUMENTATION_LEVELS": {
+    "off": {
+      "metricsUpTo": "off",
+      "otel": {
+        "enabled": false
+      },
+      "events": "off",
+      "sqlSample": "off",
+      "ormQueryLogger": false,
+      "pgProbeIntervalMs": null
+    },
+    "metrics": {
+      "metricsUpTo": "metrics",
+      "otel": {
+        "enabled": false
+      },
+      "events": "agg",
+      "sqlSample": "off",
+      "ormQueryLogger": false,
+      "pgProbeIntervalMs": 5000
+    },
+    "full": {
+      "metricsUpTo": "full",
+      "otel": {
+        "enabled": true,
+        "sampler": "parentbased",
+        "representativeFlag": "01",
+        "rootSampleRatio": 0.1
+      },
+      "events": "representative+agg",
+      "sqlSample": "representative",
+      "ormQueryLogger": true,
+      "pgProbeIntervalMs": 1000
+    }
+  },
+  "METRICS": [
+    {
+      "name": "lab_http_request_duration_seconds",
+      "type": "histogram",
+      "labels": [
+        "method",
+        "route",
+        "status"
+      ],
+      "level": "off",
+      "component": "app"
+    },
+    {
+      "name": "lab_http_requests_in_flight",
+      "type": "gauge",
+      "labels": [
+        "route"
+      ],
+      "level": "off",
+      "component": "app"
+    },
+    {
+      "name": "nodejs_eventloop_lag_p50_seconds",
+      "type": "gauge",
+      "labels": [],
+      "level": "metrics",
+      "component": "app",
+      "promClientDefault": true
+    },
+    {
+      "name": "nodejs_eventloop_lag_p99_seconds",
+      "type": "gauge",
+      "labels": [],
+      "level": "metrics",
+      "component": "app",
+      "promClientDefault": true
+    },
+    {
+      "name": "nodejs_gc_duration_seconds",
+      "type": "histogram",
+      "labels": [
+        "kind"
+      ],
+      "level": "metrics",
+      "component": "app",
+      "promClientDefault": true
+    },
+    {
+      "name": "nodejs_heap_size_used_bytes",
+      "type": "gauge",
+      "labels": [],
+      "level": "metrics",
+      "component": "app",
+      "promClientDefault": true
+    },
+    {
+      "name": "nodejs_heap_size_total_bytes",
+      "type": "gauge",
+      "labels": [],
+      "level": "metrics",
+      "component": "app",
+      "promClientDefault": true
+    },
+    {
+      "name": "process_resident_memory_bytes",
+      "type": "gauge",
+      "labels": [],
+      "level": "metrics",
+      "component": "app",
+      "promClientDefault": true
+    },
+    {
+      "name": "nodejs_external_memory_bytes",
+      "type": "gauge",
+      "labels": [],
+      "level": "metrics",
+      "component": "app",
+      "promClientDefault": true
+    },
+    {
+      "name": "process_cpu_seconds_total",
+      "type": "counter",
+      "labels": [],
+      "level": "metrics",
+      "component": "app",
+      "promClientDefault": true
+    },
+    {
+      "name": "lab_eventloop_utilization",
+      "type": "gauge",
+      "labels": [],
+      "level": "metrics",
+      "component": "app"
+    },
+    {
+      "name": "lab_uv_threadpool_size",
+      "type": "gauge",
+      "labels": [],
+      "level": "metrics",
+      "component": "app"
+    },
+    {
+      "name": "lab_db_pool_connections",
+      "type": "gauge",
+      "labels": [
+        "state"
+      ],
+      "level": "metrics",
+      "component": "app",
+      "labelValues": {
+        "state": [
+          "total",
+          "idle",
+          "waiting"
+        ]
+      }
+    },
+    {
+      "name": "lab_db_pool_acquire_duration_seconds",
+      "type": "histogram",
+      "labels": [],
+      "level": "metrics",
+      "component": "app"
+    },
+    {
+      "name": "lab_db_pool_acquire_timeouts_total",
+      "type": "counter",
+      "labels": [],
+      "level": "metrics",
+      "component": "app"
+    },
+    {
+      "name": "lab_orm_flush_duration_seconds",
+      "type": "histogram",
+      "labels": [],
+      "level": "metrics",
+      "component": "app"
+    },
+    {
+      "name": "lab_orm_flush_changesets",
+      "type": "histogram",
+      "labels": [],
+      "level": "metrics",
+      "component": "app"
+    },
+    {
+      "name": "lab_orm_transactions_total",
+      "type": "counter",
+      "labels": [
+        "result"
+      ],
+      "level": "metrics",
+      "component": "app",
+      "labelValues": {
+        "result": [
+          "commit",
+          "rollback"
+        ]
+      }
+    },
+    {
+      "name": "lab_orm_transaction_duration_seconds",
+      "type": "histogram",
+      "labels": [
+        "result"
+      ],
+      "level": "metrics",
+      "component": "app",
+      "labelValues": {
+        "result": [
+          "commit",
+          "rollback"
+        ]
+      }
+    },
+    {
+      "name": "lab_orm_query_duration_seconds",
+      "type": "histogram",
+      "labels": [
+        "type"
+      ],
+      "level": "full",
+      "component": "app",
+      "labelValues": {
+        "type": [
+          "select",
+          "insert",
+          "update",
+          "delete",
+          "other"
+        ]
+      }
+    },
+    {
+      "name": "lab_orm_identity_map_size",
+      "type": "histogram",
+      "labels": [],
+      "level": "full",
+      "component": "app"
+    },
+    {
+      "name": "lab_events_emitted_total",
+      "type": "counter",
+      "labels": [
+        "kind"
+      ],
+      "level": "metrics",
+      "component": "app"
+    },
+    {
+      "name": "lab_events_dropped_total",
+      "type": "counter",
+      "labels": [],
+      "level": "metrics",
+      "component": "app"
+    },
+    {
+      "name": "lab_events_batches_failed_total",
+      "type": "counter",
+      "labels": [],
+      "level": "metrics",
+      "component": "app"
+    },
+    {
+      "name": "lab_injected_delay_total",
+      "type": "counter",
+      "labels": [
+        "point"
+      ],
+      "level": "off",
+      "component": "app"
+    },
+    {
+      "name": "lab_injected_delay_seconds_total",
+      "type": "counter",
+      "labels": [
+        "point"
+      ],
+      "level": "off",
+      "component": "app"
+    },
+    {
+      "name": "lab_instrumentation_info",
+      "type": "gauge",
+      "labels": [
+        "level"
+      ],
+      "level": "off",
+      "component": "app"
+    },
+    {
+      "name": "lab_orch_ingest_events_total",
+      "type": "counter",
+      "labels": [],
+      "level": "always",
+      "component": "orchestrator"
+    },
+    {
+      "name": "lab_orch_ingest_rejected_total",
+      "type": "counter",
+      "labels": [
+        "reason"
+      ],
+      "level": "always",
+      "component": "orchestrator"
+    },
+    {
+      "name": "lab_orch_ws_clients",
+      "type": "gauge",
+      "labels": [],
+      "level": "always",
+      "component": "orchestrator"
+    }
+  ],
+  "METRIC_DEFAULT_LABELS": [
+    "run_id",
+    "scenario",
+    "strategy",
+    "instrumentation"
+  ],
+  "K6_ENV_KEYS": [
+    "BASE_URL",
+    "PHASE",
+    "RUN_ID",
+    "MODEL",
+    "RATE",
+    "VUS",
+    "DURATION",
+    "PRE_VUS",
+    "MAX_VUS",
+    "THINK_MIN_MS",
+    "THINK_MAX_MS",
+    "DIST",
+    "ZIPF_S",
+    "SEED",
+    "REP_ACTORS",
+    "REQUEST_TIMEOUT",
+    "SUMMARY_PATH"
+  ],
+  "K6_SCENARIO_ENV_KEYS": {
+    "g02-stock-decrement": [
+      "PRODUCT_MIN",
+      "PRODUCT_MAX",
+      "QTY"
+    ],
+    "g01-shared-document": [
+      "DOC_MIN",
+      "DOC_MAX",
+      "EDIT_MS",
+      "STRATEGY",
+      "LEASE_RETRY_MS"
+    ]
+  },
+  "K6_ENV_VALUES": {
+    "MODEL": [
+      "open",
+      "closed"
+    ],
+    "DIST": [
+      "uniform",
+      "zipf"
+    ]
+  },
+  "COMPARABLE_PATHS": [
+    "scenario",
+    "profile",
+    "limits",
+    "topology",
+    "pool",
+    "postgres.configHash",
+    "redis",
+    "images",
+    "timeouts",
+    "data.seedHash",
+    "load",
+    "instrumentation",
+    "pgProbe",
+    "interventions",
+    "chaos",
+    "coldStart",
+    "k6Script.hash",
+    "stack.profiles"
+  ],
+  "AXIS_PATHS": [
+    "topology.appInstances",
+    "instrumentation",
+    "pgProbe.enabled",
+    "interventions"
+  ],
+  "WARNING_PATHS": [
+    "git.sha"
+  ],
+  "NULLABLE_WHEN": [
+    {
+      "path": "load.vus",
+      "when": "open 일 때",
+      "allowed": null
+    },
+    {
+      "path": "load.rate",
+      "when": "closed 일 때",
+      "allowed": null
+    },
+    {
+      "path": "load.timeUnit",
+      "when": "closed 일 때",
+      "allowed": null
+    },
+    {
+      "path": "load.preAllocatedVUs",
+      "when": "closed 일 때",
+      "allowed": null
+    },
+    {
+      "path": "load.maxVUs",
+      "when": "closed 일 때",
+      "allowed": null
+    },
+    {
+      "path": "timeouts.lockMs",
+      "when": "strategy 에 lock 파라미터가 없을 때",
+      "allowed": null
+    },
+    {
+      "path": "redis.maxmemoryPolicy",
+      "when": "used: false 일 때",
+      "allowed": null
+    },
+    {
+      "path": "validity.checks.scrapeGaps",
+      "when": "obs 프로필이 없을 때 → \\"not-measured\\" 문자열",
+      "allowed": "not-measured"
+    }
+  ],
+  "COMMON_PHASES": [
+    "arrived",
+    "rejected",
+    "lock_wait",
+    "lock_acquired",
+    "lock_released",
+    "lock_timeout",
+    "conflict",
+    "retry",
+    "db_read",
+    "db_write",
+    "committed",
+    "rolled_back",
+    "failed",
+    "responded",
+    "enqueued",
+    "dequeued",
+    "lease_expired",
+    "published",
+    "consumed",
+    "cache_hit",
+    "cache_miss",
+    "injected_delay",
+    "sql"
+  ],
+  "LAB_EVENT_SINK": "LAB_EVENT_SINK",
+  "NOOP_EVENT_SINK": {
+    "enabled": false
+  },
+  "WS_MESSAGE_TYPES": [
+    "status",
+    "events",
+    "agg",
+    "pool",
+    "probe",
+    "invariants",
+    "end"
+  ],
+  "ARTIFACT_NAMES": [
+    "metadata.json",
+    "summary.json",
+    "report.html",
+    "events.ndjson",
+    "agg.ndjson",
+    "prom.json",
+    "probe.ndjson"
+  ],
+  "DASHBOARD_UIDS": [
+    "nul-run-overview",
+    "nul-red",
+    "nul-use-app",
+    "nul-use-pg",
+    "nul-loadgen"
+  ]
+}
+`;

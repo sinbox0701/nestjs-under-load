@@ -1,0 +1,163 @@
+[
+  {
+    "type": "status",
+    "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+    "at": 1759827610200,
+    "data": {
+      "sessionId": "2026-10-07T09-00-00Z_a1b2",
+      "step": "k6 본 실행",
+      "state": "running",
+      "repetition": 1,
+      "progress": {
+        "done": 3,
+        "total": 12
+      }
+    }
+  },
+  {
+    "type": "events",
+    "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+    "at": 1759827610200,
+    "data": [
+      {
+        "v": 0,
+        "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+        "ts": 1759827610000100,
+        "seq": 0,
+        "instance": "app-1",
+        "actor": "3-1",
+        "reqId": "r_0001",
+        "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "entity": {
+          "type": "Product",
+          "id": "1"
+        },
+        "phase": "arrived",
+        "attrs": {
+          "strategy": "row-lock"
+        },
+        "sampled": true
+      },
+      {
+        "v": 0,
+        "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+        "ts": 1759827610000450,
+        "seq": 1,
+        "instance": "app-1",
+        "actor": "3-1",
+        "reqId": "r_0001",
+        "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "entity": {
+          "type": "Product",
+          "id": "1"
+        },
+        "phase": "lock_wait",
+        "attrs": {
+          "strategy": "row-lock",
+          "lockMode": "FOR UPDATE",
+          "attempt": 1
+        },
+        "sampled": true
+      }
+    ]
+  },
+  {
+    "type": "agg",
+    "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+    "at": 1759827610200,
+    "data": {
+      "v": 0,
+      "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+      "instance": "app-1",
+      "windowStart": 1759827610000,
+      "windowMs": 1000,
+      "counts": {
+        "arrived": 98,
+        "lock_wait": 41,
+        "lock_acquired": 97,
+        "committed": 96,
+        "responded": 98,
+        "custom:sold_out": 2
+      },
+      "dropped": 0
+    }
+  },
+  {
+    "type": "pool",
+    "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+    "at": 1759827610200,
+    "data": {
+      "instance": "app-1",
+      "total": 10,
+      "idle": 3,
+      "waiting": 0
+    }
+  },
+  {
+    "type": "probe",
+    "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+    "at": 1759827610200,
+    "data": {
+      "sessions": [
+        {
+          "pid": 812,
+          "appName": "lab-app",
+          "state": "active",
+          "waitEventType": "Lock",
+          "waitEvent": "transactionid",
+          "xactAgeMs": 12.5,
+          "query": "select \"p0\".* from \"g02_product\" as \"p0\" where \"p0\".\"id\" = ? for update"
+        },
+        {
+          "pid": 813,
+          "appName": "lab-app",
+          "state": "idle in transaction",
+          "waitEventType": null,
+          "waitEvent": null,
+          "xactAgeMs": 14.1,
+          "query": null
+        }
+      ],
+      "blocking": [
+        {
+          "pid": 812,
+          "blockedBy": [
+            813
+          ]
+        }
+      ],
+      "lockWaiters": 1
+    }
+  },
+  {
+    "type": "invariants",
+    "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+    "at": 1759827610200,
+    "data": [
+      {
+        "id": "no-negative-stock",
+        "severity": "critical",
+        "violations": 0,
+        "passed": true
+      },
+      {
+        "id": "ledger-matches-k6",
+        "severity": "info",
+        "violations": null,
+        "passed": null,
+        "value": {
+          "success": 500
+        }
+      }
+    ]
+  },
+  {
+    "type": "end",
+    "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+    "at": 1759827610200,
+    "data": {
+      "valid": true,
+      "reasons": []
+    }
+  }
+]

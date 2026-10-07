@@ -1,0 +1,31 @@
+{
+  "scenario": "g02-stock-decrement",
+  "strategies": ["no-lock", "row-lock"],
+  "strategyParams": { "row-lock": { "lockTimeoutMs": 1000 } },
+  "appInstances": [2],
+  "includeMemoryLockSingle": true,
+  "reps": 3,
+  "load": {
+    "model": "closed",
+    "profile": "constant",
+    "vus": 50,
+    "rate": null,
+    "preAllocatedVUs": null,
+    "maxVUs": null,
+    "duration": "30s",
+    "warmup": "10s",
+    "thinkTimeMs": [0, 0],
+    "requestTimeout": "10s"
+  },
+  "data": {
+    "seed": 42,
+    "seedOptions": { "products": 5, "warmupProducts": 5, "stockPerProduct": 100 },
+    "distribution": { "kind": "uniform" }
+  },
+  "scenarioParams": { "qty": 1 },
+  "instrumentation": "metrics",
+  "pgProbe": { "enabled": true, "intervalMs": 5000 },
+  "injectDelay": [],
+  "prediction": "no-lock이 2대에서 위반할 것이다",
+  "label": null
+}
