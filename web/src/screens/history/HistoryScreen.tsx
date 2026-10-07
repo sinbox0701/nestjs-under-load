@@ -132,7 +132,9 @@ function Item(props: {
                   유효 {s.validity.validReps}/{s.reps}회
                 </span>
                 {s.badges.includes('injected') && <span className="badge t-info">주입됨</span>}
-                {s.badges.includes('unstable') && <span className="badge t-wait">3회 편차 큼</span>}
+                {s.badges.includes('unstable') && (
+                  <span className="badge t-wait">{s.reps}회 편차 큼</span>
+                )}
               </div>
               <div className="hx__row">
                 <span className="hx__k">처리량</span>

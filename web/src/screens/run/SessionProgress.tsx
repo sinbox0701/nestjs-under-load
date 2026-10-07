@@ -7,7 +7,7 @@ type Status = Extract<WsMessage, { type: 'status' }>['data'];
 const STATE_UI: Record<SessionState, { label: string; tone: string }> = {
   queued: { label: '대기', tone: 't-neutral' },
   running: { label: '실행 중', tone: 't-info' },
-  done: { label: '끝남', tone: 't-ok' },
+  done: { label: '완료', tone: 't-ok' },
   aborted: { label: '중단됨', tone: 't-wait' },
   failed: { label: '실패', tone: 't-bad' },
 };
@@ -22,28 +22,59 @@ export function SessionProgress(p: { api: Api; sessionId: string; accepted: Runs
 
   useEffect(() => {
     let alive = true;
-    api
-      .getSession(sessionId)
-      .then((s) => alive && setSession(s))
-      .catch(() => undefined);
+    // end(실행 1건 종료)·종료 status·연결 종료 때 세션을 다시 읽는다. 서버는 마지막 end 를 세션 상태 갱신
+    // 전에 보내므로, 비-running 으로 확정될 때까지 상한 있는 재조회(250ms 간격, 최대 20회)를 한다.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const settled = (s: Session) => s.state !== 'queued' && s.state !== 'running';
+    const refresh = (left = 20) => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      api
+        .getSession(sessionId)
+        .then((s) => {
+          if (!alive) return;
+          setSession(s);
+          if (!settled(s) && left > 1) timer = setTimeout(() => refresh(left - 1), 250);
+        })
+        .catch(() => undefined);
+    };
+    refresh(1);
     const off = api.subscribeRun(
       WS_CURRENT,
       (m) => {
         if (!alive) return;
-        if (m.type === 'status') setStatus(m.data);
-        else if (m.type === 'end') setEnded(m.data);
+        if (m.type === 'status') {
+          setStatus(m.data);
+          if (m.data.state !== 'queued' && m.data.state !== 'running') refresh();
+        } else if (m.type === 'end') {
+          setEnded(m.data);
+          refresh();
+        }
       },
-      { onClose: () => alive && setLost(true) },
+      {
+        onClose: () => {
+          if (!alive) return;
+          setLost(true);
+          refresh();
+        },
+      },
     );
     return () => {
       alive = false;
+      if (timer) clearTimeout(timer);
       off();
     };
   }, [api, sessionId]);
 
-  const state: SessionState = status?.state ?? session?.state ?? 'queued';
+  // 세션 조회가 끝남·중단·실패면 그 값이 최종이다(WS 마지막 status 는 8/9 에 머물 수 있다).
+  const finalState =
+    session && session.state !== 'queued' && session.state !== 'running' ? session.state : null;
+  const state: SessionState = finalState ?? status?.state ?? session?.state ?? 'queued';
   const ui = STATE_UI[state];
-  const prog = status?.progress;
+  const prog =
+    status?.progress && finalState === 'done'
+      ? { ...status.progress, done: status.progress.total }
+      : status?.progress;
   const pct = prog && prog.total > 0 ? Math.round((prog.done / prog.total) * 100) : 0;
   const batches = p.accepted?.batches ?? session?.batches ?? [];
 
@@ -54,9 +85,11 @@ export function SessionProgress(p: { api: Api; sessionId: string; accepted: Runs
       </h2>
       <p>
         <span className={`badge ${ui.tone}`}>{ui.label}</span>{' '}
-        {status
-          ? `${status.step} · ${status.repetition}회차`
-          : (session?.current?.step ?? '시작을 기다리는 중')}
+        {finalState
+          ? ''
+          : status
+            ? `${status.step} · ${status.repetition}회차`
+            : (session?.current?.step ?? '시작을 기다리는 중')}
       </p>
       {prog && (
         <p>
