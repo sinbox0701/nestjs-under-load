@@ -730,7 +730,7 @@ outcomes:
     verdict: ok
     expected: "위반 0, 실패 0. 지연은 no-lock보다 Redis 왕복 2번(SET, 해제 Lua)만큼 늘고 눈에 띄지 않는다"
     measured: null
-    why: "락을 잡은 뒤에 트랜잭션을 열어 읽으므로 직전 커밋을 본다. 락 안은 no-lock과 같은 읽기-계산-쓰기지만 같은 상품 요청이 Redis 키 하나로 한 줄이 된다. 경합이 드물어 재시도(5ms 간격)도 거의 없다. DB는 아무것도 잠그지 않으므로 pg_locks에는 대기가 보이지 않는다"
+    why: "락을 잡은 뒤에 트랜잭션을 열어 읽으므로 직전 커밋을 본다. 락 안은 no-lock과 같은 읽기-계산-쓰기지만 같은 상품 요청이 Redis 키 하나로 한 줄이 된다. 경합이 드물어 재시도(5ms 간격)도 거의 없다. UPDATE는 암묵적 행 잠금을 잡지만 Redis가 이미 같은 상품 요청을 한 줄로 세워 DB에서는 대기가 생기지 않으므로 pg_locks에 대기가 보이지 않는다"
     focus:
       - { file: strategies/redis-lock.strategy.ts, marker: set-nx-px }
       - { file: strategies/redis-lock.strategy.ts, marker: rmw-inside-lock }
@@ -750,7 +750,7 @@ outcomes:
     verdict: ok
     expected: "위반 0. app-memory-lock이 깨지는 같은 조건에서 맞다. 결과는 서버 1대와 같다"
     measured: null
-    why: "락이 Redis 키에 있어 app-1과 app-2가 같은 상품에서 같은 줄에 선다. 인스턴스마다 토큰이 달라서 서로의 락을 지우지 않는다. 락의 범위가 공유 자원의 범위(상품 한 개를 건드리는 모든 인스턴스)와 같아진 것이 app-memory-lock과의 차이다"
+    why: "락이 Redis 키에 있어 app-1과 app-2가 같은 상품에서 같은 줄에 선다. 토큰이 요청(락 획득)마다 달라서 서로의 락을 지우지 않는다. 락의 범위가 공유 자원의 범위(상품 한 개를 건드리는 모든 인스턴스)와 같아진 것이 app-memory-lock과의 차이다"
     focus:
       - { file: strategies/redis-lock.strategy.ts, marker: owner-token }
       - { file: strategies/redis-lock.strategy.ts, marker: set-nx-px }
@@ -768,7 +768,7 @@ outcomes:
   - strategy: redis-lock
     situation: db-slow
     verdict: rejects
-    expected: "위반 0. 보유 시간이 DB 왕복 5번 × 50ms로 약 250ms가 되어 상품당 천장이 초당 약 4건이다. 초당 약 20건이 오므로 대기가 ttlMs(3000ms)를 넘긴 요청이 503(lock_timeout)으로 거절된다. 거절된 요청은 원장·재고에 흔적이 없다"
+    expected: "위반 0. 보유 시간이 DB 왕복 5번 × 50ms로 약 250ms가 되어 상품당 천장이 초당 약 4건이다. 초당 약 20건이 오므로 대기가 ttlMs(3000ms)를 넘긴 요청이 Redis 락 대기 초과 503(응답 result: lock_timeout, PostgreSQL lock_timeout·55P03과 별개)으로 거절된다. 거절된 요청은 원장·재고에 흔적이 없다"
     measured: null
     why: "지연은 app과 PostgreSQL 사이에만 주입되고 Redis 왕복은 그대로다. 락 보유 구간이 DB 왕복으로 늘어나므로 천장이 내려가고 대기가 쌓인다. row-lock과 달리 락 대기자는 DB 커넥션을 쥐지 않아 풀이 고갈되지는 않지만, 락 보유자 수가 상품 수(5)를 넘지 못하므로 처리량은 그만큼 막힌다. Redis가 아예 응답하지 않는 경우도 같은 503으로 거절한다(fail-closed)"
     focus:
@@ -788,7 +788,7 @@ outcomes:
   - strategy: redis-lock
     situation: contention-window-30-one-instance
     verdict: rejects
-    expected: "위반 0. 주입 지점이 Redis 락 안이라 보유 시간이 30ms를 넘고 상품당 천장이 초당 약 28건으로 도착(약 40건)보다 낮다. 대기가 쌓여 ttlMs(3000ms)를 넘기는 요청부터 503(lock_timeout)이 나온다. p95는 초 단위"
+    expected: "위반 0. 주입 지점이 Redis 락 안이라 보유 시간이 30ms를 넘고 상품당 천장이 초당 약 28건으로 도착(약 40건)보다 낮다. 대기가 쌓여 ttlMs(3000ms)를 넘기는 요청부터 Redis 락 대기 초과 503(응답 result: lock_timeout, PostgreSQL lock_timeout·55P03과 별개)이 나온다. p95는 초 단위"
     measured: null
     why: "30ms 창을 락이 감싸 읽기~쓰기가 겹치지 않으므로 위반은 없다. 대가는 보유 시간이다. 품절 뒤에도 매 요청이 락과 주입 지연을 지나므로 줄이 풀리지 않는다. row-lock은 대기자가 풀 커넥션(10개)을 쥐어 풀에서 막혔지만 여기서는 대기자가 커넥션을 쥐지 않아 대기가 곧바로 ttlMs 상한에 닿는다. 대기 순서가 폴링이라 일부 요청의 대기가 더 길어질 수 있다"
     focus:
