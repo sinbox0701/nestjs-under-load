@@ -208,6 +208,9 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.1
+      ioredis:
+        specifier: ^6.0.0
+        version: 6.0.0
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
