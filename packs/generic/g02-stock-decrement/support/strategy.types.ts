@@ -1,4 +1,5 @@
 import type { EntityManager } from '@mikro-orm/postgresql';
+import type { EventSink } from '@under-load/contracts';
 
 import type { OrderResult } from '../entities/order-ledger.entity';
 import type { LedgerWriter } from './ledger.writer';
@@ -32,6 +33,8 @@ export interface StrategyContext<P = Record<string, unknown>> {
   contentionWindow(point: ContentionPoint): Promise<void>;
   /** 원장 기록기. **재고 변경과 같은 트랜잭션 안에서** 호출해야 한다. */
   ledger: LedgerWriter;
+  /** 이벤트 출구(C9). 켜져 있지 않으면 noop 이라 그냥 호출해도 된다. */
+  events: EventSink;
 }
 
 /**
