@@ -78,7 +78,7 @@
       "id": 1,
       "type": "timeseries",
       "title": "k6 CPU(코어)",
-      "description": "cAdvisor 컨테이너 CPU. 한도 2코어(compose cpus).",
+      "description": "cAdvisor 컨테이너 CPU. 한도 2코어(compose cpus). run_id 필터 없음 — 시간 범위 기준.",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"
@@ -150,7 +150,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "k6 CPU 스로틀링",
-      "description": "CFS 스로틀된 주기 비율. 0 이 아니면 CPU 한도에 걸려 도착률이 깎인다.",
+      "description": "CFS 스로틀된 주기 비율(cAdvisor, run_id 필터 없음 — 시간 범위 기준). 0 이 아니면 CPU 한도에 걸려 도착률이 깎인다.",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"
@@ -203,7 +203,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "k6 메모리",
-      "description": "working set. 한도 1GiB.",
+      "description": "working set(cAdvisor, run_id 필터 없음 — 시간 범위 기준). 한도 1GiB.",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"
@@ -316,7 +316,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "도착률: 목표 vs 실제",
-      "description": "목표 = 완료 + dropped(스케줄된 도착). 실제 = 완료된 iteration. HTTP 요청률은 참고선.",
+      "description": "목표 = 완료 + dropped 로 재구성한 근사값(k6 는 목표 도착률 지표를 내지 않는다). 실제 = 완료된 iteration. HTTP 요청률은 참고선.",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"
@@ -334,7 +334,7 @@
             "uid": "${ds}"
           },
           "expr": "sum(rate(k6_iterations_total{run_id=\"$run_id\"}[30s])) + sum(rate(k6_dropped_iterations_total{run_id=\"$run_id\"}[30s]))",
-          "legendFormat": "목표(스케줄)",
+          "legendFormat": "목표(완료+dropped 재구성 근사)",
           "refId": "A",
           "range": true,
           "instant": false
@@ -468,7 +468,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "k6 지연 분위수(클라이언트)",
-      "description": "요청 전체 지연(k6_http_req_duration). 서버 측 값과 크게 다르면 발생기 쪽 대기가 섞인 것.",
+      "description": "요청 전체 지연(k6_http_req_duration), 성공·실패 합산. 서버 측 값과 크게 다르면 발생기 쪽 대기가 섞인 것.",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"
@@ -603,7 +603,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "k6 실패율",
-      "description": "http_req_failed 비율(expectedStatuses 밖의 응답).",
+      "description": "expected_response=\"false\" 요청 수 / 전체 요청 수(expectedStatuses 밖의 응답). k6_http_req_failed_rate 는 라벨 조합별 비율이라 평균내면 틀려서 쓰지 않는다.",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"
@@ -620,8 +620,8 @@
             "type": "prometheus",
             "uid": "${ds}"
           },
-          "expr": "avg(k6_http_req_failed_rate{run_id=\"$run_id\"})",
-          "legendFormat": "실패율",
+          "expr": "sum(rate(k6_http_reqs_total{run_id=\"$run_id\",expected_response=\"false\"}[30s])) / sum(rate(k6_http_reqs_total{run_id=\"$run_id\"}[30s]))",
+          "legendFormat": "실패율(요청 수 기반)",
           "refId": "A",
           "range": true,
           "instant": false

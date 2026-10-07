@@ -23,6 +23,11 @@ test('isAllowedMetric: contracts · k6 · 외부 접두사만 허용', () => {
   assert.ok(isAllowedMetric('lab_http_request_duration_seconds_bucket'));
   assert.ok(isAllowedMetric('k6_http_req_duration_seconds'));
   assert.ok(isAllowedMetric('container_cpu_usage_seconds_total'));
+  assert.ok(isAllowedMetric('pg_stat_database_xact_commit'));
+  assert.ok(!isAllowedMetric('container_made_up_total'));
+  assert.ok(!isAllowedMetric('pg_made_up'));
+  assert.ok(!isAllowedMetric('k6_http_req_duration_seconds_bucket')); // k6 는 native histogram, 접미사 불가
+  assert.ok(!isAllowedMetric('lab_http_requests_in_flight_count')); // histogram 아닌 지표는 접미사 벗기기 불가
   assert.ok(!isAllowedMetric('k6_made_up_total'));
   assert.ok(!isAllowedMetric('lab_made_up_total'));
 });

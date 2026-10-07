@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // 대시보드 JSON 정적 검사(T-117, T-118 공용).
 //   node infra/grafana/provisioning/dashboards/check-dashboards.mjs [대시보드.json ...]   (기본: infra/grafana/dashboards/*.json)
-// 규칙: UID 가 contracts DASHBOARD_UIDS 안, 템플릿 변수 run_id, 태그 주석(nul + run:$run_id),
-//       패널·변수 PromQL 의 지표 이름이 contracts METRIC_NAMES · 실측 k6_* 목록 · 외부 exporter 접두사 안.
+// 규칙: UID 가 contracts DASHBOARD_UIDS 안, 템플릿 변수 run_id, 태그 주석(nul + run:$run_id; 실행 개요·부하 발생기만),
+//       패널·변수 PromQL 의 지표 이름이 contracts METRIC_NAMES · 실측 k6_* 목록 · 실측 외부 exporter 목록 안.
 // contracts 는 dist 로 소비한다(없으면 `pnpm --filter @under-load/contracts exec tsc -p tsconfig.json`).
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { METRIC_NAMES, DASHBOARD_UIDS, DASHBOARD_RUN_VAR, GRAFANA_ANNOTATION_TAG } from '../../../../engine/contracts/dist/index.js';
+import { METRICS, METRIC_NAMES, DASHBOARD_UIDS, DASHBOARD_RUN_VAR, GRAFANA_ANNOTATION_TAG } from '../../../../engine/contracts/dist/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DASHBOARD_DIR = path.resolve(here, '../../dashboards');
@@ -32,8 +32,49 @@ export const K6_METRICS = Object.freeze([
   'k6_vus_max',
 ]);
 
-/** 외부 exporter 지표(cAdvisor·postgres/redis/nginx exporter)는 이름 목록이 아니라 접두사로 허용한다. */
-export const EXTERNAL_PREFIXES = Object.freeze(['container_', 'pg_', 'redis_', 'nginx_']);
+/**
+ * 외부 exporter 지표는 접두사 허용이 아니라 실측 확인한 이름만 허용한다(T-117, cAdvisor v0.52.1·postgres-exporter v0.17.1).
+ * 새 지표를 쓰려면 실제 스크레이프에서 이름을 확인한 뒤 여기에 추가한다.
+ */
+export const EXTERNAL_METRICS = Object.freeze([
+  // cAdvisor
+  'container_cpu_usage_seconds_total',
+  'container_cpu_cfs_periods_total',
+  'container_cpu_cfs_throttled_periods_total',
+  'container_cpu_cfs_throttled_seconds_total',
+  'container_memory_working_set_bytes',
+  'container_spec_cpu_period',
+  'container_spec_cpu_quota',
+  // postgres-exporter
+  'pg_locks_count',
+  'pg_settings_max_connections',
+  'pg_stat_activity_count',
+  'pg_stat_activity_max_tx_duration',
+  'pg_stat_database_blks_hit',
+  'pg_stat_database_blks_read',
+  'pg_stat_database_deadlocks',
+  'pg_stat_database_numbackends',
+  'pg_stat_database_temp_bytes',
+  'pg_stat_database_temp_files',
+  'pg_stat_database_xact_commit',
+  'pg_stat_database_xact_rollback',
+  'pg_wal_segments',
+  'pg_wal_size_bytes',
+  // 기본 수집기 밖이지만 옵션을 켜 이름을 실측함: --collector.stat_checkpointer, --collector.stat_user_tables(테이블이 있어야 시리즈가 생긴다)
+  'pg_stat_checkpointer_num_requested_total',
+  'pg_stat_checkpointer_num_timed_total',
+  'pg_stat_checkpointer_sync_time_total',
+  'pg_stat_checkpointer_write_time_total',
+  'pg_stat_user_tables_n_dead_tup',
+  // 실측 불가: 커스텀 쿼리(queries.yaml)가 만드는 이름. T-118 use-pg 대시보드 설명에 켜는 방법이 있다.
+  'pg_wait_event_count',
+]);
+
+/** `_bucket`/`_sum`/`_count` 접미사를 벗겨 볼 수 있는 histogram 지표(contracts METRICS 의 histogram). k6 지표는 native histogram 이라 접미사 없이 쓴다. */
+export const HISTOGRAM_METRICS = Object.freeze(METRICS.filter((m) => m.type === 'histogram').map((m) => m.name));
+
+/** phase 주석(태그 쿼리)을 요구하는 대시보드. 나머지(RED·USE)는 변수 run_id 만 요구한다. */
+export const TAG_ANNOTATION_UIDS = Object.freeze(['nul-run-overview', 'nul-loadgen']);
 
 const HIST_SUFFIX = /_(bucket|sum|count)$/;
 const KEYWORDS = new Set(['bool', 'offset', 'and', 'or', 'unless', 'inf', 'nan', 'by', 'without', 'on', 'ignoring', 'group_left', 'group_right']);
@@ -67,12 +108,13 @@ export function promqlOfVariableQuery(q) {
 }
 
 export function isAllowedMetric(name, allowed = defaultAllowed()) {
-  if (allowed.has(name) || allowed.has(name.replace(HIST_SUFFIX, ''))) return true;
-  return EXTERNAL_PREFIXES.some((p) => name.startsWith(p));
+  if (allowed.has(name)) return true;
+  const m = name.match(HIST_SUFFIX);
+  return m !== null && HISTOGRAM_METRICS.includes(name.slice(0, -m[0].length));
 }
 
 export function defaultAllowed() {
-  return new Set([...METRIC_NAMES, ...K6_METRICS]);
+  return new Set([...METRIC_NAMES, ...K6_METRICS, ...EXTERNAL_METRICS]);
 }
 
 function* walkPanels(panels = []) {
@@ -92,7 +134,7 @@ export function checkDashboard(dash, { allowed = defaultAllowed() } = {}) {
   const tagAnno = (dash.annotations?.list ?? []).find(
     (a) => a.target?.type === 'tags' && a.enable !== false && (a.target.tags ?? []).includes(runTag) && (a.target.tags ?? []).includes(GRAFANA_ANNOTATION_TAG),
   );
-  if (!tagAnno) errors.push(`${id}: 태그 주석(${GRAFANA_ANNOTATION_TAG}, ${runTag}) 없음`);
+  if (!tagAnno && TAG_ANNOTATION_UIDS.includes(dash?.uid)) errors.push(`${id}: 태그 주석(${GRAFANA_ANNOTATION_TAG}, ${runTag}) 없음`);
 
   const exprs = [];
   for (const p of walkPanels(dash.panels)) {

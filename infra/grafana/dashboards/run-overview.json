@@ -93,7 +93,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "k6 CPU(코어)",
-      "description": "부하 발생기 컨테이너 CPU 사용량. 한도(2코어)에 가까우면 부하 발생기가 병목이라 실행이 무효일 수 있다.",
+      "description": "부하 발생기 컨테이너 CPU 사용량(cAdvisor, run_id 필터 없음 — 시간 범위 기준). 한도(2코어)에 가까우면 부하 발생기가 병목이라 실행이 무효일 수 있다.",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"
@@ -165,7 +165,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "도착률: 목표 vs 실제",
-      "description": "목표 = 시도 완료 + dropped(constant-arrival-rate 가 스케줄한 도착). 실제 = 완료된 iteration. 둘이 벌어지면 부하 발생기·VU 부족.",
+      "description": "목표 = 완료 + dropped 로 재구성한 근사값(k6 는 목표 도착률을 지표로 내지 않는다; constant-arrival-rate 라면 스케줄한 도착과 같다). 실제 = 완료된 iteration. 둘이 벌어지면 부하 발생기·VU 부족.",
       "datasource": {
         "type": "prometheus",
         "uid": "${ds}"
@@ -183,7 +183,7 @@
             "uid": "${ds}"
           },
           "expr": "sum(rate(k6_iterations_total{run_id=\"$run_id\"}[30s])) + sum(rate(k6_dropped_iterations_total{run_id=\"$run_id\"}[30s]))",
-          "legendFormat": "목표(스케줄)",
+          "legendFormat": "목표(완료+dropped 재구성 근사)",
           "refId": "A",
           "range": true,
           "instant": false
