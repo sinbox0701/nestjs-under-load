@@ -9,7 +9,8 @@
 ### C1. RunConfig 전달 (0단계 파일 → 1단계 엔드포인트)
 
 **전달 방식**
-- app 의 정적 env 에 `ORCHESTRATOR_URL=http://orchestrator:4001` 을 둡니다. 값이 있으면 HTTP, 없으면 0단계 파일(`RUN_CONFIG_PATH`)을 읽습니다. run.mjs 대체 경로라서 계속 유지합니다.
+- app 의 정적 env 에 `ORCHESTRATOR_URL=http://orchestrator:4001` 을 둡니다. 값이 있으면 HTTP, **값이 비어 있으면**(`ORCHESTRATOR_URL=`) 0단계 파일(`RUN_CONFIG_PATH`)을 읽습니다. run.mjs 대체 경로라서 계속 유지합니다.
+- compose 는 `${ORCHESTRATOR_URL-http://orchestrator:4001}` 형태라 변수가 **설정되지 않았을 때만** 기본값을 쓰고, 빈 값으로 설정하면 빈 값이 그대로 전달됩니다. 그래서 `scripts/run.mjs` 를 쓸 때는 `ORCHESTRATOR_URL= node scripts/run.mjs ...` 처럼 실행합니다(README 6-4).
 - `GET {ORCHESTRATOR_URL}/internal/run-config?instance=<INSTANCE_NAME>` 의 응답:
   - `200 RunConfig`
   - `204` = 대기 모드(`/_lab` 만 응답)
@@ -108,7 +109,9 @@
              { "path": "git.sha", "values": ["a","b"], "kind": "warning" } ],
   "codeVersionDiffers": true, "batches": ["BatchSummary"...], "honestyNote": "§3.1 기본 문구" }
 ```
-- **blocking**: §7.3 비교 조건 경로가 다를 때입니다. `strategy` 는 제외합니다.
+- **blocking**: §7.3 비교 조건 경로(`COMPARABLE_PATHS`)가 다를 때입니다. `strategy.id` 는 제외합니다.
+  - **`STRATEGY_SCOPED_PATHS` 그룹 규칙**: `strategy.params` 와 `timeouts.lockMs` 는 strategy 고유 값이라 **strategy id 가 같은 배치끼리만** 비교합니다. id 가 다른 배치와의 차이는 비교 조건에서 제외합니다(예: `row-lock` 의 `timeouts.lockMs=1000` 과 `no-lock` 의 null). 같은 id 그룹 안에서 값이 다르면 blocking 입니다(예: `redis-lock` 의 ttlMs 3000 대 5000).
+  - **프로브 끄기 비교**: `pgProbe.enabled` 를 axis 로 두고 켠 실행과 끈 실행을 비교할 때, `pgProbe.intervalMs` 는 같은 값이어야 합니다. 다르면 `pgProbe` 아래 `intervalMs` 차이가 blocking 입니다(끈 쪽에도 같은 값을 지정해 두세요).
 - **axis**: 그 경로가 `axis` 로 지정된 경우입니다. axis 로 쓸 수 있는 경로는 `topology.appInstances | instrumentation | pgProbe.enabled | interventions` 뿐입니다.
 - **warning**: `git.sha` 가 다를 때입니다.
 - `comparable` 은 blocking 이 하나도 없을 때만 true 입니다.
@@ -130,7 +133,7 @@
 ```jsonc
 { "schemaVersion": 1, "runId": "", "batchId": "", "sessionId": "", "repetition": 1, "scenario": "",
   "strategy": { "id": "", "params": {} },
-  "git": { "sha": "", "dirty": false },
+  "git": { "sha": "", "dirty": false },        // /repo 의 git 에서 읽고, 못 읽으면 env GIT_SHA·GIT_DIRTY 폴백(README 4절)
   "images": { "app": "sha256:..", "postgres": "", "k6": "", "nginx": "", "redis": "" },   // Docker inspect ImageID
   "profile": "default",                      // default | minimal
   "stack": { "profiles": ["obs"] },          // 신규: 함께 뜬 관측 프로필(비교 조건)
@@ -158,6 +161,14 @@
   "startedAt": "", "endedAt": "" }
 ```
 
+**값의 의미(실효값)**
+- `pool`·`timeouts` 는 RunConfig 에 적힌 값이 아니라 **실제로 걸린 값(실효값)** 입니다. RunConfig 가 null(적용 안 함)이면 실제 기본값을 적습니다: `serverRequestMs` = Node http.Server 기본 300000, `poolAcquireMs` = pg Pool 기본 0, `statementMs`·`idleInTxMs` = PG 서버 설정(`pg_settings`, ms). **0 은 "제한 없음"** 입니다(예: `poolAcquireMs: 0` 은 무한 대기, `statementMs: 0` 은 statement_timeout 없음).
+- `strategy.params` 와 `timeouts.lockMs` 는 요청에 적은 값이 아니라 **manifest 기본값에 요청 값을 덧씌운 실효값** 입니다. 같은 strategy 를 파라미터 지정 없이 돌린 배치와 기본값을 명시해 돌린 배치가 같은 조건으로 비교됩니다.
+- `data.seedHash`: 템플릿 DB 이름 `tpl_<시나리오>_<12자 hex>` 의 해시 12자입니다. 시나리오·seed·seedOptions·마이그레이션이 같으면 같습니다.
+- `ledgerVsClient`: 원장(DB)과 클라이언트(k6) 대조입니다. `{ ledger, client: {requests, expected, httpFailures, dropped}, diff?: {total}, note? }`. `ledger` 는 info 불변식 `ledger-matches-k6` 의 value(결과별 행 수와 기록된 요청 수 `total`)이고, `expected` = `requests - httpFailures` 입니다. `diff.total = ledger.total - expected` 이고 0 이 아니면 `note` 에 방향별 설명이 붙습니다(원장이 많으면 클라이언트 타임아웃 뒤 서버 커밋 가능성, 적으면 기록 누락 의심).
+- `validity.droppedCountedAsFailure`: open 모델에서 `maxVUs ≥ 도착률 × 요청 타임아웃` 이면 true 입니다(dropped_iterations 를 서버가 못 따라간 실패로 셉니다). false 이고 dropped > 0 이면 "설정 부족"으로 무효 처리합니다. closed 는 dropped 가 없으므로 false 로 기록합니다. 실패 합계 `failures.total` = http 실패 + (true 인 반복만) dropped 입니다.
+- `images.redis`: redis 컨테이너가 떠 있어야 채워집니다. compose 기본 구성에 redis 가 들어 있으므로 평소에는 채워지고, redis 를 내린 스택에서는 미채움(null)으로 보고됩니다(NULLABLE 규칙이 아니라 기동 문제로 봅니다).
+
 **null 을 허용하는 경우** (`completeness.ts` 가 검사하고, 그 밖의 null 은 "미채움"으로 보고합니다)
 
 | 경로 | null 허용 조건 |
@@ -167,6 +178,18 @@
 | `timeouts.lockMs` | strategy 에 lock 파라미터가 없을 때 |
 | `redis.maxmemoryPolicy` | `used: false` 일 때 |
 | `validity.checks.scrapeGaps` | obs 프로필이 없을 때 → `"not-measured"` 문자열 |
+| `artifacts.promSnapshot` | obs 프로필이 없을 때(구간 지표를 동결할 Prometheus 가 없음) |
+| `host.dockerDesktopVersion` | Docker Desktop 이 아닐 때(Engine `/version` 의 `Platform.Name` 으로만 얻을 수 있음) |
+| `ledgerVsClient` | 시나리오에 원장 대조 불변식(`ledger-matches-k6`)이 없을 때 |
+
+**T-102 계약 해석** (`@under-load/contracts` 가 위 스키마를 코드로 옮기면서 정한 것)
+- 스키마는 **구조(키·타입)만 고정**하고 값 칸은 null 을 받습니다. 어느 null 이 정상인지는 위 표(`NULLABLE_WHEN`)가 정하고, 그 밖의 null 은 `completeness` 검사가 "미채움"으로 보고합니다(스키마가 거절하지 않습니다).
+- §7.3 의 `proxy` 는 메타데이터 `topology.proxy` 입니다. 비교 조건 `topology` 가 이미 그 아래를 덮으므로 `proxy` 를 따로 두지 않습니다. 경로 아래 값이 다르면 그 잎 경로(예: `load.vus`)를 diff 로 보고합니다.
+- `limits` 는 `app`·`nginx`·`postgres`·`k6` 가 필수이고, 그 밖의 컨테이너(`redis`·`orchestrator` 등)는 같은 모양 `{cpus, mem, cpuset}` 으로 더 둘 수 있습니다.
+- `images` 는 `app`·`postgres`·`k6`·`nginx`·`redis` 다섯 칸이고 값은 Docker inspect 의 ImageID 입니다.
+- `profile`(`default | minimal`)과 `stack.profiles`(`obs | trace`, 기본 프로필은 목록에 넣지 않음)는 별개 필드입니다. 비교 조건에는 둘 다 들어갑니다.
+- `axis` 로 쓸 수 있는 경로는 `topology.appInstances | instrumentation | pgProbe.enabled | interventions` 넷뿐이고, 그 밖의 경로는 axis 로 지정할 수 없습니다.
+- 0단계 파일(`schemaVersion` 없음)은 `parseRunConfig`·`parseMetadataAnyVersion` 이 기본값을 채워 읽습니다.
 
 **저장**
 - SQLite: `runs/_meta/lab.sqlite`, Node 24 내장 `node:sqlite`. 테이블은 `sessions`, `batches`, `runs`(행 컬럼 + `metadata_json`)입니다.
@@ -207,7 +230,7 @@ app 이 부팅할 때 기본 라벨 `run_id`, `scenario`, `strategy`, `instrumen
 | `lab_events_emitted_total{kind}` / `lab_events_dropped_total` / `lab_events_batches_failed_total` | counter | metrics+ |
 | `lab_injected_delay_total{point}` / `lab_injected_delay_seconds_total{point}` | counter | off+ |
 | `lab_instrumentation_info{level}` | gauge =1 | off+ |
-| (오케) `lab_orch_ingest_events_total`, `lab_orch_ingest_rejected_total{reason}`, `lab_orch_ws_clients` | | 항상 |
+| (오케) `lab_orch_ingest_events_total`, `lab_orch_ingest_rejected_total{reason}`, `lab_orch_ws_clients`, `lab_orch_file_write_errors_total` | counter / counter / gauge / counter(events·agg NDJSON 파일 쓰기 오류. 오류가 나도 프로세스는 죽이지 않고 센다) | 항상 |
 
 **그 밖의 고정값**
 - k6: remote-write 에 `--tag run_id=<id>`, `phase=<warmup|main>` 을 붙입니다. 네이티브 히스토그램이 켜져 있습니다. 실제 이름(`k6_http_req_duration_seconds` 등)은 T-117 이 실행 한 번으로 확인합니다.
@@ -244,7 +267,9 @@ app 이 부팅할 때 기본 라벨 `run_id`, `scenario`, `strategy`, `instrumen
 
 ### C8. 오케스트레이터 내부 포트 (`orchestrator/src/ports.ts`, 이름만 고정)
 
-`DockerControl`, `DbAdmin`, `InvariantRunner`, `K6Runner`, `MetadataStore`, `RunConfigBoard`(게시/조회), `EventHub`, `ProbeSource`, `ObsClient`(annotate/snapshot/scrapeGaps), `RunEngine`(start/abort/status), `Clock`.
+`DockerControl`, `DbAdmin`, `InvariantRunner`, `K6Runner`, `MetadataStore`, `RunConfigBoard`(게시/조회), `EventHub`, `ProbeSource`, `ObsClient`(prepareToken/annotate/snapshot/scrapeGaps), `RunEngine`(start/abort/status), `Clock`.
+
+`ObsClient.prepareToken()` 은 시작할 때 Grafana 주석용 서비스 계정 토큰을 미리 준비합니다(파일에 있으면 재사용, 없으면 생성). 주석은 남기지 않으며, obs 프로필이 없거나 연결이 거부되면 예외 없이 `not-measured` 를 돌려줍니다. 결과 모양은 다른 `ObsClient` 메서드와 같은 `Measured<…>` 입니다.
 
 각 모듈 티켓은 이 인터페이스를 구현하고, 테스트는 가짜 구현으로 합니다. 배선은 T-138 이 합니다.
 
@@ -278,7 +303,7 @@ app 이 부팅할 때 기본 라벨 `run_id`, `scenario`, `strategy`, `instrumen
 
 ## 확정 결정 D1–D13
 
-2026-10-07 아래 표의 「권장」 열로 확정했다.
+2026-10-07 아래 표의 「권장」 열로 확정했다. D1·D2·D5·D13 의 문서 수정(DESIGN §4.1·§5.1·§5.4·§13)은 T-143 에서 반영했다.
 
 | # | 항목 | 결정 |
 |---|---|---|
@@ -286,7 +311,7 @@ app 이 부팅할 때 기본 라벨 `run_id`, `scenario`, `strategy`, `instrumen
 | D2 | 오케스트레이터가 git sha/dirty 와 팩 정의를 읽으려면 레포를 **읽기 전용 마운트**해야 합니다. §13 의 "그 밖의 컨테이너에는 호스트 경로 마운트 없음"과 충돌합니다. | 레포 ro 마운트(`/repo:ro`) + 이미지에 git 설치, 그리고 §13 문구 수정(T-143). 대안은 이미지에 굽고 `GIT_SHA` 를 빌드 인자로 넘기는 것인데, 이 경우 plain `docker compose up` 에서는 sha 가 unknown 이 됩니다. |
 | D3 | 템플릿 DB 준비는 지금 컨테이너 생성(`compose run`)으로 합니다. | app `task: prepare-template` 모드(C1)로 바꿉니다. run.mjs 경로는 그대로 둡니다. |
 | D4 | T-101 에 네트워크 설치가 필요합니다. 구현자 worktree 에서는 금지입니다. | 사용자 승인 후 메인 트리에서 오케스트레이터가 `pnpm install` 을 실행합니다. 대상 패키지: prom-client, @opentelemetry/{api, sdk-node, sdk-trace-node, exporter-trace-otlp-proto, instrumentation-http, -express, -nestjs-core, -pg, -ioredis, resources, semantic-conventions}, ioredis, pg, ws, @types/pg, @types/ws. 네이티브 빌드가 필요 없도록 SQLite 는 `node:sqlite` 를 씁니다(Node 24 에서 ExperimentalWarning 이 나오는 점은 감수). |
-| D5 | G01 id 가 `g01-shared-document`(web·§10.3.2)와 `g01-concurrent-edit`(§5.1) 둘입니다. | `g01-shared-document`(바꿀 곳이 적습니다). DESIGN §5.1 은 T-143 에서 고칩니다. |
+| D5 | G01 id 가 `g01-shared-document`(web·§10.3.2)와 DESIGN §5.1 의 옛 폴더 이름, 둘이었습니다. | `g01-shared-document`(바꿀 곳이 적습니다). DESIGN §5.1 을 고쳤습니다(T-143). |
 | D6 | 완료 기준 3번(app-memory-lock 1대/2대를 한 비교 화면에)과 4번(조건이 다르면 "비교 불가")이 충돌합니다. | `axis` 를 명시하면 그 차이만 "비교 축"으로 표시합니다(C2). |
 | D7 | 게이트 범위 | T-101 에서 루트 `typecheck`/`test` 가 app·orchestrator·contracts·팩 단위 테스트·loadtest·k6 실행기·web vitest 를 다 덮게 합니다. PG·Redis 통합 테스트는 도커가 없으면 skip 합니다. web vitest 를 넣으면 게이트가 느려지는데, 이를 받아들일지 정해 주세요. |
 | D8 | 완료 기준 2번은 closed 모델에서 no-lock 이 위반하는 것인데, 지연 주입 없이 재현될지 불확실합니다(0단계 open 200rps 에서도 1/3). | 상품 수를 적게, think 0, vus 50 으로 먼저 시도합니다. 실패하면 `after-read:30` 주입을 허용하되 "주입됨"으로 표시합니다. 허용 여부를 정해 주세요. |

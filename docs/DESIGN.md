@@ -74,14 +74,24 @@ README, 리포트 하단, 화면 푸터에 아래 문구를 그대로 쓴다. �
 | `pgbouncer_exporter` | PgBouncer `SHOW POOLS`/`SHOW STATS` 지표(프로필 `pgbouncer`) | cpus 0.25, mem 64m | 별도 서비스 |
 | `nginx-prometheus-exporter` | nginx `stub_status` 지표 | cpus 0.25, mem 64m | 별도 서비스 |
 | `cadvisor` | 컨테이너 CPU/메모리/CFS 스로틀링/OOM | cpus 0.5, mem 256m | rootfs·docker.sock 읽기 마운트 필요(§13). macOS Docker Desktop에서 수집 가능한 지표 범위는 실험 필요(§14 #3) |
-| `orchestrator` | 실행 제어 평면: 초기화·웜업·실행·수집·불변식·메타데이터·리포트, 이벤트 허브, PG 관측 프로브, RunConfig 배포 | cpus 1.0, mem 512m | Docker Engine API는 `socket-proxy` 경유, 컨테이너 restart/stop/start/kill만(§13). 0단계 `run.mjs`를 승격한 것 |
+| `orchestrator` | 실행 제어 평면: 초기화·웜업·실행·수집·불변식·메타데이터·리포트, 이벤트 허브, PG 관측 프로브, RunConfig 배포 | cpus 1.0, mem 512m | 공개 포트 4000(ctl-net, 호스트 127.0.0.1:4000)과 내부 포트 4001(lab-net 전용, 호스트 포트 없음: `/internal/run-config`·`/ingest/events`)을 따로 둔다. Docker Engine API는 `socket-proxy` 경유, 컨테이너 restart/stop/start/kill만(§13). 레포는 읽기 전용(`/repo:ro`), 쓰기는 `runs/`만(§13). 0단계 `run.mjs`를 승격한 것 |
 | `socket-proxy` | Docker 소켓 프록시. 허용 API: 컨테이너 조회·restart·stop·start·kill | cpus 0.1, mem 32m | docker.sock 마운트. 컨테이너 생성·exec·이미지 API는 막는다 |
 | `web` | 화면 11개(React + Vite 정적 빌드, nginx로 서빙) | cpus 0.25, mem 128m | 오케스트레이터 WebSocket/REST만 호출 |
 | `sse-subscriber` | SSE 구독기(별도 Node 프로세스, 4단계 T07·G24) | cpus 0.5, mem 128m | xk6-sse는 커스텀 k6 빌드가 필요해 쓰지 않는다(§14 #23) |
 
 **cpuset 배치 원칙:** k6, (app+nginx), (postgres+pgbouncer), (관측 스택)을 서로 다른 CPU 집합에 고정해 부하 발생기와 실험 대상이 CPU를 다투지 않게 한다. Docker Desktop VM의 vCPU 수가 부족하면 cpuset 대신 `cpus`만 쓰고 메타데이터에 `cpuset: none`을 남긴다. Docker Desktop의 cpuset은 VM vCPU를 고정할 뿐 물리 코어 고정이 아니다. Apple Silicon은 P/E 코어 성능 차이가 결과 편차로 섞일 수 있어 메타데이터에 남기고, Linux 네이티브 Docker에서는 cpuset이 실제 호스트 코어를 뜻하므로 의미가 다르다. 실제 격리 효과는 실험 필요(§14 #2).
 
-**최소 사양:** 권장 Docker 8 vCPU / 10GB 이상. 부족하면 `minimal` 프로필(app×2, nginx, postgres, k6, prometheus, grafana)로 띄우고 메타데이터에 `profile: minimal`을 남긴다. 다른 프로필의 결과와는 비교하지 않는다.
+**프로필 구성(D1):** 한 compose 파일 안에서 서비스를 세 묶음으로 나눈다.
+
+| 프로필 | 서비스 |
+|---|---|
+| (기본, 프로필 없음) | app, nginx, postgres, redis, k6, orchestrator, socket-proxy, web |
+| `obs` | prometheus, grafana, postgres_exporter, redis_exporter, nginx-prometheus-exporter, cadvisor |
+| `trace` | tempo, loki, alloy |
+
+뜬 관측 프로필은 메타데이터 `stack.profiles`(`obs`·`trace`, 기본 프로필은 목록에 넣지 않는다)에 기록하고 비교 조건에 넣는다. 프로필이 다른 실행끼리는 비교하지 않는다. `profile` 필드(`default | minimal`)는 별개로, 0단계 `run.mjs`가 남기는 값이 `minimal`이다.
+
+**최소 사양:** 컨테이너 메모리 limit 합계가 기본 약 5.8GiB, `obs` 포함 약 7.8GiB, 전부 약 9.1GiB라서 Docker Desktop 메모리 10GiB 이상을 권장한다(VM 메모리가 7~8GiB인 머신에서는 `trace`를 빼고 `obs`만, 그래도 부족하면 기본 프로필만 띄운다). vCPU 14개를 가정한 cpuset 기본값(§4.1 아래 cpuset 배치 원칙, `.env`의 `CPUSET_*`)은 vCPU가 적으면 비워서 쓴다.
 
 ### 4.2 네트워크 그림
 
@@ -145,7 +155,11 @@ pnpm workspace. 백엔드 컨벤션(레이어 책임, zod typed config, legacy O
 nestjs-under-load/
 ├─ package.json / pnpm-workspace.yaml / .nvmrc (Node 24)
 ├─ README.md                      # 정직한 표기 문구, "누가 짰나" 표, 빠른 시작
-├─ scripts/run.mjs                # 0단계 최소 실행기(오케스트레이터의 원형). RunConfig는 runs/_active/run-config.json 파일로 배포
+├─ scripts/
+│  ├─ run.mjs                     # 0단계 최소 실행기(오케스트레이터의 원형). RunConfig는 runs/_active/run-config.json 파일로 배포
+│  ├─ measured.mjs                # 실행 결과 → learn.yaml `measured` 기록(호스트에서 실행, §5.4)
+│  ├─ acceptance/                 # 1단계 완료 기준 재현·상황 실측 스크립트
+│  └─ overhead/                   # 계측 수준별 오버헤드 측정(docs/overhead.md)
 ├─ apps/app/                      # 0단계 실험 대상 NestJS 앱(engine/host의 원형). 팩은 워크스페이스 패키지(@under-load/<id>)로 import
 ├─ engine/
 │  ├─ host/                       # NestJS 호스트 앱 (실험 대상 app 이미지)
@@ -173,7 +187,7 @@ nestjs-under-load/
 ├─ packs/
 │  ├─ generic/
 │  │  ├─ pack.yaml                # 팩 메타(이름, 설명, 시나리오 목록, 공통 엔티티)
-│  │  ├─ g01-concurrent-edit/     # 시나리오 폴더 (§6), 폴더마다 learn.yaml 포함
+│  │  ├─ g01-shared-document/     # 시나리오 폴더 (§6), 폴더마다 learn.yaml 포함 (id 는 manifest 의 `id` 와 같다)
 │  │  ├─ g02-stock-decrement/     # 0단계 구현됨(워크스페이스 패키지)
 │  │  └─ ...
 │  └─ tax/
@@ -213,7 +227,7 @@ nestjs-under-load/
 
 - 실험 대상 `app` 이미지는 `engine/host` + 모든 팩을 포함해 한 번 빌드한다(0단계는 `apps/app` + 워크스페이스 패키지 팩). 어느 시나리오·strategy를 켤지는 RunConfig로 정한다.
 - **0단계 단순화:** 오케스트레이터가 없으므로 RunConfig는 `runs/_active/run-config.json` 파일을 `scripts/run.mjs`가 쓰고 app이 부팅 시 읽는다. 이유: 0단계에는 `GET /internal/run-config`를 서빙할 서비스가 없고, 파일 한 개가 가장 가벼우며 1단계에서 엔드포인트로 승격해도 RunConfig 스키마는 그대로다.
-- **app 컨테이너는 재생성하지 않고 restart만 한다.** 오케스트레이터가 RunConfig를 확정한 뒤 app을 restart하면, app은 부팅 시 오케스트레이터의 `GET /internal/run-config`(lab-net 전용)에서 RunConfig를 받아온다. 정적 env는 오케스트레이터 주소와 인스턴스 이름 정도뿐이다. 그래서 오케스트레이터에 컨테이너 생성 권한이 필요 없다(§13).
+- **app 컨테이너는 재생성하지 않고 restart만 한다.** 오케스트레이터가 RunConfig를 확정한 뒤 app을 restart하면, app은 부팅 시 오케스트레이터의 내부 포트 4001 `GET /internal/run-config`(lab-net 전용, 호스트 포트 없음)에서 RunConfig를 받아온다(정적 env `ORCHESTRATOR_URL=http://orchestrator:4001`, 비우면 0단계 파일 경로). 정적 env는 오케스트레이터 주소와 인스턴스 이름 정도뿐이다. 그래서 오케스트레이터에 컨테이너 생성 권한이 필요 없다(§13).
 - 실행 중 strategy 핫 스위칭은 하지 않는다(섞인 상태로 측정되는 것을 막고, 프로세스 상태도 매번 같게 시작).
 - CPU·메모리 limit 변경(G25 등)은 컨테이너 재생성이 필요하므로 오케스트레이터가 하지 않는다. 사용자가 호스트에서 compose 값을 바꿔 `docker compose up -d`로 직접 재생성하고, 실제 limit은 메타데이터에 자동 기록된다.
 
@@ -223,7 +237,7 @@ nestjs-under-load/
 |---|---|---|
 | 코드 전부 (`packs/**/strategies`, `invariants.sql`, 엔티티·마이그레이션·시드, `engine/**`, `orchestrator/**`, `infra/**`, `web/**`, k6 템플릿, 스크립트) | **AI** | 사람은 코드 실험실로 읽고 학습한다 |
 | `packs/**/learn.yaml`의 `expected`·`why`·`choose` | **AI** | 실측 전 예상은 `expected`로 표시 |
-| `learn.yaml`의 `measured` | **오케스트레이터(실측 후 채움)** | 실행 id·수치. 사람도 AI도 임의로 쓰지 않는다 |
+| `learn.yaml`의 `measured` | **실측 결과로 `scripts/measured.mjs`가 채움(호스트에서 실행)** | 실행 id·수치. 사람도 AI도 임의로 쓰지 않는다. 오케스트레이터는 레포에 쓰지 않고 `GET /learn/:scenario/measured`로 덧씌울 값만 제공한다(D13). 레포 쓰기 마운트를 두지 않기 위해서다 |
 | `docs/experiments/**` | **사용자** | 학습 기록: 예측 → 실측 → 원인. 예측은 실행 전에 커밋 |
 
 커밋 규칙: AI가 작성한 커밋은 `Co-Authored-By` 트레일러를 단다. `docs/experiments/**`는 사용자가 쓰는 영역이라 트레일러가 붙은 커밋이 있으면 CI가 경고한다(스크립트는 AI가 작성).
@@ -370,7 +384,7 @@ checklist:
 - `outcomes[]`: strategy × situation 판정. `verdict`(`ok|broken|slow|rejects|n/a`), `expected`(예상), `measured`(실측, 없으면 `null`), `why`, `focus[]`(`{file, marker}`), `sql[]`, 선택 `concepts: [id]`(해당 판정과 관련된 개념만 카드로 표시, 없으면 시나리오 전체 개념).
 - `choose[]`: "이 상황이면 이 코드" 결정 가이드(`when`, `pick`, `because`, `avoid[]`).
 - **코드 마커:** 소스에 `// @learn <marker-id> — <한 줄 설명>` 주석. 화면은 마커로 줄을 찾아 강조하고 줄 번호는 데이터에 쓰지 않는다. 계측용 `// @event <phase>`와 별개이며 한 줄에 둘 다 가능하다.
-- **expected vs measured:** 화면은 "예상" 배지와 "실측 run#" 배지를 구분해 보인다. 실행 결과가 생기면 오케스트레이터가 해당 outcome의 `measured`에 run id와 수치를 채운다. 예상과 실측이 어긋나면 그 자체가 학습 대상이다.
+- **expected vs measured:** 화면은 "예상" 배지와 "실측 run#" 배지를 구분해 보인다. 실행 결과가 생기면 `scripts/measured.mjs`가 호스트에서 해당 outcome의 `measured`에 run id와 수치를 채운다(§5.4). 예상과 실측이 어긋나면 그 자체가 학습 대상이다.
 
 ---
 
@@ -455,15 +469,16 @@ checklist:
 | 메서드 | 경로 | 용도 |
 |---|---|---|
 | GET | `/scenarios` | 팩·시나리오·manifest 목록 |
-| GET | `/internal/run-config` | app 부팅 시 RunConfig 조회(lab-net 내부 전용) |
+| GET | `/internal/run-config` | app 부팅 시 RunConfig 조회(내부 포트 4001, lab-net 내부 전용) |
 | POST | `/runs` | RunConfig로 배치 실행 시작(반복 횟수 포함) |
 | GET | `/runs/:id` | 상태·메타데이터·결과 |
 | POST | `/runs/:id/chaos` | 실행 중 망가뜨리기 즉시 실행 |
 | POST | `/runs/:id/abort` | 중단(중단 조건 충족 시 자동 호출도) |
 | POST | `/k6/render` | 설정 → 스크립트 미리보기 |
-| GET | `/compare?runs=a,b` | 비교 데이터 |
+| GET | `/compare?batches=a,b&axis=<경로>` | 비교 데이터(`axis`로 지정한 차이만 비교 축으로 표시, 계약 C2) |
+| GET | `/learn/:scenario/measured` | 메타데이터에서 계산한 실측값(`learn.yaml` `measured`에 덧씌울 값, 파일 기록은 `scripts/measured.mjs`) |
 | WS | `/ws/runs/:id` | 이벤트·PG 프로브·진행 상태 스트림 |
-| POST | `/ingest/events` | app → 이벤트 배치 수신(lab-net 내부 전용) |
+| POST | `/ingest/events` | app → 이벤트 배치 수신(내부 포트 4001, lab-net 내부 전용) |
 
 ### 7.5 리포트
 
@@ -675,7 +690,7 @@ IDE처럼 생긴 학습 화면. 코드는 AI가 썼고, 사용자는 "이 부하
 - **판정 패널:** 선택한 strategy × 상황의 `verdict` 배지, `expected`(예상 배지)와 `measured`(실측 run# 배지, 없으면 "미실측"), `why`, 실행되는 SQL, 관련 `concepts` 카드, `choose` 가이드("이 상황이면 이 코드 / 피할 코드").
 - **매트릭스 보기:** strategy × situation 표에 verdict 색. 셀을 누르면 해당 상황·strategy로 이동. 예상과 실측이 다른 셀에 표시.
 - **무대 화면과의 탭 연결:** 판정 패널에서 "이 상황으로 실행"(화면 2에 situation 값을 채워 이동), 무대(화면 3)의 장면에서 "코드 보기"로 해당 strategy의 마커 줄로 이동.
-- **실측 흐름:** 오케스트레이터가 실행을 마치면 해당 outcome의 `measured`를 run id·수치로 채운다. 화면은 파일(`learn.yaml`) 또는 `GET /learn/:scenario`로 읽고, 쓰는 쪽은 오케스트레이터뿐이다.
+- **실측 흐름:** 실행이 끝나면 호스트에서 `node scripts/measured.mjs --session <id> --write`로 해당 outcome의 `measured`를 run id·수치로 채운다(파일 쓰기는 이 스크립트뿐, §5.4). 화면은 파일(`learn.yaml`)과 오케스트레이터 `GET /learn/:scenario/measured`(메타데이터에서 계산한 덧씌울 값)를 함께 읽는다.
 
 ### 10.3 게임풍 무대
 
@@ -767,15 +782,18 @@ IDE처럼 생긴 학습 화면. 코드는 AI가 썼고, 사용자는 "이 부하
   - app은 재생성하지 않고 restart만 하고, 부팅 시 오케스트레이터에서 RunConfig를 받아온다(§5.3).
   - k6는 상주 컨테이너로 두고 스크립트를 받아 실행한다(§4.1).
   - 그 결과 소켓 프록시에는 컨테이너 조회·restart·stop·start·kill만 허용한다(생성·exec·이미지·볼륨 API 차단).
-- **소켓·호스트 마운트를 가진 컨테이너(전체 목록):**
+- **소켓·호스트 마운트를 가진 컨테이너(전체 목록):** 설정 파일을 읽기 전용으로 붙이는 마운트(`infra/**` 설정, SQL 초기화 등)는 제외한다.
 
 | 컨테이너 | 마운트 | 이유 |
 |---|---|---|
-| `socket-proxy`(orchestrator가 경유) | docker.sock | restart/stop/start/kill 화이트리스트 |
+| `socket-proxy`(orchestrator가 경유) | docker.sock(읽기 전용 마운트, 프록시가 허용한 API만 통과) | restart/stop/start/kill 화이트리스트 |
+| `orchestrator` | 레포 전체 `/repo`(**읽기 전용**), `runs/`(`/runs`, 읽기·쓰기) | git sha·dirty 와 팩 정의(manifest·learn.yaml·k6 템플릿)를 읽는다(D2). 쓰기는 `runs/`(메타데이터 SQLite·아티팩트)만. 레포에는 쓰지 않는다(D13) |
+| `k6` | `packs/`·`loadtest/`(읽기 전용), `runs/`(읽기·쓰기) | 스크립트·헬퍼를 읽고 summary·HTML 리포트를 `runs/`에 쓴다 |
+| `app` | `runs/_active/`(읽기 전용) | 0단계 `run.mjs` 경로의 RunConfig 파일 |
 | `alloy` | docker.sock(읽기) | `discovery.docker` + `loki.source.docker`로 컨테이너 로그 수집 |
-| `cadvisor` | rootfs·`/sys`·`/var/lib/docker` 등(읽기 전용) | 컨테이너 지표 수집 |
+| `cadvisor` | rootfs·`/sys`·`/var/lib/docker`·docker.sock 등(읽기 전용) | 컨테이너 지표 수집 |
 
-  orchestrator 자신은 소켓을 직접 마운트하지 않는다. 이 밖의 컨테이너에는 소켓·호스트 경로 마운트를 두지 않는다(`runs/` 아티팩트 호스트 마운트는 선택).
+  orchestrator는 docker.sock 을 직접 마운트하지 않고 `socket-proxy`를 거친다. 이 밖의 컨테이너에는 소켓·호스트 경로 마운트를 두지 않는다. `orchestrator`가 레포 읽기 전용 마운트를 갖는 대신 이미지에 git 을 설치하고, git worktree 처럼 `/repo`의 git 을 읽을 수 없는 경우를 위해 호스트에서 `GIT_SHA`·`GIT_DIRTY`를 env 로 넘기는 폴백을 둔다(미지정이면 sha 는 `unknown`).
 - **완화:**
   - 오케스트레이터 API는 `Origin` 헤더를 `http://127.0.0.1:<web>`/`http://localhost:<web>`만 허용(브라우저 경유 DNS 리바인딩·CSRF 방지). `Host` 헤더도 화이트리스트.
   - `/ingest/events`는 lab-net 내부에서만 접근(호스트 포트 미공개).
