@@ -64,9 +64,10 @@ const closeStream = (s: WriteStream | null) =>
     s.end(() => resolve());
   });
 
-const openAppend = (file: string) => {
+/** 쓰기 오류는 프로세스를 죽이지 않고 onError 로 센다(lab_orch_file_write_errors_total). */
+const openAppend = (file: string, onError: () => void) => {
   const s = createWriteStream(file, { flags: 'a' });
-  s.on('error', () => {});
+  s.on('error', onError);
   return s;
 };
 
@@ -83,6 +84,10 @@ export class EventHubImpl implements EventHub {
   private registered = false;
   private ingestEvents = 0;
   private readonly rejected = { run_mismatch: 0, invalid: 0 };
+  private fileWriteErrors = 0;
+  private readonly onWriteError = () => {
+    this.fileWriteErrors++;
+  };
 
   constructor(opts: EventHubOptions) {
     this.clock = opts.clock;
@@ -104,8 +109,8 @@ export class EventHubImpl implements EventHub {
       events: new Ring(this.ringEvents),
       agg: new Ring(this.ringAgg),
       last: new Map(),
-      eventsOut: openAppend(join(ctx.dir, 'events.ndjson')),
-      aggOut: openAppend(join(ctx.dir, 'agg.ndjson')),
+      eventsOut: openAppend(join(ctx.dir, 'events.ndjson'), this.onWriteError),
+      aggOut: openAppend(join(ctx.dir, 'agg.ndjson'), this.onWriteError),
     });
     this.current = ctx.runId;
     // 오래된 실행 정리(Map 은 삽입 순서)
@@ -230,6 +235,9 @@ export class EventHubImpl implements EventHub {
       '# HELP lab_orch_ws_clients 접속 중인 WS 구독자 수',
       '# TYPE lab_orch_ws_clients gauge',
       `lab_orch_ws_clients ${this.clients.size}`,
+      '# HELP lab_orch_file_write_errors_total events/agg ndjson 파일 쓰기 오류 수',
+      '# TYPE lab_orch_file_write_errors_total counter',
+      `lab_orch_file_write_errors_total ${this.fileWriteErrors}`,
       '',
     ].join('\n');
   }

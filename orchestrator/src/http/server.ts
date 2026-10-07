@@ -12,6 +12,8 @@ export interface HttpServersOptions {
   readonly publicPort: number;
   readonly internalPort: number;
   readonly bindHost: string;
+  /** 내부 리스너 bind 주소. 기본 bindHost(공개와 따로 좁힐 때: INTERNAL_BIND_HOST) */
+  readonly internalBindHost?: string;
   /** 처리하지 못한 오류 기록(기본 console.error) */
   readonly onError?: (err: unknown) => void;
 }
@@ -24,6 +26,9 @@ export interface HttpServers {
   close(): Promise<void>;
 }
 
+/** 413 뒤 버리며 읽을 남은 본문 상한(바이트). 넘으면 연결을 끊는다. */
+export const DRAIN_LIMIT = 16 * 1024 * 1024;
+
 const METHODS = new Set<string>(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
 function makeContext(req: IncomingMessage, res: ServerResponse, listener: ListenerKind, method: HttpMethod, url: URL, params: Record<string, string>): HttpContext {
@@ -31,15 +36,24 @@ function makeContext(req: IncomingMessage, res: ServerResponse, listener: Listen
     res.writeHead(status, { 'content-type': contentType, 'content-length': Buffer.byteLength(body) });
     res.end(body);
   };
+  // 413 이면 남은 본문은 버리며 읽되(클라이언트가 413 응답을 받도록) DRAIN_LIMIT 를 넘으면 req.destroy() 로 연결을 끊는다.
+  const tooLarge = () => {
+    let drained = 0;
+    req.on('data', (chunk: Buffer) => {
+      drained += chunk.length;
+      if (drained > DRAIN_LIMIT) req.destroy();
+    });
+    return new HttpError(413, { error: 'payload too large' });
+  };
   const readBody = async (maxBytes = DEFAULT_BODY_LIMIT) => {
     const declared = Number(req.headers['content-length']);
-    if (Number.isFinite(declared) && declared > maxBytes) throw new HttpError(413, { error: 'payload too large' });
+    if (Number.isFinite(declared) && declared > maxBytes) throw tooLarge();
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of req) {
       const buf = chunk as Buffer;
       size += buf.length;
-      if (size > maxBytes) throw new HttpError(413, { error: 'payload too large' });
+      if (size > maxBytes) throw tooLarge();
       chunks.push(buf);
     }
     return Buffer.concat(chunks);
@@ -140,7 +154,7 @@ export async function startHttpServers(opts: HttpServersOptions): Promise<HttpSe
   const int = makeServer('internal', opts.routers.internal, opts.guard, onError);
   const ports = { public: await listen(pub, opts.publicPort, opts.bindHost), internal: 0 };
   try {
-    ports.internal = await listen(int, opts.internalPort, opts.bindHost);
+    ports.internal = await listen(int, opts.internalPort, opts.internalBindHost ?? opts.bindHost);
   } catch (err) {
     pub.close();
     throw err;
