@@ -44,7 +44,7 @@ export class Migration20261007000100_g01_init extends Migration {
       "request_id" uuid not null,
       "document_id" integer not null,
       "edit_token" text not null,
-      "result" text not null check ("result" in ('success', 'conflict')),
+      "result" text not null check ("result" in ('success')),
       "instance" text not null,
       "txid" bigint not null default pg_current_xact_id()::text::bigint,
       "created_at" timestamptz not null default clock_timestamp()

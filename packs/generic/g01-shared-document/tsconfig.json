@@ -10,12 +10,14 @@
     "declaration": true,
     "sourceMap": true,
     "strict": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true,
     "incremental": false
   },
-  "include": ["index.ts"],
+  "include": ["index.ts", "entities/**/*.ts", "migrations/**/*.ts", "support/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }
