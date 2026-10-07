@@ -19,6 +19,12 @@ discovery.relabel "containers" {
     regex         = "/(.*)"
     target_label  = "container"
   }
+  // 이 compose 프로젝트의 컨테이너만 수집한다(같은 호스트의 다른 프로젝트 로그 제외). 프로젝트명은 alloy 서비스 env.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = sys.env("COMPOSE_PROJECT_NAME")
+    action        = "keep"
+  }
   // compose 서비스가 아닌 컨테이너는 수집하지 않는다.
   rule {
     source_labels = ["service"]
