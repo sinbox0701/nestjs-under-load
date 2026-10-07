@@ -1,0 +1,105 @@
+/* 비교 화면(화면 8). design/DESIGN_SYSTEM.md 토큰만 쓴다. */
+.cx {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--s3) var(--s4) var(--s6);
+  display: grid;
+  gap: var(--s3);
+}
+.cx h1 {
+  margin: 0;
+  font-size: 14px;
+}
+.cx__sec {
+  display: grid;
+  gap: var(--s2);
+}
+.cx__sec > .panel__h {
+  margin: 0;
+}
+.cx__cols {
+  display: grid;
+  grid-template-columns: repeat(var(--n, 2), minmax(0, 1fr));
+  gap: var(--s3);
+}
+.cx__col {
+  display: grid;
+  gap: var(--s1);
+  align-content: start;
+  min-width: 0;
+  padding: var(--s2);
+  background: var(--sunk);
+  border: 2px solid var(--line);
+}
+.cx__col h3 {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.cx__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s2);
+  align-items: baseline;
+}
+.cx__k {
+  color: var(--dim);
+  font: 10px/1.4 var(--font-small);
+}
+.cx__v {
+  font-variant-numeric: tabular-nums;
+}
+.cx__big {
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 700;
+}
+.cx__ban {
+  padding: var(--s2) var(--s3);
+  border: 2px solid var(--edge);
+  background: var(--panel);
+  display: grid;
+  gap: var(--s1);
+}
+.cx__ban--bad {
+  border-color: var(--bad);
+}
+.cx__ban--bad .badge {
+  font-size: 12px;
+}
+.cx__ul {
+  margin: 0;
+  padding-left: var(--s4);
+}
+.cx__ul code {
+  font-family: var(--font-code);
+  font-size: 11px;
+}
+.cx__ban code {
+  font-family: var(--font-code);
+  font-size: 11px;
+}
+.cx__foot {
+  border-top: 2px solid var(--line);
+  padding-top: var(--s2);
+  color: var(--dim);
+  font: 10px/1.5 var(--font-small);
+}
+.cx__foot p {
+  margin: 0 0 var(--s1);
+}
+.cx .badge {
+  margin-right: var(--s1);
+}
+@media (max-width: 640px) {
+  .cx {
+    padding: var(--s2) var(--s4) var(--s5);
+  }
+  .cx__cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.cx__ban > .badge,
+.cx__col > .badge {
+  justify-self: start;
+}

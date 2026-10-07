@@ -1,0 +1,107 @@
+/* 실행 기록(화면 7). design/DESIGN_SYSTEM.md 토큰만 쓴다. */
+.hx {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--s3) var(--s4) var(--s6);
+  display: grid;
+  gap: var(--s3);
+}
+.hx h1 {
+  margin: 0;
+  font-size: 14px;
+}
+.hx__bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  align-items: center;
+  justify-content: space-between;
+}
+.hx__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s2);
+}
+.hx__item {
+  display: grid;
+  gap: var(--s2);
+}
+.hx__head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--s2);
+  align-items: start;
+}
+.hx__pick {
+  min-width: 32px;
+  min-height: 32px;
+  display: grid;
+  place-items: center;
+}
+.hx__pick input {
+  width: 16px;
+  height: 16px;
+}
+.hx__main {
+  display: grid;
+  gap: var(--s1);
+  min-width: 0;
+}
+.hx__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s2);
+  align-items: baseline;
+}
+.hx__title {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.hx__k {
+  color: var(--dim);
+  font: 10px/1.4 var(--font-small);
+}
+.hx__runs {
+  display: grid;
+  gap: var(--s1);
+  padding: var(--s2);
+  background: var(--sunk);
+  border: 2px solid var(--line);
+}
+.hx__run {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s2);
+  align-items: center;
+}
+.hx__run a {
+  color: var(--info);
+}
+.hx__meta {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  font: 10px/1.5 var(--font-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--panel);
+  border: 2px solid var(--line);
+  padding: var(--s2);
+}
+.hx__foot {
+  border-top: 2px solid var(--line);
+  padding-top: var(--s2);
+  color: var(--dim);
+  font: 10px/1.5 var(--font-small);
+}
+.hx__foot p {
+  margin: 0;
+}
+.hx .badge {
+  margin-right: var(--s1);
+}
+.hx__item .badge {
+  white-space: normal;
+}
