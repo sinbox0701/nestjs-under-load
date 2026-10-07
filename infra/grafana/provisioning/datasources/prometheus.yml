@@ -1,8 +1,14 @@
 apiVersion: 1
 datasources:
   - name: Prometheus
+    uid: prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090
     isDefault: true
     editable: false
+    jsonData:
+      # 앱이 exemplar 라벨을 trace_id 로 낸다(T-122). Prometheus 는 exemplar-storage 로 기동한다.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
