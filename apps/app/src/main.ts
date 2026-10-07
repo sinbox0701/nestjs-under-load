@@ -1,7 +1,9 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
-// reflect-metadata는 데코레이터 메타데이터보다 먼저 로드돼야 한다. 정적 import는 호이스팅되므로
-// CJS require로 순서를 고정한다(DESIGN §5.1 main.ts). OTel tracing은 1단계에서 이 다음 줄에 붙인다.
+// require 순서: reflect-metadata → tracing → bootstrap. 정적 import 는 호이스팅되므로 CJS require 로 순서를 고정한다
+// (DESIGN §5.1 main.ts). OTel 은 http·express·pg 를 불러오기 전에 켜져야 계측이 붙는다(full 일 때만 SDK 로드).
 require('reflect-metadata');
+const { startTracingFromEnv } = require('./tracing') as typeof import('./tracing');
+startTracingFromEnv();
 
 import('./bootstrap.js')
   .then((m) => m.bootstrap())
