@@ -216,9 +216,9 @@ describe('k6 실행기 클라이언트', () => {
       }),
     );
     const { runner } = make();
-    assert.deepEqual(await runner.readSummary(file), {
+    assert.deepEqual(await runner.readSummary(file, 30), {
       requests: 3000,
-      throughputRps: 99.5,
+      throughputRps: 100,
       httpFailures: 30,
       dropped: 7,
       latencyMs: {
@@ -228,13 +228,14 @@ describe('k6 실행기 클라이언트', () => {
     });
   });
 
-  it('throughputRps: 본 실행 길이를 주면 http_reqs.count / 길이, 안 주면 k6 rate', async () => {
+  it('throughputRps: http_reqs.count / 본 실행 길이, 길이가 없거나 0 이하면 throw', async () => {
     const file = join(dir, 'summary3.json');
-    // 포화로 gracefulStop 까지 늘어나 rate(2100/43.2s≈48.6)가 낮게 잡힌 경우
+    // 포화로 gracefulStop 까지 늘어나 k6 rate(2100/43.2s≈48.6)가 낮게 잡힌 경우
     await writeFile(file, JSON.stringify({ metrics: { http_reqs: { values: { count: 2100, rate: 48.6 } } } }));
     const { runner } = make();
     assert.equal((await runner.readSummary(file, 30)).throughputRps, 70);
-    assert.equal((await runner.readSummary(file)).throughputRps, 48.6);
+    await assert.rejects(runner.readSummary(file, 0), /본 실행 길이/);
+    await assert.rejects(runner.readSummary(file, undefined as unknown as number), /본 실행 길이/);
   });
 
   it('summary: 실패 서브메트릭이 없고 count 도 없는 신버전 평탄 모양', async () => {
@@ -250,7 +251,7 @@ describe('k6 실행기 클라이언트', () => {
       }),
     );
     const { runner } = make();
-    const s = await runner.readSummary(file);
+    const s = await runner.readSummary(file, 30);
     assert.equal(s.dropped, 0);
     assert.deepEqual(s.latencyMs.success, { p50: 2, p95: 3, p99: 4, n: 100 });
     assert.deepEqual(s.latencyMs.failed, { p50: null, p95: null, p99: null, n: 0 });

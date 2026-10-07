@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { K6JobStatusSchema } from '@under-load/contracts';
 import type { K6JobRequest, K6JobStatus } from '@under-load/contracts';
 
-import type { CallOptions, Clock, K6EnvInput, K6Runner, K6Summary, ScenarioDef } from '../ports.js';
+import type { CallOptions, Clock, K6EnvInput, K6Runner, ScenarioDef } from '../ports.js';
 import { judgeValidity } from '../validity/index.js';
 import { buildEnv, hashScript } from './env.js';
 import { parseSummary } from './summary.js';
@@ -33,12 +33,7 @@ function assertPath(label: string, value: string, prefix: string): void {
   if (!value.startsWith(prefix) || value.split('/').includes('..')) throw new Error(`${label} 경로가 ${prefix} 아래가 아님: ${value}`);
 }
 
-/** K6Runner 에 본 실행 길이(초)를 받는 readSummary 확장. ports.ts 시그니처와 호환(두 번째 인자는 선택). */
-export type K6RunnerImpl = Omit<K6Runner, 'readSummary'> & {
-  readSummary(summaryFile: string, mainDurationSec?: number): Promise<K6Summary>;
-};
-
-export function createK6Runner(deps: K6RunnerDeps): K6RunnerImpl {
+export function createK6Runner(deps: K6RunnerDeps): K6Runner {
   const doFetch = deps.fetch ?? fetch;
   const base = deps.runnerUrl.replace(/\/+$/, '');
 
@@ -60,7 +55,7 @@ export function createK6Runner(deps: K6RunnerDeps): K6RunnerImpl {
 
   const errorOf = (json: unknown): string => (json as { error?: string } | null)?.error ?? JSON.stringify(json);
 
-  const runner: K6RunnerImpl = {
+  const runner: K6Runner = {
     buildEnv: (input: K6EnvInput) => buildEnv(input, { baseUrl: deps.baseUrl, repActors: deps.repActors }),
 
     async scriptHash(scenario: ScenarioDef, env: Record<string, string>) {
@@ -116,7 +111,7 @@ export function createK6Runner(deps: K6RunnerDeps): K6RunnerImpl {
       return r.json;
     },
 
-    async readSummary(summaryFile: string, mainDurationSec?: number) {
+    async readSummary(summaryFile: string, mainDurationSec: number) {
       return parseSummary(JSON.parse(await readFile(summaryFile, 'utf8')), mainDurationSec);
     },
 
