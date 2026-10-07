@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
+import YAML from 'yaml';
+
 import { ScenarioInfoSchema, type BatchSummary, type RunConfigV1, type RunRow } from '@under-load/contracts';
 
 import { loadPackCatalog, registerApiRoutes, createRunConfigBoard } from '../dist/api/index.js';
@@ -138,7 +140,8 @@ describe('C2 API', () => {
     assert.ok(g02);
     assert.equal(g02.pack, 'generic');
     assert.equal(g02.minAppInstances, 2);
-    assert.deepEqual(g02.strategies.map((s: any) => s.id), ['no-lock', 'app-memory-lock', 'row-lock', 'conditional-update']);
+    const manifest = YAML.parse(readFileSync(path.join(repoDir, 'packs/generic/g02-stock-decrement/manifest.yaml'), 'utf8'));
+    assert.deepEqual(g02.strategies.map((s: any) => s.id), manifest.strategies.map((s: any) => s.id));
     assert.deepEqual(g02.load.models, ['open', 'closed']);
     assert.equal(g02.load.defaults.rate, 100);
     assert.equal(g02.seedDefaults.stockPerProduct, 100);
