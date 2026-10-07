@@ -24,7 +24,7 @@ import { orderCreateSchema, requestIdSchema } from './order.dto';
 
 export interface G02Runtime {
   instance: string;
-  contentionWindow(point: ContentionPoint): Promise<void>;
+  contentionWindow(point: ContentionPoint): Promise<{ injected: boolean; durMs: number } | void>;
 }
 
 /**
