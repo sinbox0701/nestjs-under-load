@@ -134,11 +134,13 @@ export function matchSituation(situations, key, defaults = {}) {
   return hits.length === 1 ? hits[0] : null;
 }
 
-function conditionsText(md, situation, reps) {
+function conditionsText(md, situation, reps, defaults = {}) {
   const h = md.host ?? {};
   const memGiB = h.dockerMemBytes ? (h.dockerMemBytes / 2 ** 30).toFixed(1) : '?';
   const key = batchKey(md);
   const v1 = (md.schemaVersion ?? 0) >= 1;
+  const base = defaults[key.strategy] ?? {};
+  const nonDefault = Object.fromEntries(Object.entries(key.params).filter(([k, v]) => sortedJson(v) !== sortedJson(base[k])));
   const shapeNote =
     situation.load?.shape && situation.load.shape !== 'constant' ? (v1 ? `(상황 정의 shape=${situation.load.shape}, 실행은 constant)` : `(상황 정의 shape=${situation.load.shape}, 0단계 run.mjs는 constant만 지원)`) : '';
   const loadText =
@@ -156,13 +158,13 @@ function conditionsText(md, situation, reps) {
     loadText,
     dataText,
     ...(key.contentionWindowMs > 0 ? [`경합 창 지연 ${key.contentionWindowMs}ms 주입됨(${CONTENTION_POINT}: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안)`] : []),
-    ...(Object.keys(key.params).length > 0 ? [`strategy 파라미터 ${JSON.stringify(key.params)}`] : []),
+    ...(Object.keys(nonDefault).length > 0 ? [`기본값과 다른 strategy 파라미터 ${JSON.stringify(nonDefault)}`] : []),
     '절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용',
   ].join(' · ');
 }
 
 /** batch의 실행 메타데이터 목록 → learn.yaml measured 객체 */
-export function buildMeasured(mds, situation) {
+export function buildMeasured(mds, situation, defaults = {}) {
   const facts = mds.map(runFacts);
   const valid = facts.filter((f) => f.valid);
   if (valid.length === 0) return null;
@@ -203,7 +205,7 @@ export function buildMeasured(mds, situation) {
     p95Ms: p95,
     failRatePct: fail,
     k6CpuAvgRatio: spread(valid.map((f) => f.k6CpuAvgRatio), 3),
-    conditions: conditionsText(md, situation, facts.length),
+    conditions: conditionsText(md, situation, facts.length, defaults),
   };
 }
 
@@ -259,7 +261,7 @@ export function planMeasured(session, learn, readMetadata, defaults = {}) {
       out.push({ batchId, skip: `대응하는 situation 없음(${JSON.stringify(key)})` });
       continue;
     }
-    const measured = buildMeasured(mds, situation);
+    const measured = buildMeasured(mds, situation, defaults);
     if (!measured) {
       out.push({ batchId, skip: '유효한 실행 없음' });
       continue;

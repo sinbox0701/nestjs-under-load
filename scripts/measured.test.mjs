@@ -9,11 +9,17 @@ import { describe, it } from 'node:test';
 import YAML from 'yaml';
 
 import { batchKey, buildMeasured, loadSession, matchSituation, planMeasured, replaceMeasured, runFacts, spread } from './measured.mjs';
-import { REPO_ROOT } from './run.mjs';
+import { REPO_ROOT, defaultStrategyParams } from './run.mjs';
 
 const LEARN_PATH = path.join(REPO_ROOT, 'packs/generic/g02-stock-decrement/learn.yaml');
 const LEARN_TEXT = readFileSync(LEARN_PATH, 'utf8');
 const LEARN = YAML.parse(LEARN_TEXT);
+/** CLI(main)와 같은 manifest 기본값 */
+const defaultsOf = (dir) => {
+  const manifest = YAML.parse(readFileSync(path.join(REPO_ROOT, dir, 'manifest.yaml'), 'utf8'));
+  return Object.fromEntries(manifest.strategies.map((st) => [st.id, defaultStrategyParams(manifest, st.id)]));
+};
+const G02_DEFAULTS = defaultsOf('packs/generic/g02-stock-decrement');
 
 /** run.mjs buildMetadata 모양의 최소 메타데이터 */
 function md({ rep = 1, strategy = 'no-lock', instances = 2, valid = true, oversell = 0, p95 = 2, httpReqs = 4000, failed = 0, success = 500, interventions = [] } = {}) {
@@ -214,6 +220,16 @@ describe('v1 closed·G01 대응', () => {
   });
 });
 
+describe('conditions: 기본값과 다른 strategy 파라미터만 적는다', () => {
+  it('기본값과 같으면 문구 없음, 다르면 다른 키만', () => {
+    const s = G01.situations.find((x) => x.id === 'lease-short-ttl');
+    const defaults = { 'edit-lease': { ttlMs: 30000, retryAfterMs: 1000 } };
+    const mk = (params) => mdV1G01({ strategy: 'edit-lease', params, instances: 1, vus: 5, editMs: 150 });
+    assert.doesNotMatch(buildMeasured([mk({ retryAfterMs: 1000 })], s, defaults).conditions, /strategy 파라미터/);
+    assert.match(buildMeasured([mk({ ttlMs: 100, retryAfterMs: 1000 })], s, defaults).conditions, /기본값과 다른 strategy 파라미터 \{"ttlMs":100\}/);
+  });
+});
+
 describe('세션 읽기: lab.sqlite', () => {
   it('_sessions JSON 이 없으면 runs/_meta/lab.sqlite 의 세션 실행 행을 읽는다', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'measured-'));
@@ -257,12 +273,12 @@ describe('0단계 실측 회귀', { skip: phase0Sessions.length === 0 && 'runs/_
     for (const id of phase0Sessions) {
       const { session, readMetadata } = loadSession(PHASE0_RUNS, id);
       if (session.runs.length < 6 || readMetadata(session.runs[0].runId).schemaVersion != null) continue;
-      const plan = planMeasured(session, LEARN, readMetadata).filter((p) => !p.skip);
+      const plan = planMeasured(session, LEARN, readMetadata, G02_DEFAULTS).filter((p) => !p.skip);
       let text = LEARN_TEXT;
       for (const p of plan) text = replaceMeasured(text, p.strategy, p.situation, p.measured);
       assert.equal(text, LEARN_TEXT, `세션 ${id}`);
       checked += plan.length;
     }
-    assert.ok(checked > 0, '대응된 셀이 하나도 없다');
+    assert.equal(checked, 16, '0단계 세션 5733·2493 의 8셀씩');
   });
 });

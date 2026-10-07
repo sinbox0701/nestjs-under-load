@@ -121,10 +121,12 @@ export function matchSituation(situations: Situation[], key: ReturnType<typeof b
   return hits.length === 1 ? hits[0]! : null;
 }
 
-function conditionsText(md: Md, situation: Situation, reps: number): string {
+function conditionsText(md: Md, situation: Situation, reps: number, defaults: StrategyDefaults): string {
   const h = md.host ?? {};
   const memGiB = h.dockerMemBytes ? (h.dockerMemBytes / 2 ** 30).toFixed(1) : '?';
   const key = batchKey(md);
+  const base = defaults[key.strategy] ?? {};
+  const nonDefault = Object.fromEntries(Object.entries(key.params).filter(([k, v]) => sortedJson(v) !== sortedJson(base[k])));
   const shapeNote = situation.load?.shape && situation.load.shape !== 'constant' ? `(상황 정의 shape=${situation.load.shape}, 실행은 constant)` : '';
   const loadText =
     md.load.model === 'open'
@@ -138,13 +140,13 @@ function conditionsText(md: Md, situation: Situation, reps: number): string {
       ? `문서 ${key.documents}개, ${key.distribution === 'zipf' ? `zipf(${key.zipfS}) 분포` : '균등 분포'}, 편집 ${key.editMs ?? '?'}ms`
       : `상품 ${key.products}개 × 재고 ${key.stockPerProduct}, ${key.distribution === 'zipf' ? `zipf(${key.zipfS}) 분포` : '균등 분포'}, 요청당 ${md.data?.qtyPerOrder ?? md.data?.scenarioParams?.qty ?? '?'}개`,
     ...(key.contentionWindowMs > 0 ? [`경합 창 지연 ${key.contentionWindowMs}ms 주입됨(${CONTENTION_POINT}: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안)`] : []),
-    ...(Object.keys(key.params).length > 0 ? [`strategy 파라미터 ${JSON.stringify(key.params)}`] : []),
+    ...(Object.keys(nonDefault).length > 0 ? [`기본값과 다른 strategy 파라미터 ${JSON.stringify(nonDefault)}`] : []),
     '절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용',
   ].join(' · ');
 }
 
 /** batch 의 실행 메타데이터 목록 → learn.yaml measured 객체. 유효 실행이 없으면 null. */
-export function buildMeasured(mds: Md[], situation: Situation): Record<string, unknown> | null {
+export function buildMeasured(mds: Md[], situation: Situation, defaults: StrategyDefaults = {}): Record<string, unknown> | null {
   const facts = mds.map(runFacts);
   const valid = facts.filter((f) => f.valid);
   if (valid.length === 0) return null;
@@ -184,7 +186,7 @@ export function buildMeasured(mds: Md[], situation: Situation): Record<string, u
     p95Ms: p95,
     failRatePct: fail,
     k6CpuAvgRatio: spread(valid.map((f) => f.k6CpuAvgRatio), 3),
-    conditions: conditionsText(md, situation, facts.length),
+    conditions: conditionsText(md, situation, facts.length, defaults),
   };
 }
 
@@ -200,7 +202,7 @@ export function computeMeasuredCells(situations: Situation[], batchesNewestFirst
     const key = batchKey(mds[0]!);
     const situation = matchSituation(situations, key, defaults);
     if (!situation) continue;
-    const measured = buildMeasured(mds, situation);
+    const measured = buildMeasured(mds, situation, defaults);
     if (!measured) continue;
     const validReps = (measured.runs as string[]).length;
     const id = `${key.strategy}\u0000${situation.id}`;
