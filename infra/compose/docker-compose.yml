@@ -157,7 +157,12 @@ services:
       PUBLIC_PORT: "4000"
       INTERNAL_PORT: "4001"
       DOCKER_HOST: tcp://socket-proxy:2375
-      COMPOSE_PROJECT_NAME: nestjs-under-load
+      # -p 로 프로젝트명을 바꿔 띄우면 같은 값을 export 한다(app 컨테이너 조회 라벨)
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-nestjs-under-load}
+      # /repo 의 git 을 못 읽을 때(worktree 의 .git 파일이 컨테이너 밖 경로를 가리킴)의 폴백.
+      # GIT_SHA=$(git rev-parse HEAD), GIT_DIRTY=true|false(git status --porcelain 이 비었는지) 로 export
+      GIT_SHA: ${GIT_SHA:-unknown}
+      GIT_DIRTY: ${GIT_DIRTY:-}
       REPO_DIR: /repo
       RUNS_DIR: /runs
       POSTGRES_HOST: postgres
@@ -170,6 +175,8 @@ services:
       K6_RUNNER_URL: http://k6:7070
       PROMETHEUS_URL: http://prometheus:9090
       GRAFANA_URL: http://grafana:3000
+      # 주석용 서비스 계정 토큰을 만들 때 쓰는 관리자 비밀번호(grafana 서비스와 같은 값)
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-grafana_local}
     volumes:
       - ../..:/repo:ro
       - ../../runs:/runs

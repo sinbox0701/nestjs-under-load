@@ -11,12 +11,12 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { NOT_MEASURED, ReadyResponseSchema, STACK_PROFILES } from '@under-load/contracts';
-import type { RunMetadataV1 } from '@under-load/contracts';
+import type { InvariantResult, RunMetadataV1 } from '@under-load/contracts';
 import { z } from 'zod';
 
 import { createRunConfigBoard, loadPackCatalog, registerApiRoutes, type PackCatalog } from './api/index.js';
 import { loadConfig, type OrchestratorConfig } from './config.js';
-import { createDbAdmin, createInvariantRunner, createPgConnect } from './db/index.js';
+import { createDbAdmin, createInvariantRunner, createPgConnect, type PgConnect } from './db/index.js';
 import { createDockerControl } from './docker/index.js';
 import { createEventHub } from './event-hub/index.js';
 import { createRouters, startHttpServers } from './http/index.js';
@@ -32,6 +32,7 @@ import type {
   EventHub,
   InvariantRunner,
   K6Runner,
+  K6Summary,
   MetadataStore,
   ObsClient,
   ProbeSource,
@@ -75,7 +76,7 @@ export function resolveEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   alias('COMPOSE_PROJECT', 'COMPOSE_PROJECT_NAME');
   // DOCKER_HOST=tcp://socket-proxy:2375 → http://socket-proxy:2375
   if (out.DOCKER_URL === undefined && out.DOCKER_HOST?.startsWith('tcp://')) out.DOCKER_URL = `http://${out.DOCKER_HOST.slice('tcp://'.length)}`;
-  // compose 는 이 값을 orchestrator 에 넘기지 않는다: grafana 서비스의 기본값과 맞춘다
+  // compose 밖(로컬 실행 등)에서 비어 있으면 grafana 서비스의 기본값과 맞춘다
   out.GRAFANA_ADMIN_PASSWORD ??= 'grafana_local';
   return out;
 }
@@ -100,6 +101,11 @@ const WiringEnvSchema = z.object({
   K6_FETCH_TIMEOUT_MS: positiveInt(10_000),
   /** k6 job 완료 대기 상한(넘으면 job 을 중단한다) */
   K6_WAIT_MAX_MS: positiveInt(2 * 60 * 60_000),
+  /** git 으로 /repo 를 못 읽을 때 git.dirty 폴백(GIT_SHA 와 짝). 'true'|'false' 외에는 모름(null) */
+  GIT_DIRTY: z
+    .string()
+    .optional()
+    .transform((v) => (v === 'true' ? true : v === 'false' ? false : null)),
 });
 export type WiringEnv = z.infer<typeof WiringEnvSchema>;
 
@@ -122,15 +128,15 @@ export const execGit =
 
 /**
  * HEAD 앞 7자와 작업 트리 변경 여부. git 이 레포를 못 읽으면(예: worktree 의 `.git` 파일이 컨테이너에 없는 경로를 가리킴)
- * sha 는 fallbackSha(env GIT_SHA, 'unknown' 이면 무시), dirty 는 null.
+ * sha 는 fallbackSha(env GIT_SHA, 'unknown' 이면 무시), dirty 는 fallbackDirty(env GIT_DIRTY, 없으면 null).
  */
-export async function readGitInfo(git: GitExec, fallbackSha: string | null): Promise<GitInfo> {
+export async function readGitInfo(git: GitExec, fallbackSha: string | null, fallbackDirty: boolean | null = null): Promise<GitInfo> {
   const fallback = fallbackSha && fallbackSha !== 'unknown' ? fallbackSha.slice(0, 7) : null;
   let sha: string | null;
   try {
     sha = (await git(['rev-parse', 'HEAD'])).trim().slice(0, 7) || fallback;
   } catch {
-    return { sha: fallback, dirty: null };
+    return { sha: fallback, dirty: fallback === null ? null : fallbackDirty };
   }
   try {
     return { sha, dirty: (await git(['status', '--porcelain'])).trim().length > 0 };
@@ -176,6 +182,39 @@ export async function readRedisPolicy(repoDir: string): Promise<string | null> {
   try {
     const text = await readFile(path.join(repoDir, 'infra/redis/redis.conf'), 'utf8');
     return /^\s*maxmemory-policy\s+(\S+)/m.exec(text)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Docker Desktop 버전(메타데이터 host.dockerDesktopVersion). Engine API `/version` 의 Platform.Name 이
+ * "Docker Desktop 4.48.0 (207573)" 모양일 때만 있다. Docker Desktop 이 아니거나 조회가 실패하면 null.
+ */
+export async function readDockerDesktopVersion(dockerUrl: string, doFetch: typeof fetch = fetch, timeoutMs = 5000): Promise<string | null> {
+  try {
+    const res = await doFetch(`${dockerUrl.replace(/\/+$/, '')}/version`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) {
+      await res.body?.cancel();
+      return null;
+    }
+    const name = ((await res.json()) as { Platform?: { Name?: unknown } } | null)?.Platform?.Name;
+    return typeof name === 'string' ? (/Docker Desktop\s+(\d+(?:\.\d+)*)/i.exec(name)?.[1] ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 역할의 CONNECTION LIMIT(pg_roles.rolconnlimit, -1 = 제한 없음). 역할이 없거나 조회가 실패하면 null. */
+export async function readRoleConnLimit(connect: PgConnect, role: string): Promise<number | null> {
+  try {
+    const s = await connect('postgres');
+    try {
+      const v = (await s.query('SELECT rolconnlimit FROM pg_roles WHERE rolname = $1', [role])).rows[0]?.rolconnlimit;
+      return v === undefined || v === null ? null : Number(v);
+    } finally {
+      await s.end().catch(() => {});
+    }
   } catch {
     return null;
   }
@@ -307,7 +346,47 @@ export type MetadataAdapterContext = {
   redisMaxmemoryPolicy: string | null;
   /** 오케스트레이터가 도는 Docker VM 의 아키텍처·CPU 모델(테스트 고정용) */
   host?: { arch: string | null; cpu: string | null };
+  /** {@link readDockerDesktopVersion} 결과(시작 때 한 번) */
+  dockerDesktopVersion?: string | null;
+  /** app 역할의 CONNECTION LIMIT({@link readRoleConnLimit}, 세션 시작 때 갱신) */
+  appRoleConnectionLimit?: () => number | null;
 };
+
+/**
+ * RunConfig 의 null(적용 안 함)일 때 실제로 걸리는 값. 메타데이터 pool·timeouts 는 실효값을 적는다(0 = 제한 없음).
+ * - serverRequestMs: Node http.Server requestTimeout 기본값(app bootstrap 은 null 이면 건드리지 않는다)
+ * - poolAcquireMs: pg Pool connectionTimeoutMillis 기본값 0(무한 대기)
+ * - statementMs·idleInTxMs: PG 서버 설정(pg_settings, ms)
+ */
+export const EFFECTIVE_DEFAULTS = Object.freeze({ serverRequestMs: 300_000, poolAcquireMs: 0 });
+
+/** pg_settings 의 ms 값(문자열) → 정수. 없거나 숫자가 아니면 null. */
+const pgMs = (v: string | undefined): number | null => (v !== undefined && /^\d+$/.test(v) ? Number(v) : null);
+
+/** 템플릿 DB 이름 `tpl_<시나리오>_<해시 12자>` 의 해시(시나리오·seed·seedOptions·마이그레이션이 같으면 같다). */
+export const seedHashOf = (templateDb: string): string | null => /_([0-9a-f]{12})$/.exec(templateDb)?.[1] ?? null;
+
+/**
+ * 원장(DB) vs k6 대조(0단계 compareLedgerWithClient 의 일반화). 원장 = info 불변식 `ledger-matches-k6` 의 value
+ * (결과별 행 수, total = 기록된 요청 수), 클라이언트 = k6 의 기대 응답 수(requests − httpFailures).
+ * 불변식이나 summary 가 없으면 null. completeness 가 안쪽까지 보므로 null 값 칸을 두지 않는다.
+ */
+export function ledgerVsClient(invariants: readonly InvariantResult[], summary: K6Summary | null): Record<string, unknown> | null {
+  const ledger = invariants.find((i) => i.id === 'ledger-matches-k6')?.value;
+  if (!summary || typeof ledger !== 'object' || ledger === null || Array.isArray(ledger)) return null;
+  const expected = summary.requests - summary.httpFailures;
+  const out: Record<string, unknown> = {
+    ledger,
+    client: { requests: summary.requests, expected, httpFailures: summary.httpFailures, dropped: summary.dropped },
+  };
+  const total = (ledger as Record<string, unknown>).total;
+  if (typeof total === 'number') {
+    const diff = total - expected;
+    out.diff = { total: diff };
+    if (diff !== 0) out.note = diff > 0 ? '원장이 k6보다 많음: 클라이언트 타임아웃 후 서버 커밋 가능성' : 'k6가 원장보다 많음: 하네스/원장 기록 누락 의심';
+  }
+  return out;
+}
 
 /**
  * 엔진의 RunMetadataInput → T-107 buildMetadata 컨텍스트. 포트 밖의 값(git·스택 프로필·redis 정책)은 여기서 채운다.
@@ -352,34 +431,36 @@ export function createMetadataBuilder(c: MetadataAdapterContext): MetadataBuilde
         os: facts.docker?.operatingSystem || null,
         arch: host.arch,
         cpu: host.cpu,
-        // Engine API(/info)에 Docker Desktop 버전이 없다
-        dockerDesktopVersion: null,
+        dockerDesktopVersion: c.dockerDesktopVersion ?? null,
       },
       limits,
-      pool: runConfig ? { ...runConfig.pool } : undefined,
+      pool: runConfig ? { ...runConfig.pool, acquireTimeoutMs: runConfig.pool.acquireTimeoutMs ?? EFFECTIVE_DEFAULTS.poolAcquireMs } : undefined,
       postgres: {
         configHash: facts.pgConfig?.hash ?? null,
         maxConnections: settings.max_connections !== undefined ? Number(settings.max_connections) : null,
         sharedBuffers: sharedBuffersText(settings.shared_buffers),
         observerConnections: input.pgProbe.enabled ? 1 : 0,
-        appRoleConnectionLimit: null,
+        appRoleConnectionLimit: c.appRoleConnectionLimit?.() ?? null,
       },
       timeouts: runConfig
         ? {
-            serverRequestMs: runConfig.timeouts.serverRequestMs,
-            statementMs: runConfig.timeouts.statementMs,
-            idleInTxMs: runConfig.timeouts.idleInTxMs,
-            poolAcquireMs: runConfig.pool.acquireTimeoutMs,
+            serverRequestMs: runConfig.timeouts.serverRequestMs ?? EFFECTIVE_DEFAULTS.serverRequestMs,
+            statementMs: runConfig.timeouts.statementMs ?? pgMs(settings.statement_timeout),
+            idleInTxMs: runConfig.timeouts.idleInTxMs ?? pgMs(settings.idle_in_transaction_session_timeout),
+            poolAcquireMs: runConfig.pool.acquireTimeoutMs ?? EFFECTIVE_DEFAULTS.poolAcquireMs,
           }
         : undefined,
       redis: { used: redisUsed, maxmemoryPolicy: redisUsed ? c.redisMaxmemoryPolicy : null },
       templateDb: input.templateDb,
+      seedHash: seedHashOf(input.templateDb),
+      ledgerVsClient: ledgerVsClient(input.invariants, input.k6.summary),
       k6ScriptHash: input.k6.scriptHash,
       validity: {
         valid: v.valid,
         reasons: v.reasons,
         k6CpuAvgRatio: v.k6CpuAvgRatio,
-        droppedCountedAsFailure: v.droppedCountedAsFailure,
+        // closed 는 dropped 가 없으니 실패에 더하는 일도 없다(validity 는 null 로 둔다)
+        droppedCountedAsFailure: v.droppedCountedAsFailure ?? (input.request.load.model === 'closed' ? false : null),
         checks: { k6Cpu: v.k6Cpu, scrapeGaps },
       },
       invariants: input.invariants,
@@ -419,8 +500,8 @@ export type StartOptions = {
   engine: RunEngineOptions;
   /** 세션 시작 직전에 한 번(git 정보 갱신 등). 실패해도 시작은 진행한다(경고). */
   beforeSession?: () => Promise<void>;
-  /** Grafana 토큰 준비(obs 프로필이 있을 때만 넘긴다) */
-  prepareGrafana?: () => Promise<void>;
+  /** true 면 시작 때 obs.prepareToken() 으로 Grafana 토큰을 준비한다(obs 프로필이 있을 때). 주석은 남기지 않는다. */
+  prepareGrafana?: boolean;
   /** 종료 마지막에(저장소 닫기 등) */
   onClose?: () => void | Promise<void>;
   /** 종료 때 진행 중 세션이 끝나기를 기다리는 상한. 기본 5000ms */
@@ -479,8 +560,9 @@ export async function startOrchestrator(o: StartOptions): Promise<OrchestratorHa
     }
     if (o.prepareGrafana) {
       try {
-        await o.prepareGrafana();
-        log('Grafana 토큰 준비 완료');
+        const r = await p.obs.prepareToken();
+        if (r.status === 'ok') log('Grafana 토큰 준비 완료');
+        else warn(`Grafana 토큰 준비 실패(주석은 not-measured): ${r.reason ?? 'not-measured'}`);
       } catch (e) {
         warn(`Grafana 토큰 준비 실패(주석은 not-measured): ${errMsg(e)}`);
       }
@@ -565,26 +647,30 @@ export async function main(rawEnv: NodeJS.ProcessEnv = process.env): Promise<Orc
     user: config.pg.observerUser,
     password: config.pg.observerPassword,
     database: config.pg.runDb,
+    onError: (e) => warn(`pg-probe 연결 오류: ${errMsg(e)}`),
   });
   const probe = createPgProbe({
     clock,
     enabled: true,
     database: config.pg.runDb,
-    // pg.Client 의 유휴 연결 오류가 리스너 없이 터지면 프로세스가 죽는다
-    connect: async () => {
-      const conn = await probeConnect();
-      (conn as unknown as EventEmitter).on?.('error', (e: unknown) => warn(`pg-probe 연결 오류: ${errMsg(e)}`));
-      return conn;
-    },
+    connect: probeConnect,
     onError: (e) => warn(`pg-probe: ${errMsg(e)}`),
   });
 
   const stackProfiles = await detectStackProfiles(docker, rawEnv.STACK_PROFILES, warn);
   const obs = createObsClient({ obs: { ...config.obs, profiles: stackProfiles }, clock });
   const git = execGit(config.repoDir);
-  let gitInfo = await readGitInfo(git, config.gitSha);
-  if (gitInfo.dirty === null) warn(`git 으로 ${config.repoDir} 를 읽지 못했다: gitSha=${gitInfo.sha ?? 'unknown'}(GIT_SHA 폴백), dirty=null`);
-  const buildMeta = createMetadataBuilder({ stackProfiles, git: () => gitInfo, catalog, redisMaxmemoryPolicy: await readRedisPolicy(config.repoDir) });
+  let gitInfo = await readGitInfo(git, config.gitSha, w.GIT_DIRTY);
+  if (gitInfo.dirty === null) warn(`git 으로 ${config.repoDir} 를 읽지 못했다: gitSha=${gitInfo.sha ?? 'unknown'}(GIT_SHA 폴백), dirty=null(GIT_DIRTY 없음)`);
+  let appRoleConnLimit = await readRoleConnLimit(connect, config.pg.appUser);
+  const buildMeta = createMetadataBuilder({
+    stackProfiles,
+    git: () => gitInfo,
+    catalog,
+    redisMaxmemoryPolicy: await readRedisPolicy(config.repoDir),
+    dockerDesktopVersion: await readDockerDesktopVersion(config.docker.url),
+    appRoleConnectionLimit: () => appRoleConnLimit,
+  });
   log(`스택 프로필: ${stackProfiles.length ? stackProfiles.join(',') : '(기본)'}; git ${gitInfo.sha ?? 'unknown'}${gitInfo.dirty ? '(dirty)' : ''}`);
 
   const handle = await startOrchestrator({
@@ -601,17 +687,10 @@ export async function main(rawEnv: NodeJS.ProcessEnv = process.env): Promise<Orc
       runConfig: { events: { ...DEFAULT_RUN_CONFIG.events, endpoint: `http://${w.ORCH_INTERNAL_HOST}:${config.internalPort}/ingest/events` } },
     },
     beforeSession: async () => {
-      gitInfo = await readGitInfo(git, config.gitSha);
+      gitInfo = await readGitInfo(git, config.gitSha, w.GIT_DIRTY);
+      appRoleConnLimit = await readRoleConnLimit(connect, config.pg.appUser);
     },
-    // ObsClient 는 토큰을 첫 주석 때 만든다: 실행과 무관한 태그(run:orchestrator)로 주석 하나를 남겨 시작 때 토큰을 준비한다.
-    ...(stackProfiles.includes('obs')
-      ? {
-          prepareGrafana: async () => {
-            const r = await obs.annotate({ runId: 'orchestrator', batchId: 'startup', phase: 'reset', text: '오케스트레이터 시작', timeMs: clock.now() });
-            if (r.status !== 'ok') throw new Error(r.reason ?? 'not-measured');
-          },
-        }
-      : {}),
+    prepareGrafana: stackProfiles.includes('obs'),
     onClose: async () => {
       await board.flushed();
       store.close();

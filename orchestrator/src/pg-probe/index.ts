@@ -24,16 +24,39 @@ export type PgProbeDeps = {
   enabled: boolean;
   /** 관측 대상 DB(lab_run) 이름 */
   database: string;
-  /** 커넥션 1개를 연다. 기본 구현은 {@link createPgConnect}. */
-  connect: () => Promise<ProbeConnection>;
+  /** 커넥션 1개를 연다. 기본 구현은 {@link createPgConnect}. queryTimeoutMs = 이번 실행의 표본 간격. */
+  connect: (opts: { queryTimeoutMs: number }) => Promise<ProbeConnection>;
   /** 표본 실패 같은 비치명 오류 보고(기본: 무시). */
   onError?: (err: unknown) => void;
 };
 
-/** lab_observer 로 접속하는 기본 커넥터. 풀을 쓰지 않고 Client 1개다. */
-export function createPgConnect(cfg: { host: string; port: number; user: string; password: string; database: string }): () => Promise<ProbeConnection> {
-  return async () => {
-    const client = new pg.Client({ ...cfg, application_name: 'nul-probe' });
+export type PgConnectConfig = {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+  /** 연결이 끊기는 등 유휴 커넥션 오류(기본: 무시). 리스너가 없으면 pg.Client 의 'error' 가 프로세스를 죽인다. */
+  onError?: (err: unknown) => void;
+  /** 접속 제한(ms). 기본 5000 */
+  connectTimeoutMs?: number;
+};
+
+/**
+ * lab_observer 로 접속하는 기본 커넥터. 풀을 쓰지 않고 Client 1개다.
+ * 막힌 조회가 다음 표본을 무한히 붙잡지 않도록 서버(statement_timeout)·클라이언트(query_timeout) 양쪽에 표본 간격만큼의 제한을 건다.
+ */
+export function createPgConnect(cfg: PgConnectConfig): (opts?: { queryTimeoutMs?: number }) => Promise<ProbeConnection> {
+  const { onError, connectTimeoutMs, ...conn } = cfg;
+  return async (opts) => {
+    const timeout = opts?.queryTimeoutMs !== undefined && opts.queryTimeoutMs > 0 ? Math.ceil(opts.queryTimeoutMs) : undefined;
+    const client = new pg.Client({
+      ...conn,
+      application_name: 'nul-probe',
+      connectionTimeoutMillis: connectTimeoutMs ?? 5000,
+      ...(timeout !== undefined ? { statement_timeout: timeout, query_timeout: timeout } : {}),
+    });
+    client.on('error', (err) => onError?.(err));
     await client.connect();
     return client as unknown as ProbeConnection;
   };
@@ -115,7 +138,7 @@ export function createPgProbe(deps: PgProbeDeps): ProbeSource {
       if (running) throw new Error('pg-probe 가 이미 실행 중입니다');
       if (!deps.enabled) return;
       await mkdir(dirname(opts.outFile), { recursive: true });
-      const conn = await deps.connect();
+      const conn = await deps.connect({ queryTimeoutMs: opts.intervalMs });
       const r: Running = { opts, conn, abort: new AbortController(), loop: Promise.resolve(), samples: 0 };
       running = r;
       r.loop = loop(r);

@@ -23,6 +23,8 @@ export type K6RunnerDeps = {
   fetch?: typeof fetch;
   /** 완료 대기 조회 간격 기본값(ms) */
   pollMs?: number;
+  /** 중단을 요청한 뒤 최종 상태를 기다리는 상한(ms). 넘으면 waitDone 이 throw 한다. 기본 30000 */
+  abortGraceMs?: number;
 };
 
 const SCRIPT_PREFIX = '/packs/';
@@ -82,17 +84,24 @@ export function createK6Runner(deps: K6RunnerDeps): K6Runner {
 
     async waitDone(jobId: string, opts: CallOptions & { pollMs?: number } = {}) {
       const pollMs = opts.pollMs ?? deps.pollMs ?? 500;
-      let aborted = false;
+      const graceMs = deps.abortGraceMs ?? 30_000;
+      /** 중단을 요청한 시각(요청 전이면 null) */
+      let abortedAt: number | null = null;
+      const aborted = () => abortedAt !== null;
       for (;;) {
         const s = await runner.status(jobId);
         if (s.state !== 'running') return s;
-        if (opts.signal?.aborted && !aborted) {
-          aborted = true;
+        if (opts.signal?.aborted && !aborted()) {
+          abortedAt = deps.clock.now();
           await runner.abort(jobId);
           continue;
         }
+        // 실행기가 중단 요청 뒤에도 running 이면 상한까지만 기다린다(대기가 세션 종료를 막지 않게)
+        if (abortedAt !== null && deps.clock.now() - abortedAt >= graceMs) {
+          throw new Error(`k6 job ${jobId} 이 중단 요청 뒤 ${graceMs}ms 안에 끝나지 않았다`);
+        }
         // 중단을 요청한 뒤에는 signal 없이 최종 상태가 될 때까지 조회한다
-        await deps.clock.sleep(pollMs, aborted ? undefined : { signal: opts.signal }).catch((e: unknown) => {
+        await deps.clock.sleep(pollMs, aborted() ? undefined : { signal: opts.signal }).catch((e: unknown) => {
           if (!opts.signal?.aborted) throw e;
         });
       }

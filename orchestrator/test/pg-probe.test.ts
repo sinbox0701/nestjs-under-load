@@ -2,13 +2,14 @@
 // 예: PG_PROBE_TEST_URL=postgres://postgres:pw@127.0.0.1:55513/postgres pnpm --filter @under-load/orchestrator test
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import pg from 'pg';
 
-import { buildBlockingTree, createPgProbe, maskQuery } from '../dist/pg-probe/index.js';
+import { buildBlockingTree, createPgConnect, createPgProbe, maskQuery } from '../dist/pg-probe/index.js';
 import type { ProbeConnection } from '../dist/pg-probe/index.js';
 import type { Clock, ProbeData } from '../dist/ports.js';
 
@@ -156,6 +157,79 @@ describe('ProbeSource', () => {
     const { samples } = await probe.stop();
     assert.equal(errors.length, 1);
     assert.ok(samples >= 1);
+  });
+});
+
+/**
+ * 접속(인증 OK → ReadyForQuery)까지만 응답하고 그 뒤 조회에는 답하지 않는 가짜 PG 서버.
+ * 막힌 조회와 끊긴 연결을 PG 없이 재현한다.
+ */
+async function silentPgServer() {
+  const sockets: Socket[] = [];
+  const server = createServer((sock) => {
+    sockets.push(sock);
+    let greeted = false;
+    sock.on('data', () => {
+      if (greeted) return; // 시작 메시지 뒤의 조회는 무시(막힘)
+      greeted = true;
+      const auth = Buffer.from([0x52, 0, 0, 0, 8, 0, 0, 0, 0]); // 'R' AuthenticationOk
+      const ready = Buffer.from([0x5a, 0, 0, 0, 5, 0x49]); // 'Z' ReadyForQuery(idle)
+      sock.write(Buffer.concat([auth, ready]));
+    });
+    sock.on('error', () => {});
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  return {
+    port,
+    sockets,
+    close: () => {
+      for (const s of sockets) s.destroy();
+      return new Promise<void>((r) => server.close(() => r()));
+    },
+  };
+}
+
+describe('createPgConnect(AC-4)', () => {
+  it('막힌 조회는 query_timeout 으로 끝나고, 끊긴 연결 오류는 onError 로 간다(프로세스 유지)', async () => {
+    const srv = await silentPgServer();
+    after(() => srv.close());
+    const errors: unknown[] = [];
+    const connect = createPgConnect({ host: '127.0.0.1', port: srv.port, user: 'u', password: 'p', database: 'lab_run', onError: (e) => errors.push(e) });
+    const conn = await connect({ queryTimeoutMs: 50 });
+    const t0 = Date.now();
+    await assert.rejects(conn.query('select 1', []), /timeout/i);
+    assert.ok(Date.now() - t0 < 2000, '표본 간격 근처에서 끝난다');
+
+    // 서버가 연결을 끊으면 pg.Client 가 'error' 를 낸다: 리스너가 없으면 uncaughtException 으로 프로세스가 죽는다
+    const uncaught: unknown[] = [];
+    const onUncaught = (e: unknown) => uncaught.push(e);
+    process.on('uncaughtException', onUncaught);
+    try {
+      for (const s of srv.sockets) s.destroy();
+      await new Promise((r) => setTimeout(r, 50));
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
+    assert.deepEqual(uncaught, []);
+    assert.equal(errors.length, 1);
+    assert.match(String(errors[0]), /terminated/i);
+  });
+
+  it('createPgProbe 는 표본 간격을 query 제한으로 넘긴다', async () => {
+    const seen: unknown[] = [];
+    const probe = createPgProbe({
+      clock: fakeClock(),
+      enabled: true,
+      database: 'lab_run',
+      connect: async (o) => {
+        seen.push(o);
+        return { query: async () => ({ rows: [] }), end: async () => {} };
+      },
+    });
+    await probe.start({ runId: 'r1', intervalMs: 250, outFile: await tmpFile(), onSample: () => {} });
+    await probe.stop();
+    assert.deepEqual(seen, [{ queryTimeoutMs: 250 }]);
   });
 });
 

@@ -149,6 +149,16 @@ export function createObsClient(deps: ObsClientDeps): ObsClient {
   }
 
   return {
+    async prepareToken() {
+      if (!enabled) return notMeasured('obs 프로필 꺼짐');
+      try {
+        await getToken();
+        return { status: 'ok' };
+      } catch (e) {
+        return notMeasured(errMsg(e));
+      }
+    },
+
     async annotate(a) {
       if (!enabled) return notMeasured('obs 프로필 꺼짐');
       const body: Record<string, unknown> = {

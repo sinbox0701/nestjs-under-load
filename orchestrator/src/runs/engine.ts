@@ -6,6 +6,7 @@
 // 중단·실패해도 그 실행의 메타데이터는 저장하고, 남은 실행은 돌리지 않는다.
 // 의존 모듈은 전부 생성자 인자로 받은 포트로만 쓴다. 시간·대기는 Clock.
 import { randomBytes } from 'node:crypto';
+import { access } from 'node:fs/promises';
 import path from 'node:path';
 
 import { defaultPgProbe, INSTRUMENTATION_LEVELS } from '@under-load/contracts';
@@ -229,6 +230,12 @@ const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e)
 
 function invalidVerdict(reasons: string[]): ValidityVerdict {
   return { valid: false, reasons, k6CpuAvgRatio: null, droppedCountedAsFailure: null, failuresTotal: 0, k6Cpu: null };
+}
+
+/** web dashboard 집계 주기: 본 실행 길이/30 을 1–10초로 자른다(5s → 1s, 5m 이상 → 10s). */
+export function dashboardPeriod(duration: string | undefined): string {
+  const sec = duration ? k6DurationMs(duration) / 1000 : 0;
+  return `${Math.min(10, Math.max(1, Math.floor(sec / 30)))}s`;
 }
 
 /** 레포 기준 아티팩트 경로(run.mjs 와 같은 `runs/<runId>/<name>`). */
@@ -519,6 +526,7 @@ class LifecycleEngine implements RunEngine {
     let probeStarted = false;
     let probeUsed = false;
     let promSnapshot: string | null = null;
+    let htmlReport = false;
 
     await store.insertRun({
       runId,
@@ -657,6 +665,12 @@ class LifecycleEngine implements RunEngine {
       scrapeGaps = await obs.scrapeGaps({ fromMs: mainFrom, toMs: mainTo });
       const snap = await obs.snapshot({ runId, fromMs: mainFrom, toMs: mainTo, outFile: path.join(runDir, 'prom.json') });
       if (snap.status === 'ok') promSnapshot = artifact(runId, 'prom.json');
+      // k6 web dashboard 는 표본이 모자라면 보고서를 건너뛴다: 실제로 생긴 파일만 가리킨다
+      htmlReport = await access(path.join(runDir, 'report.html')).then(
+        () => true,
+        () => false,
+      );
+      if (!htmlReport) this.log(`[${runId}] report.html 없음(k6 web dashboard 가 만들지 않았다)`);
       validity = summary
         ? k6.judgeValidity({ request, summary, k6: mainStatus, scrapeGaps: scrapeGaps.status === 'ok' ? scrapeGaps.gaps : null })
         : invalidVerdict(['k6 summary 를 읽지 못했다']);
@@ -711,7 +725,7 @@ class LifecycleEngine implements RunEngine {
         artifacts: {
           runConfig: runConfig ? artifact(runId, 'run-config.json') : null,
           k6Summary: summary ? artifact(runId, 'summary.json') : null,
-          k6Html: mainStatus ? artifact(runId, 'report.html') : null,
+          k6Html: htmlReport ? artifact(runId, 'report.html') : null,
           events: hubBegun ? artifact(runId, 'events.ndjson') : null,
           agg: hubBegun ? artifact(runId, 'agg.ndjson') : null,
           probe: probeUsed ? artifact(runId, 'probe.ndjson') : null,
@@ -774,7 +788,9 @@ class LifecycleEngine implements RunEngine {
       runId,
       phase,
       script: scenario.k6Script,
-      env,
+      // web dashboard 는 집계 주기(기본 10s) 표본이 모자라면 보고서를 건너뛴다. 짧은 실행도 보고서가 남도록 주기를 길이에 맞춘다.
+      // job env 에만 넣는다(scriptHash 는 buildEnv 결과로 계산하므로 영향 없음).
+      env: htmlExport ? { ...env, K6_WEB_DASHBOARD_PERIOD: dashboardPeriod(env.DURATION) } : env,
       // `scenario` 는 k6 내장 태그(options.scenarios 이름)와 충돌하므로 쓰지 않는다. 필요하면 lab_scenario.
       tags: { run_id: runId, phase },
       prometheusRw: this.d.options.prometheusRw ?? false,

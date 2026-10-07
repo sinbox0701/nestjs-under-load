@@ -8,6 +8,17 @@ const field = (m: Metric | undefined, key: string): number | null => {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 };
 
+/**
+ * 서브메트릭 찾기. k6 는 threshold 에 쓴 키 그대로 summary 에 내므로 태그가 더 붙을 수 있다
+ * (loadtest/lib/options.mjs 는 `http_req_duration{phase:main,expected_response:false}`). 정확한 키가 없으면 태그 집합에 tag 가 든 키.
+ */
+function submetric(m: Record<string, Metric>, base: string, tag: string): Metric | undefined {
+  const exact = m[`${base}{${tag}}`];
+  if (exact) return exact;
+  const key = Object.keys(m).find((k) => k.startsWith(`${base}{`) && k.endsWith('}') && k.slice(base.length + 1, -1).split(',').includes(tag));
+  return key === undefined ? undefined : m[key];
+}
+
 function trend(m: Metric | undefined, fallbackN: number): K6Summary['latencyMs']['success'] {
   return {
     p50: field(m, 'med') ?? field(m, 'p(50)'),
@@ -26,7 +37,7 @@ export function parseSummary(summary: unknown, mainDurationSec: number): K6Summa
   if (!(mainDurationSec > 0)) throw new Error(`본 실행 길이(초)가 필요하다: ${mainDurationSec}`);
   const m = ((summary as { metrics?: Record<string, Metric> } | null)?.metrics ?? {}) as Record<string, Metric>;
   const requests = field(m.http_reqs, 'count') ?? 0;
-  const failedTrend = m['http_req_duration{expected_response:false}'];
+  const failedTrend = submetric(m, 'http_req_duration', 'expected_response:false');
   // http_req_failed 는 Rate: passes = 실패(true) 횟수
   const httpFailures = field(m.http_req_failed, 'passes') ?? field(failedTrend, 'count') ?? Math.round((field(m.http_req_failed, 'rate') ?? 0) * requests);
   return {
@@ -35,7 +46,7 @@ export function parseSummary(summary: unknown, mainDurationSec: number): K6Summa
     httpFailures,
     dropped: field(m.dropped_iterations, 'count') ?? 0,
     latencyMs: {
-      success: trend(m['http_req_duration{expected_response:true}'], Math.max(requests - httpFailures, 0)),
+      success: trend(submetric(m, 'http_req_duration', 'expected_response:true'), Math.max(requests - httpFailures, 0)),
       failed: trend(failedTrend, httpFailures),
     },
   };

@@ -307,6 +307,13 @@ exports[`AC-4 상수 > 스냅샷: 상수 표 전체 1`] = `
       "labels": [],
       "level": "always",
       "component": "orchestrator"
+    },
+    {
+      "name": "lab_orch_file_write_errors_total",
+      "type": "counter",
+      "labels": [],
+      "level": "always",
+      "component": "orchestrator"
     }
   ],
   "METRIC_DEFAULT_LABELS": [
@@ -427,6 +434,21 @@ exports[`AC-4 상수 > 스냅샷: 상수 표 전체 1`] = `
       "path": "validity.checks.scrapeGaps",
       "when": "obs 프로필이 없을 때 → \\"not-measured\\" 문자열",
       "allowed": "not-measured"
+    },
+    {
+      "path": "artifacts.promSnapshot",
+      "when": "obs 프로필이 없을 때",
+      "allowed": null
+    },
+    {
+      "path": "host.dockerDesktopVersion",
+      "when": "Docker Desktop 이 아닐 때(host.os 가 Docker Desktop 이 아님)",
+      "allowed": null
+    },
+    {
+      "path": "ledgerVsClient",
+      "when": "시나리오에 원장 대조 불변식(ledger-matches-k6)이 없을 때",
+      "allowed": null
     }
   ],
   "COMMON_PHASES": [
