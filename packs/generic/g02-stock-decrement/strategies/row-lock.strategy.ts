@@ -55,10 +55,10 @@ export class RowLockStrategy implements G02Strategy<RowLockParams> {
         locked = true;
         ctx.events.emit('lock_wait', { entity, durMs: performance.now() - waitStart });
         ctx.events.emit('lock_acquired', { entity });
-        for (const point of ['after-lock', 'after-read'] as const) {
-          const delay = await ctx.contentionWindow(point); // @event injected_delay
-          if (delay?.injected) ctx.events.emit('injected_delay', { entity, injected: true, durMs: delay.durMs });
-        }
+        const afterLock = await ctx.contentionWindow('after-lock'); // @event injected_delay
+        if (afterLock?.injected) ctx.events.emit('injected_delay', { entity, injected: true, durMs: afterLock.durMs });
+        const afterRead = await ctx.contentionWindow('after-read'); // @event injected_delay
+        if (afterRead?.injected) ctx.events.emit('injected_delay', { entity, injected: true, durMs: afterRead.durMs });
         if (product.stock < cmd.qty) { // @learn fresh-read-check — 잠근 행의 최신 값으로 판정한다. 다른 트랜잭션은 이 행을 바꿀 수 없다
           await ctx.ledger.record(em, cmd, 'sold_out');
           return 'sold_out' as const;
