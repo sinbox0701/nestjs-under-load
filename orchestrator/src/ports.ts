@@ -205,8 +205,11 @@ export interface K6Runner {
   abort(jobId: string): Promise<void>;
   /** `POST /inspect` — `k6 inspect --execution-requirements` JSON. */
   inspect(script: string, env: Record<string, string>): Promise<unknown>;
-  /** summary.json 파일을 읽어 K6Summary 로(성공·실패 지연은 expected_response 서브메트릭 기준). */
-  readSummary(summaryFile: string): Promise<K6Summary>;
+  /**
+   * summary.json 파일을 읽어 K6Summary 로(성공·실패 지연은 expected_response 서브메트릭 기준).
+   * mainDurationSec = 본 실행 길이(초). throughputRps = http_reqs.count / mainDurationSec. 0 이하면 throw.
+   */
+  readSummary(summaryFile: string, mainDurationSec: number): Promise<K6Summary>;
   judgeValidity(input: ValidityInput): ValidityVerdict;
 }
 
