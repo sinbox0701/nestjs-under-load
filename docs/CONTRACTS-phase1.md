@@ -48,7 +48,7 @@
 
 | 메서드 | 경로 | 요청 | 응답 |
 |---|---|---|---|
-| GET | `/health` | – | `{ok, version, gitSha}` |
+| GET | `/health` | – | `{ok, version, gitSha, stack:{profiles: ('obs'\|'trace')[]}}` |
 | GET | `/scenarios` | – | `ScenarioInfo[]` = `{id, pack, title, minAppInstances, strategies:[{id,label,kind,bypassesOrm,requires,params}], load:{models:['open','closed'], defaults}, seedDefaults, situations?}` |
 | POST | `/k6/render` | `{request: RunRequest, strategy}` | `{templatePath, env: Record<string,string>, scriptHash}`(1단계는 렌더 없이 env 만) |
 | POST | `/runs` | `RunRequest` | `202 {sessionId, batches:[{batchId, strategy, appInstances, runIds}]}` · `400 {errors}` · `409 {reason:'busy', sessionId}` |
@@ -98,7 +98,7 @@
   "latencyMs": { "success": { "p50": "Spread", "p95": "Spread", "p99": "Spread", "n": [..] },
                  "failed":  { "p95": "Spread", "n": [..] } },   // k6 expected_response:true/false 서브메트릭
   "failures": { "http": [..], "dropped": [..], "droppedCountedAsFailure": [true,..], "total": [..] },
-  "interventions": [...], "badges": ["closed-latency-caution","injected","unstable"] }
+  "interventions": [...], "badges": ["closed-latency-caution","injected","unstable","no-trace-sink"] }
 ```
 
 **CompareResult**
@@ -154,7 +154,7 @@
   "interventions": [ { "type": "inject-delay", "point": "after-read", "ms": 30 } ], "chaos": [],
   "coldStart": false, "osCacheControlled": false,
   "validity": { "valid": true, "reasons": [], "k6CpuAvgRatio": 0.41, "droppedCountedAsFailure": true,
-                "checks": { "k6Cpu": {}, "scrapeGaps": { "gaps": 0 } } },
+                "checks": { "k6Cpu": {}, "scrapeGaps": { "gaps": 0 }, "tracing": { "sink": "present" } } },
   "invariants": [ { "id": "", "severity": "critical", "violations": 0, "passed": true } ],
   "ledgerVsClient": {}, "k6": {}, "prediction": "", "steps": [],
   "artifacts": { "runConfig": "", "k6Summary": "", "k6Html": "", "events": "", "agg": "", "probe": "", "promSnapshot": "", "metadata": "" },
@@ -178,6 +178,8 @@
 | `timeouts.lockMs` | strategy 에 lock 파라미터가 없을 때 |
 | `redis.maxmemoryPolicy` | `used: false` 일 때 |
 | `validity.checks.scrapeGaps` | obs 프로필이 없을 때 → `"not-measured"` 문자열 |
+
+`validity.checks.tracing.sink` 는 선택 필드다. 계측 `full` 이 아니면 `not-applicable`, `full` 이고 trace 프로필이 있으면 `present`, 없으면 `absent`. `absent` 는 **경고일 뿐 무효가 아니다** — `valid`·`validReps`·순위는 바뀌지 않고, 배치 요약에 `no-trace-sink` 배지만 붙는다(full 계측의 추적이 보낼 곳이 없어 버려진다는 뜻).
 | `artifacts.promSnapshot` | obs 프로필이 없을 때(구간 지표를 동결할 Prometheus 가 없음) |
 | `host.dockerDesktopVersion` | Docker Desktop 이 아닐 때(Engine `/version` 의 `Platform.Name` 으로만 얻을 수 있음) |
 | `ledgerVsClient` | 시나리오에 원장 대조 불변식(`ledger-matches-k6`)이 없을 때 |
