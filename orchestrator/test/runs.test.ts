@@ -100,9 +100,26 @@ function request(over: Partial<RunRequest> = {}): RunRequest {
   };
 }
 
+/** K6Runner.readSummary 결과(평평한 K6Summary). 엔진은 이 모양 그대로 RunMetadataInput.k6.summary 로 넘긴다. */
+const SUMMARY = Object.freeze({
+  requests: 100,
+  throughputRps: 10,
+  httpFailures: 0,
+  dropped: 0,
+  latencyMs: { success: { p50: 1, p95: 2, p99: 3, n: 100 }, failed: { p50: null, p95: null, p99: null, n: 0 } },
+});
+
 type World = ReturnType<typeof world>;
 
-function world(opts: { templateExists?: boolean; apps?: number; ready?: (inst: string, cfg: RunConfigV1 | null) => ReadyResponse | null } = {}) {
+function world(
+  opts: {
+    templateExists?: boolean;
+    /** 이전 준비가 끊긴 잔재(exists && !isTemplate) */
+    templateLeftover?: boolean;
+    apps?: number;
+    ready?: (inst: string, cfg: RunConfigV1 | null) => ReadyResponse | null;
+  } = {},
+) {
   const clock = fakeClock();
   const calls: string[] = [];
   const apps = Array.from({ length: opts.apps ?? 3 }, (_, i) => container(i + 1));
@@ -126,16 +143,26 @@ function world(opts: { templateExists?: boolean; apps?: number; ready?: (inst: s
     info: async () => ({ ncpu: 14, memTotalBytes: 1, serverVersion: 'x', operatingSystem: 'x', apiVersion: 'x' }),
   };
 
-  let templateExists = opts.templateExists ?? true;
+  let template = opts.templateLeftover
+    ? { exists: true, isTemplate: false }
+    : { exists: opts.templateExists ?? true, isTemplate: opts.templateExists ?? true };
   const db: DbAdmin = {
-    templateName: (scenario, data) => {
-      calls.push(`db.templateName ${scenario} ${JSON.stringify(data.seedOptions)}`);
+    templateName: async (scenario, data) => {
+      calls.push(`db.templateName ${scenario.id} ${JSON.stringify(data.seedOptions)}`);
       return 'tpl_g02_abc';
     },
-    templateStatus: async () => ({ exists: templateExists, isTemplate: templateExists }),
+    templateStatus: async () => ({ ...template }),
+    createTemplateDb: async (n) => {
+      calls.push(`db.createTemplateDb ${n}`);
+      template = { exists: true, isTemplate: false };
+    },
+    dropTemplateDb: async (n) => {
+      calls.push(`db.dropTemplateDb ${n}`);
+      template = { exists: false, isTemplate: false };
+    },
     markTemplate: async (n) => {
       calls.push(`db.markTemplate ${n}`);
-      templateExists = true;
+      template = { exists: true, isTemplate: true };
     },
     resetRunDb: async (t) => void calls.push(`db.resetRunDb ${t}`),
     execInRunDb: async (sql) => void calls.push(`db.exec ${sql}`),
@@ -182,13 +209,10 @@ function world(opts: { templateExists?: boolean; apps?: number; ready?: (inst: s
     },
     abort: async (jobId) => void aborted.push(jobId),
     inspect: async () => ({}),
-    readSummary: async () => ({
-      requests: 100,
-      throughputRps: 10,
-      httpFailures: 0,
-      dropped: 0,
-      latencyMs: { success: { p50: 1, p95: 2, p99: 3, n: 100 }, failed: { p50: null, p95: null, p99: null, n: 0 } },
-    }),
+    readSummary: async (file, sec) => {
+      calls.push(`k6.readSummary ${file} ${sec}`);
+      return SUMMARY;
+    },
     judgeValidity: () => ({ valid: true, reasons: [], k6CpuAvgRatio: 0.3, droppedCountedAsFailure: null, failuresTotal: 0, k6Cpu: {} }),
   };
 
@@ -383,6 +407,8 @@ describe('RunEngine 수명주기', () => {
       `probe.start ${first} 5000`,
       `k6.submit main ${first}`,
       'probe.stop',
+      // 본 실행 길이 30s → 30초(throughputRps 분모)
+      `k6.readSummary /data/runs/${first}/summary.json 30`,
       `hub.end ${first}`,
     ]);
     // 실행마다 serve RunConfig 게시, 템플릿이 있으니 prepare 는 없다
@@ -395,10 +421,12 @@ describe('RunEngine 수명주기', () => {
     assert.equal(main.summaryPath, `/runs/${first}/summary.json`);
     assert.equal(main.htmlExport, `/runs/${first}/report.html`);
     assert.deepEqual(main.tags, { run_id: first, phase: 'main' });
+    // k6 내장 태그와 충돌하는 scenario 키는 어떤 job 에도 없다
+    assert.ok(w.jobs.every((j) => !('scenario' in j.tags)));
     assert.ok(w.wsTypes.includes('status') && w.wsTypes.includes('invariants') && w.wsTypes.includes('end'));
   });
 
-  it('템플릿이 없으면 prepare-template 게시 → app 1대 restart → prepared 확인 → is_template', async () => {
+  it('T-147 AC-1: 템플릿이 없으면 createTemplateDb → prepare 게시·재시작 → prepared → prepare app 정지 → markTemplate', async () => {
     const w = world({ templateExists: false });
     await startOk(w, request({ reps: 1, strategies: ['no-lock'] }));
     await w.engine.idle();
@@ -407,13 +435,68 @@ describe('RunEngine 수명주기', () => {
     assert.equal(prep.prepareTemplate?.database, 'tpl_g02_abc');
     // seedDefaults 와 요청 seedOptions 를 합쳐 세 키를 모두 채운다(T-121)
     assert.deepEqual(prep.prepareTemplate?.seedOptions, { products: 3, warmupProducts: 5, stockPerProduct: 100 });
-    const iRestart = w.calls.indexOf('docker.restart lab-app-1');
-    const iMark = w.calls.indexOf('db.markTemplate tpl_g02_abc');
-    assert.ok(iRestart >= 0 && iMark > iRestart);
-    assert.ok(w.calls.slice(0, iRestart).includes('docker.stop lab-app-2'));
-    assert.ok(iMark < w.calls.findIndex((c) => c.startsWith('hub.begin')));
+    // 세션 시작 ~ 첫 실행 전까지의 포트 호출(템플릿 준비 구간)
+    const tplCalls = w.calls.slice(0, w.calls.findIndex((c) => c.startsWith('hub.begin')));
+    assert.deepEqual(tplCalls, [
+      'db.templateName g02-stock-decrement {"products":3,"warmupProducts":5,"stockPerProduct":100}',
+      'db.createTemplateDb tpl_g02_abc',
+      'docker.stop lab-app-2',
+      'docker.stop lab-app-3',
+      'docker.restart lab-app-1',
+      'docker.stop lab-app-1',
+      'db.markTemplate tpl_g02_abc',
+    ]);
     assert.equal(w.published[1]!.task, 'serve');
     assert.deepEqual(w.sessionStates, ['running', 'done']);
+  });
+
+  it('T-147 AC-2: 준비가 끊긴 잔재(exists && !isTemplate)는 dropTemplateDb 후 다시 만든다', async () => {
+    const w = world({ templateLeftover: true });
+    await startOk(w, request({ reps: 1, strategies: ['no-lock'] }));
+    await w.engine.idle();
+    const iDrop = w.calls.indexOf('db.dropTemplateDb tpl_g02_abc');
+    const iCreate = w.calls.indexOf('db.createTemplateDb tpl_g02_abc');
+    const iMark = w.calls.indexOf('db.markTemplate tpl_g02_abc');
+    assert.ok(iDrop >= 0 && iCreate > iDrop && iMark > iCreate, w.calls.join('\n'));
+    assert.deepEqual(w.sessionStates, ['running', 'done']);
+  });
+
+  it('템플릿이 이미 있으면 만들지도 지우지도 않는다', async () => {
+    const w = world();
+    await startOk(w, request({ reps: 1, strategies: ['no-lock'] }));
+    await w.engine.idle();
+    assert.ok(!w.calls.some((c) => /^db\.(createTemplateDb|dropTemplateDb|markTemplate)/.test(c)));
+  });
+
+  it('템플릿 준비가 실패(readiness 타임아웃)하면 만들던 DB 를 지우고 세션 failed', async () => {
+    const w = world({ templateExists: false, ready: () => null });
+    await startOk(w, request({ reps: 1, strategies: ['no-lock'] }));
+    await w.engine.idle();
+    const iCreate = w.calls.indexOf('db.createTemplateDb tpl_g02_abc');
+    assert.ok(iCreate >= 0 && w.calls.indexOf('db.dropTemplateDb tpl_g02_abc') > iCreate);
+    assert.ok(!w.calls.includes('db.markTemplate tpl_g02_abc'));
+    assert.deepEqual(w.insertOrder, []);
+    assert.deepEqual(w.sessionStates, ['running', 'failed']);
+  });
+
+  it('T-147 AC-5: readSummary 에 본 실행 길이(초)를 넘기고 summary 는 평평한 K6Summary 그대로 메타데이터 입력에 간다', async () => {
+    const w = world();
+    const req = request({ reps: 1, strategies: ['no-lock'] });
+    const acc = await startOk(w, { ...req, load: { ...req.load, duration: '1m30s' } });
+    await w.engine.idle();
+    const runId = acc.batches[0]!.runIds[0]!;
+    assert.deepEqual(
+      w.calls.filter((c) => c.startsWith('k6.readSummary')),
+      [`k6.readSummary /data/runs/${runId}/summary.json 90`],
+    );
+    const md = w.metadata.get(runId)!;
+    // metadata.k6 조립(T-138 어댑터)이 펴서 넣을 값: requests·throughputRps·httpFailures·dropped·latencyMs.success/failed
+    assert.deepEqual(md.k6.summary, SUMMARY);
+    assert.deepEqual(Object.keys(md.k6.summary!).sort(), ['dropped', 'httpFailures', 'latencyMs', 'requests', 'throughputRps']);
+    assert.deepEqual(Object.keys(md.k6.summary!.latencyMs).sort(), ['failed', 'success']);
+    assert.deepEqual(Object.keys(md.k6).sort(), ['env', 'main', 'scriptHash', 'summary', 'warmup']);
+    assert.equal(md.k6.scriptHash, 'sha256:script');
+    assert.ok(w.jobs.length === 2 && w.jobs.every((j) => !('scenario' in j.tags)));
   });
 
   it('AC-2: app-memory-lock + includeMemoryLockSingle 이면 1대 케이스가 추가된다', async () => {

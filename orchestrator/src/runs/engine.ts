@@ -111,6 +111,7 @@ export type RunMetadataInput = {
     env: Record<string, string> | null;
     warmup: K6JobStatus | null;
     main: K6JobStatus | null;
+    /** readSummary 결과 그대로(평평한 K6Summary). 조립기가 metadata.k6 에 펴서 넣는다 */
     summary: K6Summary | null;
   };
   validity: ValidityVerdict;
@@ -428,39 +429,60 @@ class LifecycleEngine implements RunEngine {
     return facts;
   }
 
-  /** 템플릿 DB 가 없으면 app 1대를 prepare-template 모드로 재시작해 만들고 is_template 로 표시한다. */
+  /**
+   * 템플릿 DB 가 없으면 빈 DB(OWNER lab_app)를 만들고, app 1대를 prepare-template 모드로 재시작해 마이그레이션·시드를
+   * 채운 뒤 그 app 을 정지하고 is_template 로 표시한다(run.mjs 0단계 순서). 준비가 실패하면 만들던 DB 를 지운다.
+   */
   private async ensureTemplate(s: Session, seedOptions: Record<string, unknown>, signal: AbortSignal): Promise<string> {
+    const { db, docker } = this.d;
     const data = { ...s.request.data, seedOptions };
-    const name = this.d.db.templateName(s.request.scenario, data);
-    const st = await this.d.db.templateStatus(name);
+    const name = await db.templateName(s.scenario, data);
+    const st = await db.templateStatus(name);
     if (st.exists && st.isTemplate) {
       this.log(`템플릿 DB ${name}: 이미 있음 → 재사용`);
       return name;
     }
-    // exists && !isTemplate 는 이전 준비가 중간에 끊긴 흔적이다. app 의 prepare-template 이 다시 만든다.
-    this.log(`템플릿 DB ${name}: 준비(app prepare-template)`);
-    const prepRunId = `${s.sessionId}_prepare`;
-    const strategy = s.request.strategies[0]!;
-    this.d.board.publish({
-      ...this.baseConfig(s.request, strategy, strategyParams(s.request, s.scenario, strategy)),
-      task: 'prepare-template',
-      runId: prepRunId,
-      batchId: prepRunId,
-      repetition: 1,
-      prepareTemplate: { database: name, seedOptions },
-    });
-    const apps = await this.appContainers();
-    if (apps.length === 0) throw new Error('app 컨테이너가 없다');
-    const [first, ...rest] = apps;
-    for (const c of rest) await this.d.docker.stop(c.name);
-    await this.d.docker.restart(first!.name);
-    await this.waitReady(
-      [first!.name],
-      (r) => r.runId === prepRunId && r.task === 'prepare-template' && r.prepared?.database === name,
-      this.d.options.prepareTimeoutMs ?? 300_000,
-      signal,
-    );
-    await this.d.db.markTemplate(name);
+    if (st.exists) {
+      // exists && !isTemplate 는 이전 준비가 중간에 끊긴 흔적이다. 지우고 처음부터 만든다.
+      this.log(`템플릿 DB ${name}: 준비 중 끊긴 잔재 → 정리`);
+      await db.dropTemplateDb(name);
+    }
+    this.log(`템플릿 DB ${name}: 생성 → 준비(app prepare-template)`);
+    await db.createTemplateDb(name);
+    try {
+      const prepRunId = `${s.sessionId}_prepare`;
+      const strategy = s.request.strategies[0]!;
+      this.d.board.publish({
+        ...this.baseConfig(s.request, strategy, strategyParams(s.request, s.scenario, strategy)),
+        task: 'prepare-template',
+        runId: prepRunId,
+        batchId: prepRunId,
+        repetition: 1,
+        prepareTemplate: { database: name, seedOptions },
+      });
+      const apps = await this.appContainers();
+      if (apps.length === 0) throw new Error('app 컨테이너가 없다');
+      const [first, ...rest] = apps;
+      for (const c of rest) await docker.stop(c.name);
+      await docker.restart(first!.name);
+      await this.waitReady(
+        [first!.name],
+        (r) => r.runId === prepRunId && r.task === 'prepare-template' && r.prepared?.database === name,
+        this.d.options.prepareTimeoutMs ?? 300_000,
+        signal,
+      );
+      // prepare app 이 템플릿 DB 연결을 쥔 채로는 is_template·allow_connections=false 이후 복제가 막힌다. 먼저 정지.
+      this.d.board.clear();
+      await docker.stop(first!.name);
+      await db.markTemplate(name);
+    } catch (e) {
+      try {
+        await db.dropTemplateDb(name);
+      } catch (e2) {
+        this.log(`템플릿 DB ${name} 정리 실패: ${errorMessage(e2)}`);
+      }
+      throw e;
+    }
     return name;
   }
 
@@ -627,7 +649,8 @@ class LifecycleEngine implements RunEngine {
       // 6) 수집·유효성
       await step(RUN_STEPS.collect);
       try {
-        summary = await k6.readSummary(path.join(runDir, 'summary.json'));
+        // throughputRps = 요청 수 / 본 실행 길이(초). 웜업은 별도 job 이라 섞이지 않는다.
+        summary = await k6.readSummary(path.join(runDir, 'summary.json'), k6DurationMs(request.load.duration) / 1000);
       } catch (e) {
         this.log(`[${runId}] summary 읽기 실패: ${errorMessage(e)}`);
       }
@@ -752,6 +775,7 @@ class LifecycleEngine implements RunEngine {
       phase,
       script: scenario.k6Script,
       env,
+      // `scenario` 는 k6 내장 태그(options.scenarios 이름)와 충돌하므로 쓰지 않는다. 필요하면 lab_scenario.
       tags: { run_id: runId, phase },
       prometheusRw: this.d.options.prometheusRw ?? false,
       htmlExport,

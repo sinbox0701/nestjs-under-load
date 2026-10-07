@@ -3,13 +3,15 @@
 // shared_preload_libraries=pg_stat_statements). env 가 없으면 skip — 실행 중인 스택(55432)에는 절대 쓰지 않는다.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import YAML from 'yaml';
 
-import { createDbAdmin, createInvariantRunner, createPgConnect, judgeInvariants, parseInvariantsSql } from '../dist/db/index.js';
+import { createDbAdmin, createInvariantRunner, createPgConnect, hashMigrationsDir, judgeInvariants, parseInvariantsSql } from '../dist/db/index.js';
 import type { PgConnect } from '../dist/db/index.js';
 import type { ScenarioDef } from '../dist/ports.js';
 
@@ -48,14 +50,68 @@ describe('DbAdmin (SQL 기록)', () => {
     ]);
   });
 
-  it('templateName: 같은 입력이면 같고 seedOptions 키 순서와 무관하며 값이 다르면 달라진다', () => {
-    const a = createDbAdmin({ ...base, connect: recorder().connect });
+  it('templateName: 같은 입력이면 같고 seedOptions 키 순서와 무관하며 값이 다르면 달라진다', async () => {
+    const a = createDbAdmin({ ...base, connect: recorder().connect, repoDir: REPO_ROOT });
     const d = (seedOptions: Record<string, unknown>, seed = 1) => ({ seed, seedOptions, distribution: { kind: 'uniform' } }) as never;
-    const n1 = a.templateName('g02-stock-decrement', d({ products: 5, stockPerProduct: 100 }));
+    const n1 = await a.templateName(g02, d({ products: 5, stockPerProduct: 100 }));
     assert.match(n1, /^tpl_g02_[0-9a-f]{12}$/);
-    assert.equal(n1, a.templateName('g02-stock-decrement', d({ stockPerProduct: 100, products: 5 })));
-    assert.notEqual(n1, a.templateName('g02-stock-decrement', d({ products: 6, stockPerProduct: 100 })));
-    assert.notEqual(n1, a.templateName('g02-stock-decrement', d({ products: 5, stockPerProduct: 100 }, 2)));
+    assert.equal(n1, await a.templateName(g02, d({ stockPerProduct: 100, products: 5 })));
+    assert.notEqual(n1, await a.templateName(g02, d({ products: 6, stockPerProduct: 100 })));
+    assert.notEqual(n1, await a.templateName(g02, d({ products: 5, stockPerProduct: 100 }, 2)));
+  });
+
+  it('T-147 AC-3: 팩 마이그레이션 파일 한 글자를 바꾸면 templateName 이 달라진다', async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), 'nul-t147-'));
+    try {
+      const packDir = path.join(tmp, 'packs/generic/g99-test');
+      await mkdir(path.join(packDir, 'migrations'), { recursive: true });
+      const mig = path.join(packDir, 'migrations/Migration1_init.ts');
+      await writeFile(mig, 'export const sql = "create table a (id int)";\n');
+      await writeFile(path.join(packDir, 'migrations/README.md'), '무시되는 파일');
+      const scenario = { id: 'g99-test', invariantsSqlPath: 'packs/generic/g99-test/invariants.sql' } as ScenarioDef;
+      const a = createDbAdmin({ ...base, connect: recorder().connect, repoDir: tmp });
+      const data = { seed: 1, seedOptions: { products: 5 }, distribution: { kind: 'uniform' } } as never;
+
+      const n1 = await a.templateName(scenario, data);
+      assert.equal(n1, await a.templateName(scenario, data));
+      await writeFile(path.join(packDir, 'migrations/README.md'), '.ts 가 아니면 해시에 들어가지 않는다');
+      assert.equal(n1, await a.templateName(scenario, data));
+      await writeFile(mig, 'export const sql = "create table b (id int)";\n');
+      const n2 = await a.templateName(scenario, data);
+      assert.notEqual(n1, n2);
+      assert.match(n2, /^tpl_g99_[0-9a-f]{12}$/);
+      // 파일 이름도 해시에 들어간다(run.mjs hashDir 규칙). 폴더가 없으면 null
+      const h1 = await hashMigrationsDir(path.join(packDir, 'migrations'));
+      await rename(mig, path.join(packDir, 'migrations/Migration2_init.ts'));
+      assert.notEqual(h1, await hashMigrationsDir(path.join(packDir, 'migrations')));
+      assert.equal(await hashMigrationsDir(path.join(tmp, 'none')), null);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('createTemplateDb·dropTemplateDb 가 보내는 SQL', async () => {
+    const log: string[] = [];
+    const connect: PgConnect = async (db) => ({
+      query: async (sql) => {
+        log.push(`${db}: ${sql}`);
+        return { rows: sql.startsWith('SELECT 1 FROM pg_database') ? [{ '?column?': 1 }] : [] };
+      },
+      end: async () => {},
+    });
+    const a = createDbAdmin({ ...base, connect });
+    await a.createTemplateDb('tpl_x');
+    await a.dropTemplateDb('tpl_x');
+    assert.deepEqual(log, [
+      'postgres: CREATE DATABASE "tpl_x" OWNER "lab_app"',
+      'postgres: SELECT 1 FROM pg_database WHERE datname = $1',
+      'postgres: ALTER DATABASE "tpl_x" WITH is_template false',
+      'postgres: DROP DATABASE IF EXISTS "tpl_x" WITH (FORCE)',
+    ]);
+    // 없으면 아무것도 지우지 않는다
+    const r = recorder();
+    await createDbAdmin({ ...base, connect: r.connect }).dropTemplateDb('tpl_none');
+    assert.equal(r.log.length, 1);
   });
 
   it('markTemplate·execInRunDb·ensureRoles 가 올바른 DB 로 SQL 을 보낸다', async () => {
@@ -252,6 +308,41 @@ describe('PG 통합', async () => {
         await c.end();
       }
     }
+  });
+
+  it('T-147 AC-4: createTemplateDb 소유자가 lab_app, dropTemplateDb 는 접속 세션·is_template 가 있어도 지운다', { skip: !reachable && 'PG 없음' }, async () => {
+    const admin = createDbAdmin({ ...cfg, connect });
+    const tpl = 'tpl_t147_it';
+    await admin.dropTemplateDb(tpl); // 이전 실패 잔재
+    await admin.dropTemplateDb(tpl); // 없어도 오류 없음
+    await admin.createTemplateDb(tpl);
+    const owner = async () => {
+      const s = await connect('postgres');
+      try {
+        const r = await s.query('SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = $1', [tpl]);
+        return r.rows[0]?.owner ?? null;
+      } finally {
+        await s.end();
+      }
+    };
+    assert.equal(await owner(), 'lab_app');
+    assert.deepEqual(await admin.templateStatus(tpl), { exists: true, isTemplate: false });
+
+    // 다른 세션이 붙어 있어도(준비 중 끊긴 app 같은) FORCE 로 지운다
+    const held = await connect(tpl);
+    try {
+      await admin.dropTemplateDb(tpl);
+    } finally {
+      await held.end().catch(() => {});
+    }
+    assert.deepEqual(await admin.templateStatus(tpl), { exists: false, isTemplate: false });
+
+    // is_template 로 표시된 것도 지운다
+    await admin.createTemplateDb(tpl);
+    await admin.markTemplate(tpl);
+    assert.deepEqual(await admin.templateStatus(tpl), { exists: true, isTemplate: true });
+    await admin.dropTemplateDb(tpl);
+    assert.deepEqual(await admin.templateStatus(tpl), { exists: false, isTemplate: false });
   });
 
   it('AC-5: configHash 는 같은 설정에서 같고 work_mem 이 바뀌면 달라진다', { skip: !reachable && 'PG 없음' }, async () => {
