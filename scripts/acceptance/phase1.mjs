@@ -352,7 +352,10 @@ async function c3() {
     final.i1ViolatingReps === 0 &&
     (final.i2ViolatingReps ?? 0) >= 1 &&
     axisOk;
+  // 다시 돌리면 이전 판정·시도를 지우지 않고 previousAttempts 로 옮긴다(실패 기록이 새 티켓 근거).
+  const prev = evidence.criteria.c3;
   evidence.criteria.c3 = {
+    previousAttempts: prev ? [...(prev.previousAttempts ?? []), { ...prev, previousAttempts: undefined }] : [],
     title: '기준 3: app-memory-lock 1대 3회 위반 0 · 2대 위반 ≥1, axis=topology.appInstances 한 비교',
     pass,
     injected: final?.injected ?? null,
