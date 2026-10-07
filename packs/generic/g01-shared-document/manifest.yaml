@@ -47,7 +47,9 @@ strategies:
     kind: tradeoff
     bypassesOrm: true
     params:
-      leaseTtlMs: { type: integer, default: 5000 }
+      # 레지스트리(strategy-registry.ts)의 zod 스키마가 정본이다. 키·기본값을 그대로 맞춘다(test/k6-client.test.mjs 가 대조).
+      ttlMs: { type: integer, default: 30000 }          # 잠금 유지 시간(DB 시계)
+      retryAfterMs: { type: integer, default: 1000 }    # 423 의 Retry-After 상한
 
 # k6 쪽 시나리오 파라미터(RunRequest.scenarioParams → k6 env). strategy 파라미터와 다르게 서버가 아니라 클라이언트가 읽는다.
 scenarioParams:

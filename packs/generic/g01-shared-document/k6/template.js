@@ -162,6 +162,7 @@ function runEditLease(docId, field, token) {
     } else if (res.status === 423) {
       if (Date.now() - started >= MAX_LOCK_WAIT_MS) return; // 포기. 423 응답 수가 대기 압력을 보여 준다
       // Retry-After 헤더는 초 단위(최소 1초)라 ms 단위로 압축한 편집 시간보다 훨씬 길다.
+      // 423 본문의 retryAfterMs(남은 잠금 시간 힌트)를 따르지 않고 고정 간격을 쓰는 이유: 대기 간격을 실험 변수로 고정해 strategy·편집 시간 비교를 흐리지 않기 위해서다.
       // 그래서 LEASE_RETRY_MS 간격으로 폴링한다. 이 폴링이 곧 "서버 큐 없음"의 비용이다.
       sleep(LEASE_RETRY_MS / 1000);
     } else {

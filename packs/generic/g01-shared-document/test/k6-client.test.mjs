@@ -89,3 +89,27 @@ describe('AC-2 manifest strategies id = registry 키', () => {
     assert.deepEqual(list, ids);
   });
 });
+
+describe('manifest strategy params = 레지스트리 params', () => {
+  const manifest = parse(readFileSync(path.join(DIR, '..', 'manifest.yaml'), 'utf8'));
+  const registryFile = path.join(DIR, '..', 'dist', 'strategy-registry.js');
+
+  for (const s of manifest.strategies) {
+    const defs = s.params ?? {};
+    const defaults = Object.fromEntries(Object.entries(defs).map(([k, v]) => [k, v.default]));
+
+    it(`${s.id}: manifest 기본값이 resolveStrategy 검증을 통과하고 키·값이 레지스트리와 같다`, async () => {
+      const { resolveStrategy } = await import(registryFile);
+      const resolved = resolveStrategy(s.id, defaults).params;
+      assert.deepEqual(Object.keys(resolved).sort(), Object.keys(defs).sort(), '레지스트리 파라미터 키 = manifest 키');
+      assert.deepEqual(resolved, defaults, '레지스트리 기본값 = manifest 기본값');
+      // 기본값 없이 부팅해도(RunConfig 가 비어 있어도) 같은 값이어야 한다.
+      assert.deepEqual(resolveStrategy(s.id, undefined).params, defaults);
+    });
+
+    it(`${s.id}: manifest 에 없는 키는 레지스트리가 거절한다(strict)`, async () => {
+      const { resolveStrategy } = await import(registryFile);
+      assert.throws(() => resolveStrategy(s.id, { ...defaults, bogusKey: 1 }));
+    });
+  }
+});
