@@ -72,14 +72,19 @@
 **시나리오:** G01, G02 나머지(`redis-lock`, `advisory-xact-lock`). 엔진 없이 개별 구현, 폴더 규약(`learn.yaml` 포함)만 따름
 
 **완료 기준 (측정 가능)**
-- [ ] `docker compose up` 후 화면 2에서 G02 `no-lock`·`row-lock`·`conditional-update`를 3회씩 실행 → 비교 화면에 불변식 결과가 처리량보다 위에 나온다.
-- [ ] G02 `no-lock`이 앱 2대·closed 모델에서 불변식 위반을 1회 이상 기록하고, `row-lock`·`conditional-update`는 3회 모두 위반 0.
-- [ ] G02 `app-memory-lock`이 앱 1대에서 통과·2대에서 위반하는 것을 한 비교 화면으로 보인다.
-- [ ] 같은 설정 3회 실행의 메타데이터에 §7.3 필드가 전부 채워지고, 조건이 다른 두 실행을 비교하면 "비교 불가" 경고가 뜬다.
-- [ ] k6 cpus를 일부러 낮춰 포화시킨 실행이 "무효"로 판정된다.
-- [ ] open model 실행에서 `dropped_iterations`가 실패 수에 합산되어 표시된다.
-- [ ] 계측 수준 `off`/`metrics`/`full`의 p50/p99·CPU 차이가 저경합·고경합 두 기준으로 `docs/overhead.md`에 기록된다.
+- [x] `docker compose up` 후 화면 2에서 G02 `no-lock`·`row-lock`·`conditional-update`를 3회씩 실행 → 비교 화면에 불변식 결과가 처리량보다 위에 나온다.
+- [x] G02 `no-lock`이 앱 2대·closed 모델에서 불변식 위반을 1회 이상 기록하고, `row-lock`·`conditional-update`는 3회 모두 위반 0.
+- [x] G02 `app-memory-lock`이 앱 1대에서 통과·2대에서 위반하는 것을 한 비교 화면으로 보인다.
+- [x] 같은 설정 3회 실행의 메타데이터에 §7.3 필드가 전부 채워지고, 조건이 다른 두 실행을 비교하면 "비교 불가" 경고가 뜬다.
+- [x] k6 cpus를 일부러 낮춰 포화시킨 실행이 "무효"로 판정된다.
+- [x] open model 실행에서 `dropped_iterations`가 실패 수에 합산되어 표시된다.
+- [x] 계측 수준 `off`/`metrics`/`full`의 p50/p99·CPU 차이가 저경합·고경합 두 기준으로 `docs/overhead.md`에 기록된다.
 - [ ] G01 실험 노트 1개, G02 실험 노트 1개 추가(0단계 노트와 별도, 락 strategy는 PG 락 프로브 on/off 대조 포함).
+
+**1단계 완료 메모**
+- 기준 1~6은 `node scripts/acceptance/phase1.mjs`(기준 5는 `--only c5`)로 오케스트레이터 API만 써서 실측했고, 증거는 `runs/_acceptance/`(로컬 전용)에 있다. 기준 7은 [overhead.md](./overhead.md)에 있다.
+- 기준 8(실험 노트 G01·G02 각 1편)은 사용자의 학습 기록이라 **아직 비워 둔다.** 노트 재료는 `node scripts/acceptance/phase1.mjs --only probe,g01`(G02 PG 락 프로브 켜기/끄기 대조, G01 처리 방식 5개)로 만든다. 예측은 실행 전에 커밋한다.
+- **실제 소요 기록:** ___주 (구현은 AI가 2026-10-07 하루에 병렬로 끝냈다. 학습·실험 노트에 든 시간은 사용자가 여기에 적는다.) 이 값으로 2~5단계 기간 추정을 다시 고친다.
 
 **의존:** 0단계(`run.mjs`, 폴더 규약, 실측 기반 재추정).
 

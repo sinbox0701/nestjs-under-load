@@ -1,19 +1,28 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "G02 k6 parameters (passed as k6 -e KEY=VALUE)",
+  "title": "G02 k6 parameters (passed as k6 -e KEY=VALUE, C7 공통 키 + G02 전용 키)",
   "type": "object",
   "properties": {
     "BASE_URL": { "type": "string", "default": "http://nginx" },
     "PHASE": { "enum": ["warmup", "main"], "default": "main" },
+    "RUN_ID": { "type": "string", "default": "" },
+    "MODEL": { "enum": ["open", "closed"], "default": "open", "description": "open=constant-arrival-rate, closed=constant-vus" },
     "RATE": { "type": "integer", "minimum": 1, "default": 100, "description": "iterations per second (open model)" },
+    "VUS": { "type": "integer", "minimum": 1, "default": 50, "description": "동시 VU 수 (closed model)" },
     "DURATION": { "type": "string", "pattern": "^[0-9]+[smh]$", "default": "30s" },
     "PRE_VUS": { "type": "integer", "minimum": 1, "default": 50 },
     "MAX_VUS": { "type": "integer", "minimum": 1, "default": 200, "description": "maxVUs >= rate x request timeout 이어야 dropped_iterations를 SUT 실패로 해석할 수 있다" },
+    "THINK_MIN_MS": { "type": "integer", "minimum": 0, "default": 0 },
+    "THINK_MAX_MS": { "type": "integer", "minimum": 0, "default": 0 },
+    "DIST": { "enum": ["uniform", "zipf"], "default": "uniform", "description": "상품 선택 분포" },
+    "ZIPF_S": { "type": "number", "exclusiveMinimum": 0, "default": 1.1 },
+    "SEED": { "type": "integer", "default": 42 },
+    "REP_ACTORS": { "type": "integer", "minimum": 0, "default": 8, "description": "VU 번호가 이 값 이하이면 traceparent 샘플 플래그 01" },
+    "REQUEST_TIMEOUT": { "type": "string", "default": "10s" },
+    "SUMMARY_PATH": { "type": "string", "description": "handleSummary JSON 출력 경로(k6 컨테이너 기준)" },
     "PRODUCT_MIN": { "type": "integer", "minimum": 1, "default": 1 },
     "PRODUCT_MAX": { "type": "integer", "minimum": 1, "default": 5 },
-    "QTY": { "type": "integer", "minimum": 1, "default": 1 },
-    "REQUEST_TIMEOUT": { "type": "string", "default": "10s" },
-    "SUMMARY_PATH": { "type": "string", "description": "handleSummary JSON 출력 경로(k6 컨테이너 기준)" }
+    "QTY": { "type": "integer", "minimum": 1, "default": 1 }
   },
   "additionalProperties": false
 }

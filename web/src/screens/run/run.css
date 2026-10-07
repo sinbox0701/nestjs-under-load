@@ -1,0 +1,199 @@
+/* 화면 2(실행 설정) — design/DESIGN_SYSTEM.md 토큰만 쓴다. 안내문 최소 12px. */
+.rs {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--s4);
+  font: 12px/1.5 var(--font-body);
+  color: var(--fg);
+}
+.rs-title {
+  margin: 0 0 var(--s3);
+  font: 700 16px/1.4 var(--font-body);
+}
+.rs-note {
+  margin: 0 0 var(--s3);
+  padding: var(--s2) var(--s3);
+  background: var(--sunk);
+  border-left: 4px solid var(--info);
+}
+.rs-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s3);
+}
+.rs-wide {
+  grid-column: 1 / -1;
+}
+.rs-set {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.rs-set > legend {
+  float: left;
+  width: 100%;
+  margin: 0 0 var(--s2);
+}
+.rs-set > legend + * {
+  clear: both;
+}
+.rs-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  min-width: 0;
+}
+.rs-lbl,
+.rs-field > label {
+  font-weight: 700;
+}
+.rs input[type='text'],
+.rs select,
+.rs textarea {
+  min-height: 32px;
+  padding: 0 var(--s2);
+  background: var(--panel);
+  border: 2px solid var(--edge);
+  border-radius: 0;
+  width: 100%;
+  min-width: 0;
+}
+.rs textarea {
+  padding: var(--s1) var(--s2);
+  resize: vertical;
+}
+.rs-hint {
+  font: 12px/1.5 var(--font-body);
+  color: var(--dim);
+}
+.rs-err {
+  font: 12px/1.5 var(--font-body);
+  color: var(--bad-fg);
+}
+.rs-err::before {
+  content: '! ';
+}
+ul.rs-err {
+  margin: var(--s2) 0 0;
+  padding-left: var(--s4);
+}
+.rs-checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.rs-check,
+.rs-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 32px;
+  cursor: pointer;
+}
+.rs-check {
+  padding: 0 var(--s2);
+  border: 2px solid var(--line);
+}
+.rs-check.is-sel {
+  border-color: var(--edge);
+  background: var(--sunk);
+}
+.rs-pair {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+.rs-pair input[type='text'] {
+  width: 96px;
+}
+.rs-pair select {
+  width: auto;
+  flex: 1 1 160px;
+}
+.rs-sumlist {
+  margin: 0 0 var(--s2);
+  padding-left: var(--s4);
+}
+.rs-badges,
+.rs-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+.rs-busy {
+  margin: var(--s2) 0 0;
+  padding: var(--s2) var(--s3);
+  background: var(--sunk);
+  border-left: 4px solid var(--wait);
+}
+.rs-prog {
+  margin-top: var(--s3);
+}
+.rs-prog progress {
+  width: 200px;
+  max-width: 100%;
+  vertical-align: middle;
+}
+.rs .seg {
+  flex-wrap: wrap;
+}
+@media (max-width: 640px) {
+  .rs {
+    padding: var(--s3);
+  }
+  .rs-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.rs-caution {
+  margin: var(--s1) 0 0;
+  padding: var(--s2) var(--s3);
+  background: var(--sunk);
+  border-left: 4px solid var(--wait);
+}
+/* 세그먼트(공용 Seg) — 화면 루트가 .nul 이 아니므로 같은 모양을 여기서 준다(§4.3). */
+.rs .seg {
+  display: inline-flex;
+  border: 2px solid var(--edge);
+  clip-path: var(--notch);
+  background: var(--panel);
+}
+.rs .seg button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  padding: 0 10px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  font: 12px/1 var(--font-body);
+}
+.rs .seg button + button {
+  box-shadow: inset 2px 0 0 var(--line);
+}
+.rs .seg button:hover {
+  background: var(--sunk);
+}
+.rs .seg button[aria-checked='true'] {
+  background: var(--sel-bg);
+  color: var(--sel-fg);
+  box-shadow: none;
+}
+.rs .seg button[aria-checked='true'] + button {
+  box-shadow: none;
+}
+.rs .seg button[aria-disabled='true'] {
+  color: var(--dim);
+  cursor: not-allowed;
+}
+@media (max-width: 640px) {
+  .rs .seg {
+    flex-wrap: wrap;
+  }
+}

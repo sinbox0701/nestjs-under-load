@@ -22,23 +22,27 @@ const { G02_STRATEGIES, resolveStrategy } = require('../dist/strategy-registry.j
 const { LedgerWriter } = require('../dist/support/ledger.writer.js');
 const { createContentionWindow } = require('../dist/support/contention-window.js');
 const { seedG02 } = require('../dist/seed/index.js');
+const { NOOP_EVENT_SINK } = require('@under-load/contracts');
 
 export { G02_STRATEGIES, resolveStrategy };
 
 /** 요청 하나의 StrategyContext. 실제 컨트롤러처럼 요청마다 em을 fork 한다. */
-export function makeCtx(em, { params = {}, instance = 'app-1', delays = [] } = {}) {
+export function makeCtx(em, { params = {}, instance = 'app-1', delays = [], events = NOOP_EVENT_SINK } = {}) {
   return {
     em: em.fork(),
     params,
     instance,
     contentionWindow: createContentionWindow(delays),
     ledger: new LedgerWriter(instance),
+    events,
   };
 }
 
-export function makeStrategy(id) {
-  const { cls, params } = resolveStrategy(id, undefined);
-  return { strategy: new cls(), params };
+/** redis: redis-lock의 Redis 클라이언트(생성자 주입). redis-lock인데 안 주면 가짜 Redis를 쓴다. 나머지 strategy는 의존성이 없다. */
+export function makeStrategy(id, { redis, params: rawParams } = {}) {
+  const { cls, params, requires } = resolveStrategy(id, rawParams);
+  const dep = requires.includes('redis') ? (redis ?? createFakeRedis()) : undefined;
+  return { strategy: dep ? new cls(dep) : new cls(), params };
 }
 
 export function cmd(productId = 1, qty = 1) {
@@ -125,6 +129,7 @@ export async function createFakeOrm({ latencyMs = 1 } = {}) {
       const id = String(db.ledger.length);
       return { affectedRows: 1, rows: [{ id }], row: { id }, insertId: id };
     }
+    if (/^select pg_advisory_xact_lock\(\d+\)$/.test(sql)) return [{ pg_advisory_xact_lock: '' }];
     if (/^set local lock_timeout = '\d+ms'$/.test(sql)) return [];
     throw new Error(`fake db: 모르는 SQL: ${sql}`);
   };
@@ -143,11 +148,82 @@ export async function createFakeOrm({ latencyMs = 1 } = {}) {
   };
 }
 
+/**
+ * 가짜 Redis(도커 불필요): redis-lock이 쓰는 SET key token PX ms NX 와 Lua 소유자 확인 해제만 흉내 낸다.
+ * eval은 RELEASE_LOCK_LUA 그대로의 동작(내 토큰이면 삭제)을 JS로 구현한다.
+ */
+export function createFakeRedis() {
+  const keys = new Map();
+  const log = [];
+  const fake = {
+    keys,
+    log,
+    failWith: null,
+    async set(key, token, px, ms, nx) {
+      if (fake.failWith) throw fake.failWith;
+      log.push(['set', key, token, px, ms, nx]);
+      await sleep(0);
+      const cur = keys.get(key);
+      if (cur && cur.expiresAt > Date.now()) return null;
+      keys.set(key, { token, expiresAt: Date.now() + ms });
+      return 'OK';
+    },
+    async eval(script, numKeys, key, token) {
+      if (fake.failWith) throw fake.failWith;
+      log.push(['eval', script, numKeys, key, token]);
+      const cur = keys.get(key);
+      if (cur && cur.token === token) {
+        keys.delete(key);
+        return 1;
+      }
+      return 0;
+    },
+  };
+  return fake;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 실제 Redis(도커). 없으면 null을 돌려주고 테스트는 skip 한다.
+// 접속: G02_TEST_REDIS_URL 을 줬을 때만 접속한다(기본값 없음 — 실행 중인 스택의 6379 에 자동으로 붙지 않는다). 키는 g02:lock:* 만 쓴다.
+// 일회용 예: docker run -d --rm --name nul-g02-redis -p 127.0.0.1:56379:6379 redis:7-alpine
+//   → G02_TEST_REDIS_URL=redis://127.0.0.1:56379
+// ─────────────────────────────────────────────────────────────────────────────
+const REDIS_ENV = process.env.G02_TEST_REDIS_URL;
+// env 가 없을 때 테스트의 skip 메시지가 `new URL(REDIS_URL).host` 를 쓰므로 자리표시 주소를 둔다(접속에는 쓰지 않는다).
+export const REDIS_URL = REDIS_ENV ?? 'redis://env-not-set.invalid:6379';
+
+export function openRedis(url = REDIS_URL, options = {}) {
+  const Redis = require('ioredis');
+  const redis = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: 1, retryStrategy: () => null, ...options });
+  redis.on('error', () => {});
+  return redis;
+}
+
+/** 접속 가능하면 { ok: true }, 아니면 { ok: false, reason } */
+export async function probeRedis(timeoutMs = 3000) {
+  if (!REDIS_ENV) return { ok: false, reason: 'G02_TEST_REDIS_URL 미지정' };
+  const redis = openRedis(REDIS_URL, { connectTimeout: timeoutMs });
+  try {
+    await redis.connect();
+    await redis.ping();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  } finally {
+    redis.disconnect();
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 실제 PostgreSQL(도커). 없으면 null을 돌려주고 테스트는 skip 한다.
-// 접속: G02_TEST_DATABASE_URL (기본: compose의 127.0.0.1:55432 superuser — 테스트 DB를 만들고 지운다)
+// 접속: G02_TEST_DATABASE_URL 을 줬을 때만 접속한다(기본값 없음 — 실행 중인 스택의 55432 에 자동으로 붙지 않는다).
+// CREATE DATABASE 권한이 필요하고, 테스트 DB 를 만들고 지운다. 일회용 예:
+//   docker run -d --rm --name nul-g02-pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:55499:5432 postgres:17
+//   → G02_TEST_DATABASE_URL=postgresql://postgres:pw@127.0.0.1:55499/postgres
 // ─────────────────────────────────────────────────────────────────────────────
-export const PG_URL = process.env.G02_TEST_DATABASE_URL ?? 'postgresql://postgres:postgres_local@127.0.0.1:55432/postgres';
+const PG_ENV = process.env.G02_TEST_DATABASE_URL;
+// env 가 없을 때 테스트의 skip 메시지가 `new URL(PG_URL).host` 를 쓰므로 자리표시 주소를 둔다(접속에는 쓰지 않는다).
+export const PG_URL = PG_ENV ?? 'postgresql://env-not-set.invalid:5432/postgres';
 
 function baseOptions(dbName, poolMax) {
   return {
@@ -162,6 +238,7 @@ function baseOptions(dbName, poolMax) {
 
 /** 접속 가능하면 { ok: true }, 아니면 { ok: false, reason } */
 export async function probePostgres(timeoutMs = 3000) {
+  if (!PG_ENV) return { ok: false, reason: 'G02_TEST_DATABASE_URL 미지정' };
   let orm;
   try {
     orm = await MikroORM.init({ ...baseOptions(new URL(PG_URL).pathname.slice(1) || 'postgres', 1), connect: false });
@@ -182,6 +259,7 @@ export async function probePostgres(timeoutMs = 3000) {
 
 /** 테스트 전용 DB를 만들고 마이그레이션을 돌린다. */
 export async function createTestDatabase() {
+  if (!PG_ENV) throw new Error('G02_TEST_DATABASE_URL 미지정 — 통합 테스트는 명시 env 가 있을 때만 접속한다');
   const adminDb = new URL(PG_URL).pathname.slice(1) || 'postgres';
   const name = `g02_it_${process.pid}_${Date.now()}`;
   const admin = await MikroORM.init(baseOptions(adminDb, 1));

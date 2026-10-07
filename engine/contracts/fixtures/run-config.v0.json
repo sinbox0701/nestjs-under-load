@@ -1,0 +1,14 @@
+{
+  "runId": "2026-10-06T16-20-36Z_g02_app-memory-lock_i2_r1",
+  "batchId": "2026-10-06T16-20-36Z_g02_app-memory-lock_i2",
+  "repetition": 1,
+  "scenario": "g02-stock-decrement",
+  "strategy": "app-memory-lock",
+  "strategyParams": {},
+  "instrumentation": "off",
+  "injectDelay": [],
+  "pool": {
+    "min": 2,
+    "max": 10
+  }
+}

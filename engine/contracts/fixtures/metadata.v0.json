@@ -1,0 +1,250 @@
+{
+  "runId": "2026-10-06T16-20-36Z_g02_app-memory-lock_i2_r1",
+  "batchId": "2026-10-06T16-20-36Z_g02_app-memory-lock_i2",
+  "sessionId": "2026-10-06T16-20-36Z_5733",
+  "repetition": 1,
+  "scenario": "g02-stock-decrement",
+  "strategy": {
+    "id": "app-memory-lock",
+    "params": {}
+  },
+  "git": {
+    "sha": "8bf43cc",
+    "dirty": true
+  },
+  "images": {
+    "app": "nestjs-under-load/app:dev",
+    "postgres": "postgres:17",
+    "k6": "grafana/k6:1.3.0",
+    "nginx": "nginx:1.28-alpine"
+  },
+  "profile": "minimal",
+  "host": {
+    "os": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M3 Max",
+    "node": "v24.18.0",
+    "dockerNcpu": 14,
+    "dockerMemBytes": 8214323200,
+    "dockerServerVersion": "29.8.1",
+    "dockerOs": "Docker Desktop"
+  },
+  "limits": {
+    "app": {
+      "cpus": 1,
+      "mem": "536870912",
+      "cpuset": "none"
+    },
+    "nginx": {
+      "cpus": 0.5,
+      "mem": "134217728",
+      "cpuset": "none"
+    },
+    "postgres": {
+      "cpus": 2,
+      "mem": "2147483648",
+      "cpuset": "none"
+    },
+    "k6": {
+      "cpus": 2,
+      "mem": "1073741824",
+      "cpuset": "none"
+    }
+  },
+  "topology": {
+    "appInstances": 2,
+    "lb": "round-robin",
+    "dbPath": "direct",
+    "proxy": "off",
+    "replica": false
+  },
+  "pool": {
+    "min": 2,
+    "max": 10,
+    "acquireTimeoutMs": null
+  },
+  "postgres": {
+    "configHash": "sha256:bfddde1d29added60b3859d077d537272f17ec559f95bf6362519d70cd4c09da",
+    "maxConnections": 100,
+    "sharedBuffers": "512MB",
+    "observerConnections": 0,
+    "appRoleConnectionLimit": null
+  },
+  "timeouts": {
+    "k6RequestMs": 10000,
+    "serverRequestMs": null,
+    "poolAcquireMs": null,
+    "statementMs": null,
+    "lockMs": null,
+    "idleInTxMs": null
+  },
+  "redis": null,
+  "data": {
+    "seed": null,
+    "seedHash": "sha256:4f95acf045b592f70365b33e2ab4fd55fe850189a37ebce0254bc72b42c22ba6",
+    "templateDb": "tpl_g02_4f95acf045b5",
+    "rows": {
+      "products": 5,
+      "warmupProducts": 5
+    },
+    "stockPerProduct": 100,
+    "qtyPerOrder": 1,
+    "distribution": "uniform"
+  },
+  "load": {
+    "model": "open",
+    "executor": "constant-arrival-rate",
+    "profile": "constant",
+    "rate": 200,
+    "timeUnit": "1s",
+    "preAllocatedVUs": 50,
+    "maxVUs": 2000,
+    "duration": "20s",
+    "warmup": "5s(별도 실행, 웜업 전용 상품)"
+  },
+  "k6Script": {
+    "hash": "sha256:2dc3997eb56f2c6f24cc604dac697534483edd4e1a6762cbb5be6a83e95a9758",
+    "edited": false
+  },
+  "instrumentation": "off",
+  "pgProbe": {
+    "enabled": false,
+    "intervalMs": null
+  },
+  "interventions": [],
+  "chaos": [],
+  "coldStart": false,
+  "osCacheControlled": false,
+  "validity": {
+    "valid": true,
+    "reasons": [],
+    "droppedCountedAsFailure": true,
+    "k6CpuAvgRatio": 0.042,
+    "checks": {
+      "k6Cpu": {
+        "method": "cgroup-v2 cpu.stat delta(본 실행 구간 평균, k6 기동 포함)",
+        "cores": 2,
+        "wallSec": 20.216,
+        "usageSec": 1.707,
+        "avgRatio": 0.042,
+        "throttledPeriodRatio": 0
+      },
+      "scrapeGaps": "not-measured(0단계)"
+    }
+  },
+  "invariants": [
+    {
+      "id": "no-negative-stock",
+      "severity": "critical",
+      "violations": 0,
+      "passed": true
+    },
+    {
+      "id": "sold-equals-decrement",
+      "severity": "critical",
+      "violations": 0,
+      "passed": true
+    },
+    {
+      "id": "no-oversell",
+      "severity": "critical",
+      "violations": 0,
+      "passed": true
+    },
+    {
+      "id": "no-duplicate-request-id",
+      "severity": "critical",
+      "violations": 0,
+      "passed": true
+    },
+    {
+      "id": "ledger-matches-k6",
+      "severity": "info",
+      "value": {
+        "success": 500,
+        "sold_out": 3501,
+        "total": 4001
+      }
+    }
+  ],
+  "ledgerVsClient": {
+    "ledger": {
+      "success": 500,
+      "soldOut": 3501
+    },
+    "client": {
+      "success": 500,
+      "soldOut": 3501,
+      "failed": 0,
+      "dropped": 0
+    },
+    "diff": {
+      "success": 0,
+      "soldOut": 0
+    },
+    "note": null
+  },
+  "k6": {
+    "exitCode": 0,
+    "httpReqs": 4001,
+    "iterations": 4001,
+    "droppedIterations": 0,
+    "success": 500,
+    "soldOut": 3501,
+    "failed": 0,
+    "latencyMs": {
+      "n": 4001,
+      "p50": 1.575209,
+      "p95": 2.7615,
+      "p99": 3.911,
+      "max": 9.993541
+    },
+    "httpReqRate": 200.0211124108886
+  },
+  "steps": [
+    {
+      "name": "app 정지",
+      "at": "2026-10-06T16:25:32.954Z"
+    },
+    {
+      "name": "실행 DB 리셋: lab_run ← tpl_g02_4f95acf045b5",
+      "at": "2026-10-06T16:25:33.088Z"
+    },
+    {
+      "name": "RunConfig 기록",
+      "at": "2026-10-06T16:25:33.775Z"
+    },
+    {
+      "name": "app 시작(앱 2대) + readiness",
+      "at": "2026-10-06T16:25:33.776Z"
+    },
+    {
+      "name": "k6 웜업 5s (상품 6..10)",
+      "at": "2026-10-06T16:25:37.575Z"
+    },
+    {
+      "name": "웜업 흔적 제거(원장·불변식에서 제외)",
+      "at": "2026-10-06T16:25:42.709Z"
+    },
+    {
+      "name": "k6 본 실행 20s @ 200/s (open, constant-arrival-rate)",
+      "at": "2026-10-06T16:25:42.831Z"
+    },
+    {
+      "name": "불변식 검사(invariants.sql, DB 원장 기준)",
+      "at": "2026-10-06T16:26:03.216Z"
+    },
+    {
+      "name": "summary·메타데이터 저장",
+      "at": "2026-10-06T16:26:03.659Z"
+    }
+  ],
+  "artifacts": {
+    "runConfig": "runs/2026-10-06T16-20-36Z_g02_app-memory-lock_i2_r1/run-config.json",
+    "k6Summary": "runs/2026-10-06T16-20-36Z_g02_app-memory-lock_i2_r1/summary.json",
+    "metadata": "runs/2026-10-06T16-20-36Z_g02_app-memory-lock_i2_r1/metadata.json"
+  },
+  "startedAt": "2026-10-06T16:25:32.954Z",
+  "endedAt": "2026-10-06T16:26:03.659Z",
+  "dryRun": false
+}

@@ -2,7 +2,7 @@
  * 실제 실행 이벤트 NDJSON 로더(DESIGN §9.1 이벤트 프로토콜 한 줄 = 이벤트 하나).
  *   {"v":1,"runId":"…","ts":1759745523123456,"seq":10233,"instance":"app-2","reqId":"r_8f2c",
  *    "actor":"17-3","phase":"lock_wait","durMs":null,"attrs":{…},"sampled":true,"injected":false}
- * ts(epoch µs)를 기록 시작부터의 실제 ms로 정규화하고, ts → seq → instance → 원래 줄 순으로 정렬한다(v는 1만 받는다).
+ * ts(epoch µs)를 기록 시작부터의 실제 ms로 정규화하고, ts → seq → instance → 원래 줄 순으로 정렬한다(v는 0·1을 받는다. 0은 오케스트레이터 C4 프로토콜).
  * 잘못된 줄은 버리고 줄 번호와 이유를 errors에 남긴다(로더는 던지지 않는다).
  */
 import { COMMON_PHASES } from './types';
@@ -52,7 +52,7 @@ const isCodeRef = (s: unknown): s is CodeRef => typeof s === 'string' && /^.+:\d
 function check(raw: unknown): WireEvent | string {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return '객체가 아님';
   const o = raw as Record<string, unknown>;
-  if (o.v !== 1) return `모르는 프로토콜 버전 v=${String(o.v)}`;
+  if (o.v !== 0 && o.v !== 1) return `모르는 프로토콜 버전 v=${String(o.v)}`;
   if (typeof o.runId !== 'string') return 'runId 없음';
   if (typeof o.ts !== 'number' || !Number.isFinite(o.ts)) return 'ts(epoch µs) 없음';
   if (typeof o.seq !== 'number') return 'seq 없음';

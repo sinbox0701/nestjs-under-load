@@ -1,0 +1,112 @@
+# G01 같은 문서 동시 수정 — 시나리오 manifest (DESIGN §6.2, C10)
+# strategy 5개. 서버 구현이 같은 것(optimistic-version·blind-retry)은 클라이언트(k6) 재시도 방식만 다르다.
+id: g01-shared-document
+pack: generic
+title: 같은 문서 동시 수정
+summary: 여럿이 같은 문서를 읽고 각자 고쳐 저장할 때 앞사람 수정이 사라지는(lost update) 조건과 막는 방법
+tags: [lock, contention, lost-update]
+minAppInstances: 1              # strategy가 전부 DB 기준이라(메모리 락 없음) 1대로도 경합이 재현된다
+
+data:
+  entities: [Document, DocumentRevision, EditLedger]
+  seed:
+    generator: seed/index.ts
+    defaults: { documents: 5 }    # 문서 수 1~100. 충돌 밀도는 문서 수와 DIST(zipf)가 정한다
+    distribution: { kind: uniform }
+
+api:
+  - { method: GET,    path: /g01/documents/:id }
+  - { method: PUT,    path: /g01/documents/:id, body: DocumentPutDto, idempotent: false, headers: [X-Request-Id] }
+  - { method: PATCH,  path: /g01/documents/:id, body: DocumentPatchDto, idempotent: false, headers: [X-Request-Id] }   # field-merge 전용
+  - { method: POST,   path: /g01/documents/:id/lease, body: LeaseAcquireDto }                                          # edit-lease 전용
+  - { method: DELETE, path: /g01/documents/:id/lease, body: LeaseReleaseDto }                                          # edit-lease 전용
+
+strategies:
+  - id: naive-overwrite
+    label: 버전 검사 없이 덮어쓰기 (last-write-wins)
+    kind: broken
+    bypassesOrm: true
+    params: {}
+  - id: blind-retry
+    label: 409를 받으면 같은 본문에 버전만 바꿔 재시도
+    kind: broken
+    bypassesOrm: false
+    params: {}
+  - id: optimistic-version
+    label: 버전 감지(낙관 락) + 재GET·재적용 후 재시도
+    kind: fixed
+    bypassesOrm: false
+    params: {}
+  - id: field-merge
+    label: 바뀐 필드만 PATCH (같은 필드 충돌만 409)
+    kind: tradeoff
+    bypassesOrm: true
+    params: {}
+  - id: edit-lease
+    label: 편집 잠금(lease) + fencing 토큰
+    kind: tradeoff
+    bypassesOrm: true
+    params:
+      # 레지스트리(strategy-registry.ts)의 zod 스키마가 정본이다. 키·기본값을 그대로 맞춘다(test/k6-client.test.mjs 가 대조).
+      ttlMs: { type: integer, default: 30000 }          # 잠금 유지 시간(DB 시계)
+      retryAfterMs: { type: integer, default: 1000 }    # 423 의 Retry-After 상한
+
+# k6 쪽 시나리오 파라미터(RunRequest.scenarioParams → k6 env). strategy 파라미터와 다르게 서버가 아니라 클라이언트가 읽는다.
+scenarioParams:
+  editMs: { type: integer, default: 50, env: EDIT_MS }               # 사람의 편집 시간(압축된 ms). edit-lease에서는 잠금을 쥐고 있는 시간
+  leaseRetryMs: { type: integer, default: 20, env: LEASE_RETRY_MS }  # edit-lease acquire가 423일 때 다시 시도하기까지 기다리는 시간
+
+invariants:
+  - id: no-lost-update
+    severity: critical
+    sql: invariants.sql#no_lost_update
+  - id: edit-count-matches-ledger
+    severity: critical
+    sql: invariants.sql#edit_count_matches_ledger
+  - id: revision-matches-ledger
+    severity: critical
+    sql: invariants.sql#revision_matches_ledger
+  - id: no-duplicate-request-id
+    severity: critical
+    sql: invariants.sql#no_duplicate_request_id
+  - id: ledger-matches-k6
+    severity: info
+    sql: invariants.sql#ledger_counts      # 원장 success 행 수. k6 g01_success 와의 대조는 실행기가 한다
+
+load:
+  # 기본은 closed(고정 VU): 같은 문서를 다투는 "사람 수"가 변수다. 지연은 해석 주의(coordinated omission).
+  model: closed
+  models: [closed, open]
+  executor: constant-vus
+  defaults: { vus: 20, duration: 30s, rate: 50, timeUnit: 1s, preAllocatedVUs: 50, maxVUs: 200 }
+  warmup:
+    duration: 10s               # 별도 k6 실행. 웜업은 본 실행과 같은 문서를 쓰므로 끝난 뒤 흔적을 지운다
+    # 웜업이 끝나면 본 실행 전에 이 SQL로 문서를 시드 직후 상태로 되돌리고 원장·이력을 비운다(DESIGN §7.1 "웜업 제외").
+    # 남겨 두면 원장 대조(ledger-matches-k6)와 edit_count 가 웜업 수정으로 어긋난다.
+    discardSql: >-
+      delete from g01_edit_ledger;
+      delete from g01_document_revision;
+      update g01_document set version = 1, field_a = '{}', field_b = '{}', field_c = '{}', field_d = '{}',
+        field_versions = '{"a":0,"b":0,"c":0,"d":0}'::jsonb, edit_count = 0,
+        locked_by = null, lease_until = null, fence = 0;
+  allowedProfiles: [constant]
+
+chaosHooks:
+  - contention-window-delay     # strategy 안 ctx.contentionWindow('after-read') 지점(읽은 뒤 쓰기 전). edit-lease는 잠금 보유 중에 걸린다
+
+stage:
+  sceneType: shared-document
+  entityLabel: 문서
+  representativeActors: 8
+
+k6:
+  template: k6/template.js
+  paramsSchema: k6/params.schema.json
+
+checklist:
+  - naive-overwrite 에서 두 응답이 모두 200인데 앞사람 수정이 사라지는 것을 불변식(no-lost-update)이 어떻게 잡는가
+  - 409 를 받고 버전만 바꿔 재PUT(blind-retry)하면 왜 서버·DB 모두 정상으로 보는데 수정이 사라지는가
+  - optimistic-version 에서 사람 수를 늘리면 409 비율과 성공 처리량이 어떻게 변하는가
+  - field-merge 가 다른 필드끼리는 충돌하지 않지만 같은 필드끼리는 충돌하는 이유와 대가
+  - edit-lease 의 423 은 서버 큐가 아니라 클라이언트 폴링이라 굶주림이 생길 수 있는 이유, 편집 시간이 길수록 처리량이 떨어지는 이유
+  - fence 가 만료된 보유자의 늦은 저장을 막는 방법(lease_lost·lease_expired)

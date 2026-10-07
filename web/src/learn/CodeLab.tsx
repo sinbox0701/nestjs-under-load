@@ -1,6 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import type { Api } from '../api';
 import { highlightsFor, languageOf, outcomeFor } from './loader';
 import { Explorer, HelpDialog, Matrix, SituationBar, VerdictPanel } from './panels';
+import { useMeasuredOverlay } from './measuredApi';
 import { scenarios as bundled } from './sources';
 import type { Scenario } from './types';
 import './lab.css';
@@ -21,9 +23,12 @@ const strategyPath = (id: string) => `strategies/${id}.strategy.ts`;
 
 export interface CodeLabProps {
   scenarios?: Scenario[];
+  /** 있으면 `/learn/:scenario/measured` 로 실측을 덧씌운다. 없거나 실패하면 파일 값. */
+  api?: Api;
 }
 
-export function CodeLab({ scenarios = bundled }: CodeLabProps) {
+export function CodeLab({ scenarios: base = bundled, api }: CodeLabProps) {
+  const { scenarios, sources } = useMeasuredOverlay(api, base);
   const [dir, setDir] = useState(scenarios[0]?.dir ?? '');
   const scenario = scenarios.find((s) => s.dir === dir) ?? scenarios[0];
   const [situation, setSituation] = useState(scenario?.doc.situations[0]?.id ?? '');
@@ -198,6 +203,28 @@ export function CodeLab({ scenarios = bundled }: CodeLabProps) {
           >
             {scenario.learnOrigin === 'packs' ? '✓ packs 데이터' : '예시 데이터(fixture)'}
           </span>
+          {api && scenario && (
+            <span
+              className={
+                sources[scenario.dir]?.origin === 'api' ? 'badge t-info' : 'badge lab-fixture'
+              }
+              data-testid="measured-source"
+              title={
+                sources[scenario.dir]?.origin === 'api'
+                  ? '오케스트레이터 /learn/:scenario/measured 응답으로 덧씌운 실측'
+                  : (sources[scenario.dir] as { failed?: boolean } | undefined)?.failed
+                    ? '실측 API 요청이 실패해 learn.yaml 파일 값을 보여 줌'
+                    : '실측 API에 맞는 셀이 없어 learn.yaml 파일 값을 보여 줌'
+              }
+            >
+              {(() => {
+                const src = sources[scenario.dir];
+                return src?.origin === 'api'
+                  ? `실측 출처: API ${src.cells}셀`
+                  : '실측 출처: 파일 값';
+              })()}
+            </span>
+          )}
           <span className="lab-titlebar__tools">
             <button
               type="button"
@@ -348,6 +375,14 @@ export function CodeLab({ scenarios = bundled }: CodeLabProps) {
       </section>
 
       <div className="lab-area-panel">
+        <a
+          className="btn is-sel"
+          data-testid="run-situation"
+          style={{ display: 'inline-block', marginBottom: 'var(--s2)' }}
+          href={`#run?scenario=${encodeURIComponent(scenario.doc.scenario)}&situation=${encodeURIComponent(situation)}`}
+        >
+          이 상황으로 실행
+        </a>
         <VerdictPanel
           scenario={scenario}
           situation={situation}

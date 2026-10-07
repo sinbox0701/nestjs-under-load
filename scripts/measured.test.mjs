@@ -1,17 +1,25 @@
 // scripts/measured.mjs: 세션 메타데이터 → learn.yaml measured
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
 
 import YAML from 'yaml';
 
-import { batchKey, buildMeasured, matchSituation, planMeasured, replaceMeasured, runFacts, spread } from './measured.mjs';
-import { REPO_ROOT } from './run.mjs';
+import { batchKey, buildMeasured, loadSession, matchSituation, planMeasured, replaceMeasured, runFacts, spread } from './measured.mjs';
+import { REPO_ROOT, defaultStrategyParams } from './run.mjs';
 
 const LEARN_PATH = path.join(REPO_ROOT, 'packs/generic/g02-stock-decrement/learn.yaml');
 const LEARN_TEXT = readFileSync(LEARN_PATH, 'utf8');
 const LEARN = YAML.parse(LEARN_TEXT);
+/** CLI(main)와 같은 manifest 기본값 */
+const defaultsOf = (dir) => {
+  const manifest = YAML.parse(readFileSync(path.join(REPO_ROOT, dir, 'manifest.yaml'), 'utf8'));
+  return Object.fromEntries(manifest.strategies.map((st) => [st.id, defaultStrategyParams(manifest, st.id)]));
+};
+const G02_DEFAULTS = defaultsOf('packs/generic/g02-stock-decrement');
 
 /** run.mjs buildMetadata 모양의 최소 메타데이터 */
 function md({ rep = 1, strategy = 'no-lock', instances = 2, valid = true, oversell = 0, p95 = 2, httpReqs = 4000, failed = 0, success = 500, interventions = [] } = {}) {
@@ -126,5 +134,151 @@ describe('learn.yaml measured 블록 교체', () => {
 
   it('없는 outcome이면 에러', () => {
     assert.throws(() => replaceMeasured(LEARN_TEXT, 'nope', 'x', {}), /measured 키가 없습니다/);
+  });
+});
+
+// ── 1단계: v1 메타데이터(closed·G01·params)·SQLite 세션 ─────────────────────────────
+const G01_TEXT = readFileSync(path.join(REPO_ROOT, 'packs/generic/g01-shared-document/learn.yaml'), 'utf8');
+const G01 = YAML.parse(G01_TEXT);
+
+/** 1단계 v1 메타데이터 모양의 최소 G01 실행 */
+function mdV1G01({ strategy = 'naive-overwrite', params = {}, instances = 2, vus = 20, documents = 1, editMs = 50, dist = 'uniform', rep = 1, interventions = [] } = {}) {
+  const batchId = `S_g01_${strategy}_i${instances}`;
+  return {
+    schemaVersion: 1,
+    runId: `${batchId}_r${rep}`,
+    batchId,
+    strategy: { id: strategy, params },
+    profile: 'default',
+    host: { cpu: 'Test CPU', dockerNcpu: 8, dockerMemBytes: 8 * 2 ** 30 },
+    limits: { app: { cpus: 1, cpuset: '2-5' }, postgres: { cpus: 2 } },
+    topology: { appInstances: instances },
+    timeouts: { k6RequestMs: 10000 },
+    data: { rows: {}, seedOptions: documents == null ? {} : { documents }, distribution: dist, scenarioParams: editMs == null ? {} : { editMs } },
+    load: { model: 'closed', vus, rate: null, maxVUs: null, duration: '30s', warmup: '5s(별도 실행)' },
+    interventions,
+    chaos: [],
+    validity: { valid: true, reasons: [], droppedCountedAsFailure: false, k6CpuAvgRatio: 0.1 },
+    invariants: [
+      { id: 'no-lost-update', severity: 'critical', violations: 3 },
+      { id: 'ledger-matches-k6', severity: 'info', violations: null, value: { success: 700, total: 757 } },
+    ],
+    k6: { requests: 3000, throughputRps: 100, httpFailures: 0, dropped: 0, latencyMs: { success: { p95: 3 }, failed: { p95: 0 } } },
+  };
+}
+
+describe('v1 closed·G01 대응', () => {
+  const idOf = (opts, defaults) => matchSituation(G01.situations, batchKey(mdV1G01(opts)), defaults)?.id ?? null;
+
+  it('closed 는 vus·문서 수·분포·편집 시간으로 situation 에 대응한다', () => {
+    assert.equal(idOf({ instances: 1, vus: 2 }), 'two-people-one-doc');
+    assert.equal(idOf({ instances: 2, vus: 20 }), 'twenty-people-one-doc');
+    assert.equal(idOf({ instances: 2, vus: 20, documents: 100, dist: 'zipf(1.1)' }), 'zipf-100-docs');
+    assert.equal(idOf({ instances: 2, vus: 20, documents: 100, dist: 'zipf(1.5)' }), null);
+    assert.equal(idOf({ instances: 2, vus: 20, editMs: 80 }), null);
+    assert.equal(idOf({ instances: 2, vus: 7 }), null);
+    const win = [{ type: 'inject-delay', point: 'after-read', ms: 30 }];
+    assert.equal(idOf({ instances: 1, vus: 10, editMs: 0, interventions: win }), 'contention-window-30');
+  });
+
+  it('정직성: 문서 수·편집 시간 기록이 없으면(seedOptions {}) 채우지 않는다', () => {
+    assert.equal(idOf({ instances: 2, vus: 20, documents: null, editMs: null }), null);
+    assert.equal(idOf({ instances: 2, vus: 20, documents: null }), null);
+  });
+
+  it('lease-short-ttl: edit-lease 는 params 가 ttlMs=100 일 때만, 다른 strategy 는 기본 파라미터면 같은 부하 조건으로 대응', () => {
+    const base = { instances: 1, vus: 5, editMs: 150 };
+    assert.equal(idOf({ ...base, strategy: 'edit-lease', params: { ttlMs: 100 } }), 'lease-short-ttl');
+    assert.equal(idOf({ ...base, strategy: 'edit-lease', params: {} }), null);
+    assert.equal(idOf({ ...base, strategy: 'edit-lease', params: { ttlMs: 500 } }), null);
+    assert.equal(idOf({ ...base, strategy: 'optimistic-version' }), 'lease-short-ttl');
+    assert.equal(idOf({ ...base, strategy: 'optimistic-version', params: { x: 1 } }), null);
+  });
+
+  it('manifest 기본값을 덧씌워 비교한다(기록에 기본값이 들어 있든 없든 같다)', () => {
+    const defaults = { 'edit-lease': { ttlMs: 30000, retryAfterMs: 1000 } };
+    const base = { instances: 1, vus: 5, editMs: 150, strategy: 'edit-lease' };
+    assert.equal(idOf({ ...base, params: { ttlMs: 100 } }, defaults), 'lease-short-ttl');
+    assert.equal(idOf({ ...base, params: { ttlMs: 100, retryAfterMs: 1000 } }, defaults), 'lease-short-ttl');
+    assert.equal(idOf({ ...base, params: { ttlMs: 30000 } }, defaults), null);
+    // 기본 파라미터 edit-lease 는 ttlMs 를 기본값으로 쓰는 일반 situation 에 대응(여기서는 부하가 맞는 것이 없어 null)
+    assert.equal(idOf({ instances: 2, vus: 20, strategy: 'edit-lease', params: { ttlMs: 30000 } }, defaults), 'twenty-people-one-doc');
+    const g02 = { appInstances: 2, model: 'open', rate: 200, products: 5, stockPerProduct: 100, distribution: 'uniform', chaos: 'none', strategy: 'row-lock' };
+    assert.equal(matchSituation(LEARN.situations, { ...g02, params: { lockTimeoutMs: 1000 } }, { 'row-lock': { lockTimeoutMs: 1000 } })?.id, 'spike-200-two-instances');
+    assert.equal(matchSituation(LEARN.situations, { ...g02, params: { lockTimeoutMs: 50 } }, { 'row-lock': { lockTimeoutMs: 1000 } }), null);
+  });
+
+  it('buildMeasured: G01 은 총재고 없이 원장 성공·closed 부하·문서 조건을 적는다', () => {
+    const s = G01.situations.find((x) => x.id === 'twenty-people-one-doc');
+    const m = buildMeasured([mdV1G01({ rep: 1 }), mdV1G01({ rep: 2 })], s);
+    assert.deepEqual(m.throughputRps, { median: 100, min: 100, max: 100 }); // v1 k6.throughputRps 그대로
+    assert.match(m.summary, /위반 2\/2회 발생\(no-lost-update 3·3건\)/);
+    assert.match(m.summary, /원장 성공 700·700건 · /);
+    assert.doesNotMatch(m.summary, /총재고|NaN/);
+    assert.match(m.conditions, /closed constant-vus 20 × 30s/);
+    assert.match(m.conditions, /문서 1개, 균등 분포, 편집 50ms/);
+  });
+});
+
+describe('conditions: 기본값과 다른 strategy 파라미터만 적는다', () => {
+  it('기본값과 같으면 문구 없음, 다르면 다른 키만', () => {
+    const s = G01.situations.find((x) => x.id === 'lease-short-ttl');
+    const defaults = { 'edit-lease': { ttlMs: 30000, retryAfterMs: 1000 } };
+    const mk = (params) => mdV1G01({ strategy: 'edit-lease', params, instances: 1, vus: 5, editMs: 150 });
+    assert.doesNotMatch(buildMeasured([mk({ retryAfterMs: 1000 })], s, defaults).conditions, /strategy 파라미터/);
+    assert.match(buildMeasured([mk({ ttlMs: 100, retryAfterMs: 1000 })], s, defaults).conditions, /기본값과 다른 strategy 파라미터 \{"ttlMs":100\}/);
+  });
+});
+
+describe('세션 읽기: lab.sqlite', () => {
+  it('_sessions JSON 이 없으면 runs/_meta/lab.sqlite 의 세션 실행 행을 읽는다', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'measured-'));
+    try {
+      mkdirSync(path.join(dir, '_meta'));
+      const db = new DatabaseSync(path.join(dir, '_meta', 'lab.sqlite'));
+      db.exec('CREATE TABLE runs (run_id TEXT PRIMARY KEY, batch_id TEXT, session_id TEXT, repetition INTEGER, scenario TEXT, metadata_json TEXT)');
+      const ins = db.prepare('INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?)');
+      const mds = [mdV1G01({ rep: 1, instances: 2, vus: 20 }), mdV1G01({ rep: 2, instances: 2, vus: 20 })];
+      for (const [i, m] of mds.entries()) ins.run(m.runId, m.batchId, 'SESS', i + 1, 'g01-shared-document', JSON.stringify(m));
+      ins.run('S_g01_x_i2_r3', mds[0].batchId, 'SESS', 3, 'g01-shared-document', null); // 메타데이터 없는 실행은 건너뜀
+      db.close();
+      const { scenario, session, readMetadata } = loadSession(dir, 'SESS');
+      assert.equal(scenario, 'g01-shared-document');
+      assert.equal(session.runs.length, 2);
+      const plan = planMeasured(session, G01, readMetadata);
+      assert.equal(plan.length, 1);
+      assert.equal(plan[0].situation, 'twenty-people-one-doc');
+      assert.deepEqual(plan[0].measured.runs, mds.map((m) => m.runId));
+      assert.throws(() => loadSession(dir, 'NOPE'), /lab\.sqlite 에 없습니다/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// AC-1: 0단계 세션(v0 metadata)으로 다시 계산하면 현재 learn.yaml 의 measured 와 바이트 단위로 같다.
+// 0단계 실제 runs/ 가 있을 때만(공개 레포에는 없다). LAB_PHASE0_RUNS 로 위치를 바꾼다. 3회 반복 실측 세션만 대상(1회짜리 시험 세션은 learn.yaml 에 반영된 적 없다).
+const PHASE0_RUNS = process.env.LAB_PHASE0_RUNS ?? path.join(REPO_ROOT, 'runs');
+const phase0Sessions = (() => {
+  try {
+    return readdirSync(path.join(PHASE0_RUNS, '_sessions')).filter((f) => f.endsWith('.json')).map((f) => f.replace(/\.json$/, ''));
+  } catch {
+    return [];
+  }
+})();
+
+describe('0단계 실측 회귀', { skip: phase0Sessions.length === 0 && 'runs/_sessions 없음(0단계 실측이 없는 체크아웃)' }, () => {
+  it('0단계 세션으로 계산한 measured 가 현재 learn.yaml 과 바이트 단위로 같다', () => {
+    let checked = 0;
+    for (const id of phase0Sessions) {
+      const { session, readMetadata } = loadSession(PHASE0_RUNS, id);
+      if (session.runs.length < 6 || readMetadata(session.runs[0].runId).schemaVersion != null) continue;
+      const plan = planMeasured(session, LEARN, readMetadata, G02_DEFAULTS).filter((p) => !p.skip);
+      let text = LEARN_TEXT;
+      for (const p of plan) text = replaceMeasured(text, p.strategy, p.situation, p.measured);
+      assert.equal(text, LEARN_TEXT, `세션 ${id}`);
+      checked += plan.length;
+    }
+    assert.equal(checked, 16, '0단계 세션 5733·2493 의 8셀씩');
   });
 });

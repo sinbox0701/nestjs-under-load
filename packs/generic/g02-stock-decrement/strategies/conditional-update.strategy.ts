@@ -30,21 +30,38 @@ export class ConditionalUpdateStrategy implements G02Strategy {
   readonly id = 'conditional-update';
 
   async execute(cmd: OrderCommand, ctx: StrategyContext): Promise<OrderResult> { // @event arrived
-    return ctx.em.transactional(async (em) => {
-      await ctx.contentionWindow('after-read'); // @event injected_delay
-      const affected = await em.nativeUpdate( // @event db_write
-        Product,
-        { id: cmd.productId, stock: { $gte: cmd.qty } }, // @learn where-stock-gte — 판정을 WHERE에 넣는다. 잠금 대기 뒤 최신 행으로 다시 평가된다(EvalPlanQual)
-        { stock: raw('stock - ?', [cmd.qty]) }, // @learn db-computed-set — SET stock = stock - qty. DB가 최신 값으로 계산하므로 덮어쓰기가 없다
-      ); // @event lock_acquired
-      if (affected === 0) { // @learn affected-rows — 영향 행 수가 곧 판정 결과다. 0이면 조건(재고 충분)이 거짓이었다는 뜻
-        const exists = await em.count(Product, { id: cmd.productId });
-        if (exists === 0) throw new NotFoundException(`product ${cmd.productId} not found`);
-        await ctx.ledger.record(em, cmd, 'sold_out');
-        return 'sold_out' as const;
-      }
-      await ctx.ledger.record(em, cmd, 'success'); // @learn ledger-after-update — UPDATE가 잡은 행 잠금은 커밋까지 유지된다. 이 INSERT 시간도 보유 시간에 더해진다
-      return 'success' as const;
-    }); // @event committed rolled_back lock_released
+    const entity = { type: 'Product', id: String(cmd.productId) };
+    ctx.events.emit('arrived', { entity });
+    let locked = false; // UPDATE 가 행 잠금을 잡았는가
+    try {
+      const result = await ctx.em.transactional(async (em) => {
+        const delay = await ctx.contentionWindow('after-read'); // @event injected_delay
+        if (delay?.injected) ctx.events.emit('injected_delay', { entity, injected: true, durMs: delay.durMs });
+        const writeStart = performance.now();
+        const affected = await em.nativeUpdate( // @event db_write
+          Product,
+          { id: cmd.productId, stock: { $gte: cmd.qty } }, // @learn where-stock-gte — 판정을 WHERE에 넣는다. 잠금 대기 뒤 최신 행으로 다시 평가된다(EvalPlanQual)
+          { stock: raw('stock - ?', [cmd.qty]) }, // @learn db-computed-set — SET stock = stock - qty. DB가 최신 값으로 계산하므로 덮어쓰기가 없다
+        ); // @event lock_acquired
+        locked = true;
+        ctx.events.emit('lock_acquired', { entity });
+        ctx.events.emit('db_write', { entity, durMs: performance.now() - writeStart });
+        if (affected === 0) { // @learn affected-rows — 영향 행 수가 곧 판정 결과다. 0이면 조건(재고 충분)이 거짓이었다는 뜻
+          const exists = await em.count(Product, { id: cmd.productId });
+          if (exists === 0) throw new NotFoundException(`product ${cmd.productId} not found`);
+          await ctx.ledger.record(em, cmd, 'sold_out');
+          return 'sold_out' as const;
+        }
+        await ctx.ledger.record(em, cmd, 'success'); // @learn ledger-after-update — UPDATE가 잡은 행 잠금은 커밋까지 유지된다. 이 INSERT 시간도 보유 시간에 더해진다
+        return 'success' as const;
+      }); // @event committed rolled_back lock_released
+      ctx.events.emit('committed', { entity });
+      ctx.events.emit('lock_released', { entity });
+      return result;
+    } catch (err) {
+      ctx.events.emit('rolled_back', { entity });
+      if (locked) ctx.events.emit('lock_released', { entity });
+      throw err;
+    }
   }
 }

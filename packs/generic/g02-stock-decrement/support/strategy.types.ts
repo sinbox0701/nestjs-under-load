@@ -1,4 +1,5 @@
 import type { EntityManager } from '@mikro-orm/postgresql';
+import type { EventSink } from '@under-load/contracts';
 
 import type { OrderResult } from '../entities/order-ledger.entity';
 import type { LedgerWriter } from './ledger.writer';
@@ -29,9 +30,11 @@ export interface StrategyContext<P = Record<string, unknown>> {
   /** 이 요청을 처리하는 app 인스턴스 이름(원장에 기록) */
   instance: string;
   /** 경합 창 지연 주입 훅. 설정이 없으면 즉시 반환한다. 주입 여부는 메타데이터 `interventions`에 남는다. */
-  contentionWindow(point: ContentionPoint): Promise<void>;
+  contentionWindow(point: ContentionPoint): Promise<{ injected: boolean; durMs: number } | void>;
   /** 원장 기록기. **재고 변경과 같은 트랜잭션 안에서** 호출해야 한다. */
   ledger: LedgerWriter;
+  /** 이벤트 출구(C9). 켜져 있지 않으면 noop 이라 그냥 호출해도 된다. */
+  events: EventSink;
 }
 
 /**

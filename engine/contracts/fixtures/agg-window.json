@@ -1,0 +1,9 @@
+{
+  "v": 0,
+  "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+  "instance": "app-1",
+  "windowStart": 1759827610000,
+  "windowMs": 1000,
+  "counts": { "arrived": 98, "lock_wait": 41, "lock_acquired": 97, "committed": 96, "responded": 98, "custom:sold_out": 2 },
+  "dropped": 0
+}

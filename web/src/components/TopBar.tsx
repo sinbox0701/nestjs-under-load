@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import type { ThemeChoice } from '../theme/theme';
 import {
   SCENARIO_IDS,
   SCENARIO_UI,
@@ -14,24 +13,14 @@ import {
 import { Icon } from './lib/icons';
 import { Seg } from './lib/Seg';
 
-const TABS = ['시나리오', '실행', '비교', '기록', '지표'] as const;
-const NEXT: Record<ThemeChoice, ThemeChoice> = { system: 'light', light: 'dark', dark: 'system' };
-const THEME_LABEL: Record<ThemeChoice, string> = {
-  system: '시스템',
-  light: '라이트',
-  dark: '다크',
-};
-
 export interface TopBarProps {
-  theme: ThemeChoice;
-  onThemeChange: (t: ThemeChoice) => void;
   onKeys: () => void;
   /** 가짜 데이터 고지(시안·fixture 재생 중). */
   fakeNote: string | null;
 }
 
-/** 상단 바: 브랜드 + 화면 탭 + 도구(가짜 데이터 고지 · 단축키 ? · 테마). DESIGN_SYSTEM §4.2 */
-export function TopBar({ theme, onThemeChange, onKeys, fakeNote }: TopBarProps) {
+/** 상단 바: 브랜드 + 도구(가짜 데이터 고지 · 단축키 ?). 화면 탭·테마 버튼은 셸이 갖는다. DESIGN_SYSTEM §4.2 */
+export function TopBar({ onKeys, fakeNote }: TopBarProps) {
   return (
     <header className="appbar">
       <div className="brand">
@@ -48,18 +37,6 @@ export function TopBar({ theme, onThemeChange, onKeys, fakeNote }: TopBarProps) 
         </svg>
         nestjs-under-load
       </div>
-      <nav className="nav" aria-label="화면">
-        {TABS.map((t) => (
-          <a
-            key={t}
-            href="#"
-            aria-current={t === '실행' ? 'page' : undefined}
-            onClick={(e) => e.preventDefault()}
-          >
-            {t}
-          </a>
-        ))}
-      </nav>
       <div className="tools">
         {fakeNote && (
           <span className="fake">
@@ -75,14 +52,6 @@ export function TopBar({ theme, onThemeChange, onKeys, fakeNote }: TopBarProps) 
           onClick={onKeys}
         >
           단축키 <kbd>?</kbd>
-        </button>
-        <button
-          type="button"
-          className="btn btn--ghost"
-          title="라이트/다크 (T)"
-          onClick={() => onThemeChange(NEXT[theme])}
-        >
-          테마: {THEME_LABEL[theme]}
         </button>
       </div>
     </header>

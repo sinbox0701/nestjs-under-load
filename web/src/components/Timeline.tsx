@@ -104,7 +104,7 @@ export function Timeline(p: TimelineProps) {
       list.scrollTop = top - h / 3;
   }, [cur, rd.index]);
 
-  const legend = legendOf(p.hasRec ? rec : null, p.scenario, p.strategyId);
+  const legend = legendOf(p.hasRec ? rec : null, p.scenario, p.strategyId, prepared.info);
   const n = rounds.length;
   return (
     <section className="panel a-timeline" aria-label="이벤트 타임라인">

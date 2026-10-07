@@ -15,6 +15,11 @@ const envSchema = z.object({
   POSTGRES_PASSWORD: z.string().min(1).default('lab_app_local'),
   /** RunConfig JSON 파일 경로. 0단계 run.mjs가 쓰고 app은 읽기 전용 마운트로 읽는다. */
   RUN_CONFIG_PATH: z.string().min(1).default('/lab/active/run-config.json'),
+  /**
+   * 오케스트레이터 내부 URL(C1). 값이 있으면 `GET {URL}/internal/run-config`로 RunConfig를 받고,
+   * 없으면 RUN_CONFIG_PATH 파일을 읽는다. 값이 없거나 빈 문자열·공백이면(run.mjs 경로의 compose 가 `ORCHESTRATOR_URL=` 로 넘긴다) 파일 모드이고, 기본 URL로 HTTP를 시도하지 않는다.
+   */
+  ORCHESTRATOR_URL: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.url().optional()),
   /** 인스턴스 이름. 기본은 컨테이너 hostname(= 컨테이너 ID 앞부분). 원장·ready 응답에 쓴다. */
   INSTANCE_NAME: z.string().min(1).default(hostname()),
 });

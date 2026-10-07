@@ -1,0 +1,15 @@
+{
+  "v": 0,
+  "runId": "2026-10-07T09-00-00Z_g02_row-lock_i2_r1",
+  "instance": "app-1",
+  "sentAt": 1759827610100,
+  "dropped": 0,
+  "events": [
+    {"v":0,"runId":"2026-10-07T09-00-00Z_g02_row-lock_i2_r1","ts":1759827610000100,"seq":0,"instance":"app-1","actor":"3-1","reqId":"r_0001","traceId":"4bf92f3577b34da6a3ce929d0e0e4736","entity":{"type":"Product","id":"1"},"phase":"arrived","attrs":{"strategy":"row-lock"},"sampled":true},
+    {"v":0,"runId":"2026-10-07T09-00-00Z_g02_row-lock_i2_r1","ts":1759827610035300,"seq":7,"instance":"app-1","actor":"3-1","reqId":"r_0001","traceId":"4bf92f3577b34da6a3ce929d0e0e4736","phase":"responded","durMs":35.2,"attrs":{"strategy":"row-lock","status":201},"sampled":true}
+  ],
+  "agg": [
+    {"v":0,"runId":"2026-10-07T09-00-00Z_g02_row-lock_i2_r1","instance":"app-1","windowStart":1759827610000,"windowMs":1000,"counts":{"arrived":98,"lock_wait":41,"committed":96,"responded":98},"dropped":0}
+  ],
+  "pool": { "total": 10, "idle": 3, "waiting": 0 }
+}

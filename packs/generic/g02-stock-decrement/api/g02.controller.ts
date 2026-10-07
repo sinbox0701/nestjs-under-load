@@ -7,12 +7,14 @@ import {
   HttpCode,
   Inject,
   NotFoundException,
+  Optional,
   Param,
   ParseIntPipe,
   Post,
   Res,
 } from '@nestjs/common';
 import { EntityManager } from '@mikro-orm/postgresql';
+import { type EventSink, LAB_EVENT_SINK, NOOP_EVENT_SINK } from '@under-load/contracts';
 
 import { Product } from '../entities/product.entity';
 import { LedgerWriter } from '../support/ledger.writer';
@@ -22,7 +24,7 @@ import { orderCreateSchema, requestIdSchema } from './order.dto';
 
 export interface G02Runtime {
   instance: string;
-  contentionWindow(point: ContentionPoint): Promise<void>;
+  contentionWindow(point: ContentionPoint): Promise<{ injected: boolean; durMs: number } | void>;
 }
 
 /**
@@ -32,13 +34,16 @@ export interface G02Runtime {
 @Controller('g02')
 export class G02Controller {
   private readonly ledger: LedgerWriter;
+  private readonly events: EventSink;
 
   constructor(
     private readonly em: EntityManager,
     @Inject(G02_STRATEGY) private readonly strategy: G02Strategy,
     @Inject(G02_STRATEGY_PARAMS) private readonly params: Record<string, unknown>,
     @Inject(G02_RUNTIME) private readonly runtime: G02Runtime,
+    @Optional() @Inject(LAB_EVENT_SINK) events?: EventSink,
   ) {
+    this.events = events ?? NOOP_EVENT_SINK;
     this.ledger = new LedgerWriter(runtime.instance);
   }
 
@@ -62,6 +67,7 @@ export class G02Controller {
         instance: this.runtime.instance,
         contentionWindow: this.runtime.contentionWindow,
         ledger: this.ledger,
+        events: this.events,
       },
     );
     if (result === 'sold_out') res.status(409);

@@ -3,16 +3,15 @@ require('reflect-metadata');
 
 import { parseArgs } from 'node:util';
 
-import { MikroORM } from '@mikro-orm/postgresql';
-
 import { loadEnv } from '../config/env';
-import { buildOrmOptions } from '../database/orm-options';
 import { loadPack } from '../packs/registry';
+import { prepareTemplate } from '../prepare/prepare-template';
 
 /**
  * 템플릿 DB 준비: 팩 마이그레이션 실행 + 결정적 시드.
  * run.mjs가 `docker compose run --rm app node apps/app/dist/cli/prepare-template.js ...`로
  * POSTGRES_DB=<템플릿 DB 이름>을 넘겨 호출한다(DESIGN §6.4: 마이그레이션은 템플릿 생성 시 실행).
+ * 실제 작업은 task=prepare-template 과 같은 prepareTemplate(prepare/)이 한다. 이 파일은 인자 해석만 한다.
  *
  *   --scenario g02-stock-decrement --seed-opt products=5 --seed-opt warmupProducts=5 --seed-opt stockPerProduct=100
  */
@@ -35,14 +34,8 @@ async function main(): Promise<void> {
 
   const env = loadEnv();
   const pack = await loadPack(values.scenario);
-  const orm = await MikroORM.init({ ...buildOrmOptions(env, pack, { min: 1, max: 2 }), allowGlobalContext: true });
-  try {
-    await orm.migrator.up();
-    await pack.seed(orm.em.fork(), seedOpts);
-    console.log(`[prepare-template] ${env.POSTGRES_DB}: migrations + seed done ${JSON.stringify(seedOpts)}`);
-  } finally {
-    await orm.close(true);
-  }
+  const done = await prepareTemplate(env, pack, { database: env.POSTGRES_DB, seedOptions: seedOpts });
+  console.log(`[prepare-template] ${done.database}: migrations + seed done ${JSON.stringify(seedOpts)} (${done.durationMs}ms)`);
 }
 
 main().catch((err: unknown) => {

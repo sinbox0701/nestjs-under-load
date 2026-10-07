@@ -1,35 +1,18 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { setTimeout as sleep } from 'node:timers/promises';
 
-import { z } from 'zod';
+import { parseRunConfig, RUN_CONFIG_FETCH, type RunConfig } from '@under-load/contracts';
+
+import type { Env } from './env';
 
 /**
- * RunConfig — 실행 하나의 설정(팩·시나리오·strategy·파라미터).
+ * RunConfig 로더(C1). 정본 스키마는 `@under-load/contracts`(v1)이고, schemaVersion 이 없는 0단계 파일은
+ * 계약의 parseRunConfig 가 기본값으로 채워 v1 으로 올린다.
  *
- * DESIGN §5.3은 app이 부팅 시 오케스트레이터 `GET /internal/run-config`에서 받아오도록 한다.
- * 0단계에는 오케스트레이터가 없으므로 `scripts/run.mjs`가 이 JSON을 `runs/_active/run-config.json`에 쓰고,
- * app은 그 디렉터리를 읽기 전용으로 마운트해 부팅 시 읽는다. env가 아니라 파일인 이유: app은 restart만
- * 하므로(재생성 없음) env는 실행마다 바꿀 수 없다. 1단계에서 이 로더만 HTTP 조회로 바꾼다.
+ * - ORCHESTRATOR_URL 있음 → HTTP 조회(200 = RunConfig, 204 = 대기 모드, 실패는 재시도)
+ * - 없음 → 0단계 파일(RUN_CONFIG_PATH). run.mjs 대체 경로라 계속 유지한다.
  */
-export const runConfigSchema = z.object({
-  runId: z.string().min(1),
-  batchId: z.string().min(1),
-  repetition: z.number().int().min(1),
-  scenario: z.string().min(1),
-  strategy: z.string().min(1),
-  strategyParams: z.record(z.string(), z.unknown()).default({}),
-  /** 계측 수준(DESIGN §9.1). 0단계는 이벤트·지표가 없어 기록만 한다. */
-  instrumentation: z.enum(['off', 'metrics', 'full']).default('off'),
-  /** 경합 창 지연 주입(DESIGN §6.3). 기본 없음 */
-  injectDelay: z.array(z.object({ point: z.string().min(1), ms: z.number().int().min(0) })).default([]),
-  pool: z
-    .object({
-      min: z.number().int().min(0).default(2),
-      max: z.number().int().min(1).default(10),
-    })
-    .default({ min: 2, max: 10 }),
-});
-
-export type RunConfig = z.infer<typeof runConfigSchema>;
+export type { RunConfig };
 
 /**
  * RunConfig 파일이 없으면 null(대기 모드: /_lab 엔드포인트만 뜨고 DB에 붙지 않는다).
@@ -38,9 +21,69 @@ export type RunConfig = z.infer<typeof runConfigSchema>;
 export function loadRunConfig(path: string): RunConfig | null {
   if (!existsSync(path)) return null;
   const raw: unknown = JSON.parse(readFileSync(path, 'utf8'));
-  const parsed = runConfigSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new Error(`RunConfig 검증 실패(${path}): ${parsed.error.message}`);
+  try {
+    return parseRunConfig(raw);
+  } catch (err) {
+    throw new Error(`RunConfig 검증 실패(${path}): ${err instanceof Error ? err.message : String(err)}`);
   }
-  return parsed.data;
+}
+
+export interface FetchRunConfigOptions {
+  fetchImpl?: typeof fetch;
+  maxAttempts?: number;
+  retryIntervalMs?: number;
+  /** 시도 실패 때 호출(로깅용) */
+  onRetry?: (attempt: number, reason: string) => void;
+}
+
+/**
+ * 오케스트레이터에서 RunConfig 를 받는다. 200/204 가 아니거나 연결이 실패하면 retryIntervalMs 간격으로
+ * 최대 maxAttempts 번 시도하고, 그래도 안 되면 던진다(부팅 실패 → exit 1). 200 인데 본문이 계약과
+ * 다르면 재시도해도 소용없으므로 바로 던진다.
+ */
+export async function fetchRunConfig(
+  baseUrl: string,
+  instance: string,
+  options: FetchRunConfigOptions = {},
+): Promise<RunConfig | null> {
+  const {
+    fetchImpl = fetch,
+    maxAttempts = RUN_CONFIG_FETCH.maxAttempts,
+    retryIntervalMs = RUN_CONFIG_FETCH.retryIntervalMs,
+    onRetry,
+  } = options;
+  const url = new URL(RUN_CONFIG_FETCH.path, baseUrl);
+  url.searchParams.set(RUN_CONFIG_FETCH.instanceQuery, instance);
+
+  let lastReason = '';
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let res: Response | undefined;
+    try {
+      res = await fetchImpl(url);
+    } catch (err) {
+      lastReason = `연결 실패: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    if (res) {
+      if (res.status === RUN_CONFIG_FETCH.standbyStatus) return null;
+      if (res.status === 200) {
+        try {
+          return parseRunConfig(await res.json());
+        } catch (err) {
+          throw new Error(`RunConfig 검증 실패(${url.origin}${url.pathname}): ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      lastReason = `HTTP ${res.status}`;
+    }
+    if (attempt < maxAttempts) {
+      onRetry?.(attempt, lastReason);
+      await sleep(retryIntervalMs);
+    }
+  }
+  throw new Error(`RunConfig 조회 실패(${url.origin}${url.pathname}): ${maxAttempts}회 시도, 마지막 사유 ${lastReason}`);
+}
+
+/** env 에 따라 HTTP 또는 파일에서 RunConfig 를 얻는다. null = 대기 모드. */
+export async function resolveRunConfig(env: Env, options: FetchRunConfigOptions = {}): Promise<RunConfig | null> {
+  if (env.ORCHESTRATOR_URL) return fetchRunConfig(env.ORCHESTRATOR_URL, env.INSTANCE_NAME, options);
+  return loadRunConfig(env.RUN_CONFIG_PATH);
 }
