@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ApiError, type Api, type RunsAccepted, type ScenarioInfo } from '../../api';
+import { ApiError, type Api, type RunsAccepted, type ScenarioInfo, type StackProfile } from '../../api';
 import {
   INJECT_POINTS,
   PROBE_DEFAULT,
@@ -55,6 +55,8 @@ function Field(p: {
 export function RunSetup({ api, search, sessionHref }: RunSetupProps) {
   const [scenarios, setScenarios] = useState<ScenarioInfo[] | null>(null);
   const [loadError, setLoadError] = useState('');
+  // 스택 프로필. 못 읽으면 null 로 두고 안내를 띄우지 않는다.
+  const [stackProfiles, setStackProfiles] = useState<StackProfile[] | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -64,6 +66,17 @@ export function RunSetup({ api, search, sessionHref }: RunSetupProps) {
   const [watchId, setWatchId] = useState<string | null>(null);
   const [fail, setFail] = useState('');
   const searchRef = useRef(search);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .getHealth()
+      .then((h) => alive && setStackProfiles(h.stack?.profiles ?? null))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [api]);
 
   useEffect(() => {
     let alive = true;
@@ -424,6 +437,13 @@ export function RunSetup({ api, search, sessionHref }: RunSetupProps) {
               켤수록 많이 보이지만 서버가 그만큼 일을 더 한다. 수준이 다른 실행끼리의 속도 비교는
               조건 차이로 표시된다.
             </span>
+            {form.instrumentation === 'full' && stackProfiles && !stackProfiles.includes('trace') && (
+              <span className="rs-hint" role="note" data-testid="no-trace-hint">
+                <span className="badge t-wait">경고</span> 추적 저장소가 없다(trace 프로필 꺼짐).
+                전체 계측의 추적이 버려지지만 실행은 무효가 아니다. 추적을 보려면 trace 프로필로
+                스택을 띄운다.
+              </span>
+            )}
           </div>
           <label className="rs-inline">
             <input

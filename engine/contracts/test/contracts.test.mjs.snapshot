@@ -505,6 +505,17 @@ exports[`AC-4 상수 > 스냅샷: 상수 표 전체 1`] = `
     "nul-use-app",
     "nul-use-pg",
     "nul-loadgen"
+  ],
+  "TRACE_SINKS": [
+    "present",
+    "absent",
+    "not-applicable"
+  ],
+  "BATCH_BADGES": [
+    "closed-latency-caution",
+    "injected",
+    "unstable",
+    "no-trace-sink"
   ]
 }
 `;

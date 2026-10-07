@@ -11,6 +11,7 @@ import {
   RunRequestSchema,
   type BatchSummary,
   type RunMetadata,
+  type STACK_PROFILES,
 } from '@under-load/contracts';
 import type { z } from 'zod';
 
@@ -30,6 +31,8 @@ export interface ApiDeps {
   readonly runsDir: string;
   readonly version: string;
   readonly gitSha: string;
+  /** 함께 뜬 관측 프로필. 실행 설정 화면이 full 계측 안내에 쓴다. */
+  readonly stackProfiles?: readonly (typeof STACK_PROFILES)[number][];
 }
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -50,7 +53,7 @@ export function registerApiRoutes(routers: Routers, deps: ApiDeps): void {
   const { engine, store, catalog, board, k6 } = deps;
   const pub = routers.public;
 
-  pub.add('GET', '/health', (ctx) => ctx.json(200, { ok: true, version: deps.version, gitSha: deps.gitSha }));
+  pub.add('GET', '/health', (ctx) => ctx.json(200, { ok: true, version: deps.version, gitSha: deps.gitSha, stack: { profiles: [...(deps.stackProfiles ?? [])] } }));
 
   pub.add('GET', '/scenarios', (ctx) => ctx.json(200, catalog.infos()));
 

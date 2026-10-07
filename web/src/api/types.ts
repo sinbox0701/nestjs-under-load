@@ -13,7 +13,20 @@ export type RunStatus = 'running' | 'done' | 'failed' | 'aborted';
 export type AxisPath =
   'topology.appInstances' | 'instrumentation' | 'pgProbe.enabled' | 'interventions';
 export type DiffKind = 'axis' | 'blocking' | 'warning';
-export type BatchBadge = 'closed-latency-caution' | 'injected' | 'unstable';
+export type BatchBadge = 'closed-latency-caution' | 'injected' | 'unstable' | 'no-trace-sink';
+export type StackProfile = 'obs' | 'trace';
+
+/** 경고 배지 문구(기록·비교 화면 공통). 순위·유효성에는 영향 없는 경고다. */
+export const NO_TRACE_SINK_TEXT =
+  '경고: 추적 저장소 없음(trace 프로필 꺼짐 — full 계측의 추적이 버려짐)';
+
+/** GET /health */
+export interface Health {
+  ok: true;
+  version: string;
+  gitSha: string;
+  stack: { profiles: StackProfile[] };
+}
 
 /** `/ws/runs/:runId` 에서 runId 자리에 쓰면 진행 중인 실행을 따라간다. */
 export const WS_CURRENT = 'current';

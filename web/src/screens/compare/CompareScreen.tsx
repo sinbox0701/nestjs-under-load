@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Api, BatchBadge, BatchSummary, CompareResult } from '../../api';
+import { NO_TRACE_SINK_TEXT, type Api, type BatchBadge, type BatchSummary, type CompareResult } from '../../api';
 import './compare.css';
 import {
   HONESTY_TEXT,
@@ -16,11 +16,13 @@ const BADGE_TEXT: Record<BatchBadge, string> = {
   'closed-latency-caution': '닫힌 모델: 지연이 낮게 보일 수 있음',
   injected: '주입됨',
   unstable: '편차 큼',
+  'no-trace-sink': NO_TRACE_SINK_TEXT,
 };
 const BADGE_TONE: Record<BatchBadge, string> = {
   'closed-latency-caution': 't-wait',
   injected: 't-info',
   unstable: 't-wait',
+  'no-trace-sink': 't-wait',
 };
 
 const colLabel = (b: BatchSummary) =>

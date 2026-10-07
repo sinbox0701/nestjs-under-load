@@ -95,4 +95,15 @@ describe('CompareView', () => {
       screen.getByText(/정합성 위반 1건/, { selector: '[data-section="throughput"] .badge' }),
     ).toBeInTheDocument();
   });
+
+  it('T-157: no-trace-sink 배지를 경고 톤으로 보이고 순위는 그대로다', () => {
+    const r = base();
+    r.batches[0]!.badges = ['no-trace-sink'];
+    render(<CompareView result={r} />);
+    const badge = screen.getByText(
+      '경고: 추적 저장소 없음(trace 프로필 꺼짐 — full 계측의 추적이 버려짐)',
+    );
+    expect(badge).toHaveClass('t-wait');
+    expect(screen.getAllByText(/처리량 [12]위/)).toHaveLength(2);
+  });
 });

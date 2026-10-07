@@ -128,7 +128,7 @@ describe('C2 API', () => {
 
   it('GET /health', async () => {
     const r = await call(pub, 'GET', '/health');
-    assert.deepEqual(r.json, { ok: true, version: '1.2.3', gitSha: 'abc1234' });
+    assert.deepEqual(r.json, { ok: true, version: '1.2.3', gitSha: 'abc1234', stack: { profiles: [] } });
   });
 
   it('GET /scenarios: manifest 를 읽어 ScenarioInfo 를 만든다', async () => {

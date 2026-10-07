@@ -501,6 +501,8 @@ export type StartOptions = {
   runsDir: string;
   version: string;
   gitSha: string;
+  /** 함께 뜬 관측 프로필(GET /health 로 노출) */
+  stackProfiles?: readonly StackProfile[];
   engine: RunEngineOptions;
   /** 세션 시작 직전에 한 번(git 정보 갱신 등). 실패해도 시작은 진행한다(경고). */
   beforeSession?: () => Promise<void>;
@@ -542,7 +544,7 @@ export async function startOrchestrator(o: StartOptions): Promise<OrchestratorHa
   };
 
   const routers = createRouters();
-  registerApiRoutes(routers, { engine: apiEngine, store: p.store, catalog: p.catalog, board: p.board, k6: p.k6, runsDir: o.runsDir, version: o.version, gitSha: o.gitSha });
+  registerApiRoutes(routers, { engine: apiEngine, store: p.store, catalog: p.catalog, board: p.board, k6: p.k6, runsDir: o.runsDir, version: o.version, gitSha: o.gitSha, stackProfiles: o.stackProfiles });
   p.hub.registerRoutes(routers);
   const servers = await startHttpServers({
     routers,
@@ -683,6 +685,7 @@ export async function main(rawEnv: NodeJS.ProcessEnv = process.env): Promise<Orc
     runsDir: config.runsDir,
     version: config.version,
     gitSha: gitInfo.sha ?? config.gitSha,
+    stackProfiles,
     engine: {
       runsDir: config.runsDir,
       k6RunsDir: '/runs',

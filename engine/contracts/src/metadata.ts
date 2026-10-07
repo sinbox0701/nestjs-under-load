@@ -24,6 +24,10 @@ export const METADATA_PROFILES = ['default', 'minimal'] as const;
 export const INVARIANT_SEVERITIES = ['critical', 'info'] as const;
 /** obs 프로필이 없을 때 validity.checks.scrapeGaps 에 넣는 값. */
 export const NOT_MEASURED = 'not-measured' as const;
+/** 추적 저장소(trace 프로필) 상태. full 계측이 아니면 not-applicable, full 이면 trace 프로필 유무로 present·absent. */
+export const TRACE_SINKS = ['present', 'absent', 'not-applicable'] as const;
+export const TraceSinkSchema = z.enum(TRACE_SINKS);
+export type TraceSink = z.infer<typeof TraceSinkSchema>;
 
 export const InterventionSchema = InjectDelaySchema.extend({ type: z.literal('inject-delay') });
 export type Intervention = z.infer<typeof InterventionSchema>;
@@ -131,6 +135,8 @@ export const RunMetadataV1Schema = z.object({
     checks: z.object({
       k6Cpu: bag.nullable(),
       scrapeGaps: z.union([z.object({ gaps: z.number().int().min(0) }).catchall(z.unknown()), z.literal(NOT_MEASURED)]).nullable(),
+      /** full 인데 sink 가 absent 면 경고(valid 는 그대로). 이전 v1 메타데이터엔 없다. */
+      tracing: z.object({ sink: TraceSinkSchema }).optional(),
     }),
   }),
   invariants: z.array(InvariantResultSchema),

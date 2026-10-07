@@ -139,6 +139,7 @@ describe('조립·종료(AC-4)', () => {
       runsDir: tmpdir(),
       version: '1.2.3',
       gitSha: 'abc1234',
+      stackProfiles: ['obs'],
       engine: { runsDir: tmpdir() },
       prepareGrafana: true,
       onClose: () => {
@@ -147,13 +148,15 @@ describe('조립·종료(AC-4)', () => {
       log: () => {},
       warn: (m) => warnings.push(m),
     });
+    // 단언이 실패해도 리스너가 남아 테스트 러너가 멈추지 않도록 한다(두 번 닫아도 같은 결과).
+    after(() => handle.close());
     await handle.startup;
     assert.deepEqual(calls, ['ensureRoles']);
     assert.ok(warnings.some((w) => w.includes('Grafana 토큰 준비 실패')), '토큰 실패는 경고');
 
     const health = await call(handle.ports.public, '/health', { headers: { origin: 'http://127.0.0.1:8080' } });
     assert.equal(health.status, 200);
-    assert.deepEqual(JSON.parse(health.body), { ok: true, version: '1.2.3', gitSha: 'abc1234' });
+    assert.deepEqual(JSON.parse(health.body), { ok: true, version: '1.2.3', gitSha: 'abc1234', stack: { profiles: ['obs'] } });
     assert.equal((await call(handle.ports.public, '/internal/run-config')).status, 404, '공개 리스너에 내부 라우트 없음');
     assert.equal((await call(handle.ports.internal, '/internal/run-config?instance=app-1')).status, 204);
     const metrics = await call(handle.ports.internal, '/metrics');
@@ -201,6 +204,7 @@ describe('조립·종료(AC-4)', () => {
     const { ports } = fakePorts({ obs: createObsClient({ obs: config.obs, clock: manualClock().clock }) });
     const logs: string[] = [];
     const handle = await startOrchestrator({ ports, listen, runsDir: dir, version: 'v', gitSha: 's', engine: { runsDir: dir }, prepareGrafana: true, log: (m) => logs.push(m), warn: assert.fail });
+    after(() => handle.close());
     await handle.startup;
     await handle.close();
     assert.ok(logs.includes('Grafana 토큰 준비 완료'));
@@ -223,6 +227,7 @@ describe('조립·종료(AC-4)', () => {
     };
     const warnings: string[] = [];
     const handle = await startOrchestrator({ ports, listen, runsDir: tmpdir(), version: 'v', gitSha: 's', engine: { runsDir: tmpdir() }, log: () => {}, warn: (m) => warnings.push(m) });
+    after(() => handle.close());
     await handle.startup;
     assert.ok(warnings.some((w) => w.includes('PG 역할 보장 실패')));
     assert.equal((await call(handle.ports.public, '/health')).status, 200);
