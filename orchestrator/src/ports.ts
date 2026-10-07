@@ -307,7 +307,10 @@ export type IngestResult = { ok: true; events: number } | { ok: false; reason: '
 
 /** 이벤트 수신·링버퍼·파일 기록·WS 팬아웃. 현재 실행은 beginRun 으로 정한다. */
 export interface EventHub {
-  /** 새 실행 시작: 링버퍼·파일 열기, 'current' 구독자에게 새 runId 알림. */
+  /**
+   * 새 실행 시작: 링버퍼·파일 열기, 현재 실행을 이 runId 로 바꾼다. 'current' 구독자에게 따로 메시지를 보내지 않는다 —
+   * 전환은 엔진이 곧이어 publish 하는 이 runId 의 status 메시지로 전달된다.
+   */
   beginRun(ctx: EventHubRunContext): Promise<void>;
   /** 실행 종료: 파일 flush·닫기. 구독자 소켓은 유지(다음 실행 대기). */
   endRun(runId: string): Promise<void>;
