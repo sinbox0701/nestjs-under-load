@@ -42,7 +42,14 @@ function useThrottled<T>(value: T, ms: number): T {
         setOut(latest.current);
       }, ms);
   }, [value, ms]);
-  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(
+    () => () => {
+      // StrictMode 는 mount→cleanup→remount 를 한다. 타이머 ref 를 비워야 다시 잡힌다.
+      clearTimeout(timer.current);
+      timer.current = undefined;
+    },
+    [],
+  );
   return out;
 }
 

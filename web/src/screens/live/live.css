@@ -35,6 +35,7 @@
 }
 .ptree,
 .pools {
+  grid-template-columns: minmax(0, 1fr);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -42,6 +43,7 @@
   gap: var(--s1);
 }
 .ptree li {
+  min-width: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -53,9 +55,8 @@
 }
 .ptree__q {
   flex-basis: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font: 11px/16px var(--font-code);
   color: var(--dim);
 }

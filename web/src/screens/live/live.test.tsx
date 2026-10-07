@@ -1,5 +1,6 @@
 import { act, render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { StrictMode } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Api, ProbeData, WireEventV0, WsMessage } from '../../api';
 import { fixtures } from '../../api/mock-fixtures';
 import { LiveScreen } from './LiveScreen';
@@ -158,5 +159,34 @@ describe('LiveScreen', () => {
     for (const m of fixtures.wsMessages) send(m);
     expect(screen.getByRole('tree', { name: '락 차단 트리' }).textContent).toContain('pid 813');
     expect(screen.getByTestId('measured-badge').textContent).toMatch(/대표 \d+명/);
+  });
+});
+
+describe('LiveScreen StrictMode(main.tsx 와 같은 마운트)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('events 메시지 뒤 스로틀 타이머가 지나면 타임라인에 실제 행이 나온다', () => {
+    vi.useFakeTimers();
+    const { api, send } = harness();
+    render(
+      <StrictMode>
+        <LiveScreen api={api} />
+      </StrictMode>,
+    );
+    expect(screen.getByText('실행하면 기록이 여기에 쌓입니다')).toBeInTheDocument();
+    send(
+      events(RUN, [
+        ev(RUN, 1, '3-1', 'arrived'),
+        ev(RUN, 2, '3-1', 'committed'),
+        ev(RUN, 3, '5-1', 'conflict'),
+      ]),
+    );
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(screen.queryByText('실행하면 기록이 여기에 쌓입니다')).toBeNull();
+    const log = screen.getByRole('list', { name: /이번 라운드 이벤트/ });
+    expect(within(log).queryByText('필터에 맞는 이벤트 없음')).toBeNull();
+    expect(within(log).getAllByRole('listitem').length).toBeGreaterThan(0);
   });
 });
