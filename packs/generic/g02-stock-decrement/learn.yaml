@@ -60,6 +60,20 @@ concepts:
       처리량 천장은 대략 1 / (행 잠금 보유 시간)이다. 보유 시간이 4ms면 그 상품은 초당 약 250건이 한계이고, 넘는 몫은 대기열과 지연이 된다.
       1차 해법은 보유 시간을 줄이는 것(잠금 안의 왕복 줄이기, 조건부 UPDATE)이고, 그래도 모자라면 재고를 여러 행으로 나누거나 요청을 모아 처리하는 구조 변경이 필요하다.
       UPDATE마다 새 행 버전이 생기므로 dead tuple과 vacuum 부담도 그 한 행에 몰린다.
+  - id: advisory-lock
+    label: 어드바이저리 락 (pg_advisory_xact_lock)
+    body: >-
+      advisory lock은 테이블·행과 무관하게 앱이 정한 숫자 키 하나에 거는 PostgreSQL 락이다. 행이 아니라 키를 잠그므로 잠글 행이 아직 없어도 잡히고,
+      같은 키를 같은 방식으로 잡는 코드끼리만 서로를 기다린다(상품 행을 UPDATE하는 다른 경로는 막지 못한다).
+      pg_advisory_xact_lock은 트랜잭션이 끝나면 자동으로 풀리고, 세션형 pg_advisory_lock은 직접 풀어야 해서 풀 커넥션에 락이 남을 수 있다.
+      키 공간은 데이터베이스 전체가 공유하므로 어떤 숫자를 어떤 의미로 쓸지는 앱이 관리해야 한다. 대기는 pg_locks에서 locktype='advisory', granted=false로 보인다.
+  - id: distributed-lock-ttl
+    label: 분산 락과 TTL (Redis SET NX PX)
+    body: >-
+      Redis 락은 `SET key 토큰 NX PX ttl` 한 명령으로 잡는다. NX는 키가 없을 때만 만들고, PX는 소유자가 죽어도 락이 영원히 남지 않게 하는 만료 시간이다.
+      그래서 작업이 TTL보다 오래 걸리면 락이 풀린 채 작업이 계속되어 상호 배제가 깨진다. 이때 해제를 토큰 확인 없이 하면 남이 새로 잡은 락을 지운다.
+      락과 데이터가 서로 다른 시스템이라 둘을 한 번에 원자적으로 묶을 수 없고, Redis 왕복·재시도 지연·장애 시 거절(fail-closed)이 비용으로 붙는다.
+      대신 앱 서버가 몇 대든 같은 키를 본다.
 
 situations:
   - id: two-users-one-instance
@@ -710,6 +724,172 @@ outcomes:
       - { file: strategies/app-memory-lock.strategy.ts, marker: process-local-map }
       - { file: strategies/app-memory-lock.strategy.ts, marker: same-read-then-write }
     sql: *sql-no-lock
+  # ── redis-lock ─────────────────────────────────────────────────────────────
+  - strategy: redis-lock
+    situation: two-users-one-instance
+    verdict: ok
+    expected: "위반 0, 실패 0. 지연은 no-lock보다 Redis 왕복 2번(SET, 해제 Lua)만큼 늘고 눈에 띄지 않는다"
+    measured: null
+    why: "락을 잡은 뒤에 트랜잭션을 열어 읽으므로 직전 커밋을 본다. 락 안은 no-lock과 같은 읽기-계산-쓰기지만 같은 상품 요청이 Redis 키 하나로 한 줄이 된다. 경합이 드물어 재시도(5ms 간격)도 거의 없다. UPDATE는 암묵적 행 잠금을 잡지만 Redis가 이미 같은 상품 요청을 한 줄로 세워 DB에서는 대기가 생기지 않으므로 pg_locks에 대기가 보이지 않는다"
+    focus:
+      - { file: strategies/redis-lock.strategy.ts, marker: set-nx-px }
+      - { file: strategies/redis-lock.strategy.ts, marker: rmw-inside-lock }
+    sql: *sql-no-lock
+  - strategy: redis-lock
+    situation: spike-200-one-instance
+    verdict: ok
+    expected: "위반 0. 품절 뒤에도 매 요청이 락을 잡고 읽고 sold_out 원장까지 남기므로 conditional-update보다 느리다. 지연은 row-lock과 비슷한 범위다"
+    measured: null
+    why: "상품당 초당 약 40건이고 보유 시간이 몇 ms라 천장 안쪽이다. 대기자는 5ms마다 SET NX를 다시 던지는 폴링이라 대기 순서가 보장되지 않고, 경합이 생기면 최대 5ms 단위로 지연이 늘어난다. 락 대기 중에는 DB 커넥션을 쥐지 않는다(트랜잭션이 락 뒤에 열린다)"
+    focus:
+      - { file: strategies/redis-lock.strategy.ts, marker: lock-outside-tx }
+      - { file: strategies/redis-lock.strategy.ts, marker: release-after-commit }
+    sql: *sql-no-lock
+  - strategy: redis-lock
+    situation: spike-200-two-instances
+    verdict: ok
+    expected: "위반 0. app-memory-lock이 깨지는 같은 조건에서 맞다. 결과는 서버 1대와 같다"
+    measured: null
+    why: "락이 Redis 키에 있어 app-1과 app-2가 같은 상품에서 같은 줄에 선다. 토큰이 요청(락 획득)마다 달라서 서로의 락을 지우지 않는다. 락의 범위가 공유 자원의 범위(상품 한 개를 건드리는 모든 인스턴스)와 같아진 것이 app-memory-lock과의 차이다"
+    focus:
+      - { file: strategies/redis-lock.strategy.ts, marker: owner-token }
+      - { file: strategies/redis-lock.strategy.ts, marker: set-nx-px }
+    sql: *sql-no-lock
+  - strategy: redis-lock
+    situation: hot-product-zipf
+    verdict: slow
+    expected: "위반 0. 상품 1에 초당 약 114건이 몰려 보유 시간(DB 왕복 4~5번 + Redis 왕복 2번 + 폴링 간격)이 천장에 가까워지고 지연이 늘어난다. 대기가 ttlMs(3000ms)를 넘기는 요청은 503이 섞일 수 있다"
+    measured: null
+    why: "보유 시간이 길수록 천장(≈ 1/보유 시간)이 낮아지는 점은 row-lock과 같고, 여기에 Redis 왕복과 5ms 재시도 간격이 더해진다. 대기자는 폴링이라 락이 풀려도 다음 재시도까지 락이 놀 수 있어 같은 보유 시간에서 천장이 DB 락보다 낮다. 대기 상한은 ttlMs와 같은 값이다"
+    focus:
+      - { file: strategies/redis-lock.strategy.ts, marker: set-nx-px }
+      - { file: strategies/redis-lock.strategy.ts, marker: release-after-commit }
+    sql: *sql-no-lock
+  - strategy: redis-lock
+    situation: db-slow
+    verdict: rejects
+    expected: "위반 0. 보유 시간이 DB 왕복 5번 × 50ms로 약 250ms가 되어 상품당 천장이 초당 약 4건이다. 초당 약 20건이 오므로 대기가 ttlMs(3000ms)를 넘긴 요청이 Redis 락 대기 초과 503(응답 result: lock_timeout, PostgreSQL lock_timeout·55P03과 별개)으로 거절된다. 거절된 요청은 원장·재고에 흔적이 없다"
+    measured: null
+    why: "지연은 app과 PostgreSQL 사이에만 주입되고 Redis 왕복은 그대로다. 락 보유 구간이 DB 왕복으로 늘어나므로 천장이 내려가고 대기가 쌓인다. row-lock과 달리 락 대기자는 DB 커넥션을 쥐지 않아 풀이 고갈되지는 않지만, 락 보유자 수가 상품 수(5)를 넘지 못하므로 처리량은 그만큼 막힌다. Redis가 아예 응답하지 않는 경우도 같은 503으로 거절한다(fail-closed)"
+    focus:
+      - { file: strategies/redis-lock.strategy.ts, marker: lock-outside-tx }
+      - { file: strategies/redis-lock.strategy.ts, marker: fail-closed }
+    sql: *sql-no-lock
+  - strategy: redis-lock
+    situation: short-lock-timeout
+    verdict: ok
+    expected: "위반 0. 핫 상품 초당 약 57건 조건 그대로의 결과다. lock_timeout과 after-lock 지연은 row-lock 전용이라 이 strategy에는 적용되지 않는다"
+    measured: null
+    why: "보유 시간이 몇 ms라 초당 57건은 천장 아래다. 락 대기의 상한은 DB lock_timeout이 아니라 ttlMs(기본 3000ms)이고 situation의 row-lock 파라미터는 영향이 없다. 같은 부하에서 row-lock이 50ms에 거절하는 것과 대비된다"
+    focus:
+      - { file: strategies/redis-lock.strategy.ts, marker: set-nx-px }
+      - { file: strategies/redis-lock.strategy.ts, marker: rmw-inside-lock }
+    sql: *sql-no-lock
+  - strategy: redis-lock
+    situation: contention-window-30-one-instance
+    verdict: rejects
+    expected: "위반 0. 주입 지점이 Redis 락 안이라 보유 시간이 30ms를 넘고 상품당 천장이 초당 약 28건으로 도착(약 40건)보다 낮다. 대기가 쌓여 ttlMs(3000ms)를 넘기는 요청부터 Redis 락 대기 초과 503(응답 result: lock_timeout, PostgreSQL lock_timeout·55P03과 별개)이 나온다. p95는 초 단위"
+    measured: null
+    why: "30ms 창을 락이 감싸 읽기~쓰기가 겹치지 않으므로 위반은 없다. 대가는 보유 시간이다. 품절 뒤에도 매 요청이 락과 주입 지연을 지나므로 줄이 풀리지 않는다. row-lock은 대기자가 풀 커넥션(10개)을 쥐어 풀에서 막혔지만 여기서는 대기자가 커넥션을 쥐지 않아 대기가 곧바로 ttlMs 상한에 닿는다. 대기 순서가 폴링이라 일부 요청의 대기가 더 길어질 수 있다"
+    focus:
+      - { file: strategies/redis-lock.strategy.ts, marker: rmw-inside-lock }
+      - { file: strategies/redis-lock.strategy.ts, marker: release-after-commit }
+    sql: *sql-no-lock
+  - strategy: redis-lock
+    situation: contention-window-30-two-instances
+    verdict: rejects
+    expected: "위반 0. 천장은 Redis 키가 정하므로 서버 2대여도 1대와 같다. 대기가 ttlMs(3000ms)를 넘긴 요청이 503으로 거절되고 p95는 초 단위다. app-memory-lock이 같은 조건에서 깨지는 것과 대비된다"
+    measured: null
+    why: "같은 상품의 두 인스턴스 요청이 같은 키에서 줄을 서므로 앱이 몇 대든 위반이 없다. 보유 시간 약 35ms 대 TTL 3000ms라 락이 중간에 풀릴 일은 없다. TTL이 보유 시간보다 짧아지면(큰 지연, GC, 느린 DB) 락이 풀린 채 트랜잭션이 계속되어 깨질 수 있고 그 시연은 G05가 맡는다. 늦게 끝난 쪽의 해제는 토큰이 달라 남의 락을 지우지 않는다"
+    focus:
+      - { file: strategies/redis-lock.strategy.ts, marker: set-nx-px }
+      - { file: strategies/redis-lock.strategy.ts, marker: lua-owner-release }
+    sql: *sql-no-lock
+  # ── advisory-xact-lock ─────────────────────────────────────────────────────
+  - strategy: advisory-xact-lock
+    situation: two-users-one-instance
+    verdict: ok
+    expected: "위반 0, 실패 0. 지연은 no-lock과 거의 같고 첫 문장 왕복 1번만 늘어난다"
+    measured: null
+    why: "트랜잭션 첫 문장이 같은 상품 ID의 advisory 락을 잡아 같은 상품 트랜잭션을 한 줄로 세운다. 락을 얻은 뒤에 읽으므로 직전 커밋 값을 본다(READ COMMITTED는 문장마다 스냅샷). 경합이 드물어 대기도 거의 없다"
+    focus:
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: advisory-first-statement }
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: rmw-under-advisory }
+    sql: &sql-advisory
+      - 'select pg_advisory_xact_lock(1)'
+      - 'select "p0".* from "g02_product" as "p0" where "p0"."id" = 1 limit 1'
+      - 'update "g02_product" set "stock" = 9 where "id" = 1'
+      - 'insert into "g02_order_ledger" ("request_id", "product_id", "qty", "result", "instance") values (''00000000-0000-4000-8000-000000000001'', 1, 1, ''success'', ''app-1'') returning "id", "txid", "created_at"'
+  - strategy: advisory-xact-lock
+    situation: spike-200-one-instance
+    verdict: ok
+    expected: "위반 0. row-lock과 같은 크기의 보유 시간이라 지연도 비슷하다. 품절 뒤에도 락을 지나므로 conditional-update보다 느리다"
+    measured: null
+    why: "락 보유 구간이 첫 문장부터 COMMIT까지고 상품당 초당 약 40건은 천장 안쪽이다. 락이 트랜잭션에 묶여 있어 커밋과 해제가 한 순간에 일어나므로 해제 순서를 틀릴 여지가 없다. 대기는 pg_locks에 locktype=advisory, granted=false로 보인다"
+    focus:
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: xact-scoped }
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: auto-release-at-end }
+    sql: *sql-advisory
+  - strategy: advisory-xact-lock
+    situation: spike-200-two-instances
+    verdict: ok
+    expected: "위반 0. 결과는 서버 1대와 같다"
+    measured: null
+    why: "락이 DB 안에 있으므로 어느 인스턴스에서 온 트랜잭션이든 같은 키에서 기다린다. 앱 쪽에 공유 저장소(Redis)가 필요 없다는 점이 redis-lock과의 차이다"
+    focus:
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: advisory-first-statement }
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: xact-scoped }
+    sql: *sql-advisory
+  - strategy: advisory-xact-lock
+    situation: hot-product-zipf
+    verdict: slow
+    expected: "위반 0. 상품 1 요청이 한 줄로 서서 row-lock과 비슷하게 지연이 늘고 pg_locks에 advisory 대기가 계속 보인다"
+    measured: null
+    why: "보유 시간이 SELECT·UPDATE·원장 INSERT·COMMIT 왕복을 모두 포함해 row-lock과 같은 크기다. 대기하는 트랜잭션이 풀 커넥션을 쥔 채 기다리므로 한 상품의 대기자가 풀을 차지할 수 있다. 이 strategy는 lock_timeout을 걸지 않아 대기에 상한이 없고 거절 대신 기다린다"
+    focus:
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: rmw-under-advisory }
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: auto-release-at-end }
+    sql: *sql-advisory
+  - strategy: advisory-xact-lock
+    situation: db-slow
+    verdict: slow
+    expected: "위반 0, 락 거절 없음. 보유 시간이 왕복 5번 × 50ms로 약 250ms라 상품당 천장이 초당 약 4건이고 초당 약 20건이 오므로 대기열과 풀 대기가 쌓인다. 클라이언트 타임아웃으로 실패하는 요청이 늘 수 있다"
+    measured: null
+    why: "락 대기자가 트랜잭션(=풀 커넥션)을 쥔 채 기다리고, lock_timeout이 없어 서버가 먼저 거절하지 않는다. row-lock은 55P03으로 503을 돌려 대기를 끊지만 이 strategy는 끊지 않으므로 같은 부하에서 거절 대신 지연이 쌓인다. 풀(인스턴스당 10개)이 한 상품의 대기자로 차면 다른 상품도 막힌다"
+    focus:
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: auto-release-at-end }
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: xact-scoped }
+    sql: *sql-advisory
+  - strategy: advisory-xact-lock
+    situation: short-lock-timeout
+    verdict: ok
+    expected: "위반 0. 핫 상품 초당 약 57건 조건 그대로의 결과다. lock_timeout과 after-lock 지연은 row-lock 전용이라 적용되지 않는다"
+    measured: null
+    why: "잠금 안 작업이 주입되지 않으면 보유 시간이 몇 ms라 초당 57건은 천장 아래다. 이 strategy에는 lock_timeout이 없다는 점이 row-lock과 다르다. 기다림에 상한을 두려면 SET LOCAL lock_timeout을 직접 걸어야 하고 그때는 55P03을 처리해야 한다"
+    focus:
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: advisory-first-statement }
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: rmw-under-advisory }
+    sql: *sql-advisory
+  - strategy: advisory-xact-lock
+    situation: contention-window-30-one-instance
+    verdict: slow
+    expected: "위반 0. 주입 지점이 락 안이라 보유 시간이 30ms를 넘고 상품당 천장이 초당 약 28건으로 도착(약 40건)보다 낮다. 대기가 쌓여 p95가 초 단위로 오른다. lock_timeout이 없어 503은 없고, 풀(10개)이 대기자로 차서 지연은 주로 풀 획득에서 생길 것"
+    measured: null
+    why: "직렬화는 맞지만 30ms가 잠금 보유 시간에 들어간다. 품절 뒤에도 락과 주입 지연을 지나므로 줄이 풀리지 않는다. 같은 조건의 row-lock과 같은 구조라 같은 경향(대기자가 풀을 점유)이 나올 것으로 예상한다"
+    focus:
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: rmw-under-advisory }
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: auto-release-at-end }
+    sql: *sql-advisory
+  - strategy: advisory-xact-lock
+    situation: contention-window-30-two-instances
+    verdict: slow
+    expected: "위반 0. 천장은 DB의 advisory 키가 정하므로 서버 2대여도 같다. 풀이 20개로 늘어 한 상품의 대기자가 다른 상품을 막는 일은 줄지만 지연은 초 단위로 쌓인다"
+    measured: null
+    why: "락이 DB에 있어 앱 대수와 무관하게 상품별 한 줄이다. app-memory-lock이 같은 조건에서 깨지는 것과 대비된다. 보유 시간이 30ms 이상이라 천장(초당 약 28건)이 도착(약 40건)보다 낮다"
+    focus:
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: advisory-first-statement }
+      - { file: strategies/advisory-xact-lock.strategy.ts, marker: auto-release-at-end }
+    sql: *sql-advisory
 
 choose:
   - when: "한 행의 숫자를 조건에 맞을 때만 줄이면 된다 (재고·좌석·쿠폰 잔량)"
@@ -736,3 +916,11 @@ choose:
     pick: conditional-update
     because: "트랜잭션 안 왕복 수가 곧 보유 시간이다. 왕복이 가장 적은 방식이 지연 증가에 가장 덜 흔들린다"
     avoid: [row-lock, app-memory-lock]
+  - when: "락이 보호할 대상이 DB 한 곳이 아니다 (외부 API 호출·다른 저장소 갱신을 한 번에 한 요청씩 하고 싶다)"
+    pick: redis-lock
+    because: "DB 트랜잭션 밖의 작업도 하나의 키로 줄 세울 수 있고 앱이 몇 대든 맞다. 대신 Redis 왕복·재시도 지연·장애 시 거절을 감수하고, TTL이 작업 시간보다 길게 유지되는지 계속 확인해야 한다. 데이터가 같은 DB 안에 있으면 굳이 쓸 이유가 약하다"
+    avoid: [app-memory-lock]
+  - when: "행이 아직 없거나 한 문장 UPDATE로 못 쓰는 규칙인데, 락을 DB 안에서 해결하고 싶다"
+    pick: advisory-xact-lock
+    because: "행이 없어도 숫자 키로 잠가 직렬화하고 트랜잭션이 끝나면 자동으로 풀린다. TTL·소유자 확인이 필요 없다. 대신 키 공간을 앱이 관리해야 하고, 같은 방식으로 락을 거는 코드끼리만 서로를 막는다"
+    avoid: [no-lock, app-memory-lock]
