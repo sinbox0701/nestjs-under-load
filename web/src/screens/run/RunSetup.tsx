@@ -12,6 +12,7 @@ import {
   validate,
   type FormState,
 } from './form';
+import { Seg } from '../../components/lib/Seg';
 import { SessionProgress } from './SessionProgress';
 import './run.css';
 
@@ -260,27 +261,29 @@ export function RunSetup({ api, search, sessionHref }: RunSetupProps) {
 
         <fieldset className="panel rs-set">
           <legend className="panel__h">2. 부하</legend>
-          <div className="rs-field" role="radiogroup" aria-labelledby="rs-model-l">
+          <div className="rs-field">
             <span id="rs-model-l" className="rs-lbl">
               부하 방식
             </span>
-            <div className="seg">
-              {(['open', 'closed'] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  role="radio"
-                  aria-checked={form.model === m}
-                  title={MODEL_HINT[m]}
-                  className={form.model === m ? 'btn is-sel' : 'btn'}
-                  disabled={sc ? !sc.load.models.includes(m) : false}
-                  onClick={() => set('model', m)}
-                >
-                  {m === 'open' ? '도착률 고정' : '동시 사용자 고정'}
-                </button>
-              ))}
-            </div>
+            <Seg<FormState['model']>
+              label="부하 방식"
+              value={form.model}
+              onChange={(m) => set('model', m)}
+              items={(['open', 'closed'] as const).map((m) => ({
+                value: m,
+                label: m === 'open' ? '도착률 고정' : '동시 사용자 고정',
+                title: MODEL_HINT[m],
+                disabled: sc ? !sc.load.models.includes(m) : false,
+              }))}
+            />
             <span className="rs-hint">{MODEL_HINT[form.model]}</span>
+            {form.model === 'closed' && (
+              <p className="rs-caution" role="note">
+                <span className="badge t-wait">지연 해석 주의</span> 동시 사용자 고정에서는 서버가
+                느려지면 요청도 덜 보내져(coordinated omission) 지연이 실제보다 낮게 보일 수 있다.
+                지연을 처리 능력으로 읽지 말고, 지연 비교는 같은 방식끼리만 한다.
+              </p>
+            )}
           </div>
           {closed ? (
             <>
@@ -367,29 +370,19 @@ export function RunSetup({ api, search, sessionHref }: RunSetupProps) {
           <Field label="예열용 상품 수" id="rs-warmupProducts" error={errs.warmupProducts}>
             <input type="text" inputMode="numeric" {...bind('warmupProducts')} />
           </Field>
-          <div className="rs-field" role="radiogroup" aria-labelledby="rs-dist-l">
+          <div className="rs-field">
             <span id="rs-dist-l" className="rs-lbl">
               주문이 몰리는 모양
             </span>
-            <div className="seg">
-              {(
-                [
-                  ['uniform', '고르게'],
-                  ['zipf', '인기 상품에 쏠림'],
-                ] as const
-              ).map(([k, label]) => (
-                <button
-                  key={k}
-                  type="button"
-                  role="radio"
-                  aria-checked={form.distKind === k}
-                  className={form.distKind === k ? 'btn is-sel' : 'btn'}
-                  onClick={() => set('distKind', k)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <Seg<FormState['distKind']>
+              label="주문이 몰리는 모양"
+              value={form.distKind}
+              onChange={(k) => set('distKind', k)}
+              items={[
+                { value: 'uniform', label: '고르게' },
+                { value: 'zipf', label: '인기 상품에 쏠림' },
+              ]}
+            />
             <span className="rs-hint">
               {form.distKind === 'zipf'
                 ? '일부 상품에 요청이 집중된다(zipf). 같은 행을 동시에 건드릴 확률이 올라간다.'
@@ -413,30 +406,20 @@ export function RunSetup({ api, search, sessionHref }: RunSetupProps) {
 
         <fieldset className="panel rs-set">
           <legend className="panel__h">4. 관측과 개입</legend>
-          <div className="rs-field" role="radiogroup" aria-labelledby="rs-instr-l">
+          <div className="rs-field">
             <span id="rs-instr-l" className="rs-lbl">
               계측 수준
             </span>
-            <div className="seg">
-              {(
-                [
-                  ['off', '끔'],
-                  ['metrics', '지표'],
-                  ['full', '전체'],
-                ] as const
-              ).map(([k, label]) => (
-                <button
-                  key={k}
-                  type="button"
-                  role="radio"
-                  aria-checked={form.instrumentation === k}
-                  className={form.instrumentation === k ? 'btn is-sel' : 'btn'}
-                  onClick={() => pickLevel(k)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <Seg<FormState['instrumentation']>
+              label="계측 수준"
+              value={form.instrumentation}
+              onChange={pickLevel}
+              items={[
+                { value: 'off', label: '끔' },
+                { value: 'metrics', label: '지표' },
+                { value: 'full', label: '전체' },
+              ]}
+            />
             <span className="rs-hint">
               켤수록 많이 보이지만 서버가 그만큼 일을 더 한다. 수준이 다른 실행끼리의 속도 비교는
               조건 차이로 표시된다.

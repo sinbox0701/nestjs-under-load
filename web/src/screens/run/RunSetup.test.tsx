@@ -142,4 +142,25 @@ describe('RunSetup', () => {
     for (const b of boxes) if ((b as HTMLInputElement).checked) fireEvent.click(b);
     expect(runBtn()).toBeDisabled();
   });
+
+  it('세그먼트는 ←→ 로 값을 옮기고 선택된 항목만 탭 순서에 든다', async () => {
+    const { api } = mockApi();
+    await ready(api);
+    const closed = screen.getByRole('radio', { name: '동시 사용자 고정' });
+    expect(closed).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('radio', { name: '도착률 고정' })).toHaveAttribute('tabindex', '-1');
+    fireEvent.keyDown(closed, { key: 'ArrowLeft' });
+    expect(screen.getByRole('radio', { name: '도착률 고정' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  it('closed 에서만 coordinated omission 안내가 보인다', async () => {
+    const { api } = mockApi();
+    await ready(api);
+    expect(screen.getByRole('note')).toHaveTextContent('coordinated omission');
+    fireEvent.click(screen.getByRole('radio', { name: '도착률 고정' }));
+    expect(screen.queryByRole('note')).toBeNull();
+  });
 });

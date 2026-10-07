@@ -64,11 +64,11 @@
   resize: vertical;
 }
 .rs-hint {
-  font: 12px/1.4 var(--font-small);
+  font: 12px/1.5 var(--font-body);
   color: var(--dim);
 }
 .rs-err {
-  font: 12px/1.4 var(--font-small);
+  font: 12px/1.5 var(--font-body);
   color: var(--bad-fg);
 }
 .rs-err::before {
@@ -147,5 +147,53 @@ ul.rs-err {
   }
   .rs-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.rs-caution {
+  margin: var(--s1) 0 0;
+  padding: var(--s2) var(--s3);
+  background: var(--sunk);
+  border-left: 4px solid var(--wait);
+}
+/* 세그먼트(공용 Seg) — 화면 루트가 .nul 이 아니므로 같은 모양을 여기서 준다(§4.3). */
+.rs .seg {
+  display: inline-flex;
+  border: 2px solid var(--edge);
+  clip-path: var(--notch);
+  background: var(--panel);
+}
+.rs .seg button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  padding: 0 10px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  font: 12px/1 var(--font-body);
+}
+.rs .seg button + button {
+  box-shadow: inset 2px 0 0 var(--line);
+}
+.rs .seg button:hover {
+  background: var(--sunk);
+}
+.rs .seg button[aria-checked='true'] {
+  background: var(--sel-bg);
+  color: var(--sel-fg);
+  box-shadow: none;
+}
+.rs .seg button[aria-checked='true'] + button {
+  box-shadow: none;
+}
+.rs .seg button[aria-disabled='true'] {
+  color: var(--dim);
+  cursor: not-allowed;
+}
+@media (max-width: 640px) {
+  .rs .seg {
+    flex-wrap: wrap;
   }
 }
