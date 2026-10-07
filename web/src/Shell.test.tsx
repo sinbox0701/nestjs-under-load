@@ -31,6 +31,33 @@ describe('Shell', () => {
     await waitFor(() => expect(screen.getByTestId('source-badge')).toHaveTextContent('실측'));
   });
 
+  it('테마: 셸 버튼 → T 키 → 셸 버튼이 하나의 상태로 일관되게 순환한다', () => {
+    location.hash = '';
+    localStorage.removeItem('nul.theme');
+    vi.stubGlobal('matchMedia', () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    render(<Shell />);
+    const btn = () => screen.getByRole('button', { name: /^테마:/ });
+    expect(screen.getAllByRole('button', { name: /^테마:/ })).toHaveLength(1);
+    expect(btn()).toHaveTextContent('시스템');
+    fireEvent.click(btn()); // system → light
+    expect(btn()).toHaveTextContent('라이트');
+    expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+    fireEvent.keyDown(window, { key: 't' }); // light → dark
+    expect(btn()).toHaveTextContent('다크');
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+    fireEvent.click(btn()); // dark → system
+    expect(btn()).toHaveTextContent('시스템');
+    expect(document.documentElement).not.toHaveAttribute('data-theme');
+    fireEvent.keyDown(window, { key: 'T' }); // system(밝음) → dark
+    expect(btn()).toHaveTextContent('다크');
+    fireEvent.keyDown(window, { key: 't' }); // dark → light
+    expect(btn()).toHaveTextContent('라이트');
+  });
+
   it('#run?scenario&situation 으로 열면 실행 설정이 열린다', async () => {
     location.hash = '#run?scenario=g02-stock-decrement&situation=none';
     render(<Shell />);

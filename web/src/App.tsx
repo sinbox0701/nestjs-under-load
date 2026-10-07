@@ -34,7 +34,6 @@ import {
   upperBound,
 } from './playback';
 import { buildRecording, codeFor, type ScenarioRequest } from './scenarios';
-import { applyTheme, readTheme, type ThemeChoice } from './theme/theme';
 
 const ROUNDS = 4;
 const RUN_STEP_MS = 260;
@@ -57,10 +56,10 @@ function isTyping(el: EventTarget | null): boolean {
   );
 }
 
-export function App() {
+/** `onToggleTheme`: T 단축키가 부르는 라이트/다크 전환. 테마 상태는 셸이 갖는다. */
+export function App({ onToggleTheme }: { onToggleTheme?: () => void } = {}) {
   const s = useStore(store);
   const { prepared, P } = s;
-  const [theme, setTheme] = useState<ThemeChoice>(readTheme);
   const [cfg, setCfg] = useState<RunConfig>(() => defaultConfig());
   // 실행 타이머가 기록을 만들 때 읽는 최신 설정(실행 중 설정은 잠기지만 이중 방어).
   const cfgRef = useRef(cfg);
@@ -79,8 +78,6 @@ export function App() {
   const [keysOpen, setKeysOpen] = useState(false);
   const [pressed, setPressed] = useState<'play' | 'prev' | 'next' | null>(null);
   const transportRef = useRef<HTMLElement>(null);
-
-  useEffect(() => applyTheme(theme), [theme]);
 
   const rec: Recording = prepared.recording;
   const meta = rec.meta;
@@ -259,12 +256,7 @@ export function App() {
         break;
       case 't':
       case 'T':
-        setTheme((th) => {
-          const dark =
-            th === 'dark' ||
-            (th === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-          return dark ? 'light' : 'dark';
-        });
+        onToggleTheme?.();
         break;
       case '?':
         e.preventDefault();
@@ -371,8 +363,6 @@ export function App() {
   return (
     <div className="nul">
       <TopBar
-        theme={theme}
-        onThemeChange={setTheme}
         onKeys={() => setKeysOpen(true)}
         fakeNote={
           notice

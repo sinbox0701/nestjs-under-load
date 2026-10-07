@@ -6,12 +6,7 @@ import { KeysOverlay, RunControls, TopBar } from './TopBar';
 describe('TopBar', () => {
   it('가짜 데이터 고지 칩, 단축키 — 화면 탭·테마 버튼은 셸 몫이라 없다', () => {
     const onKeys = vi.fn();
-    render(
-      <TopBar
-        onKeys={onKeys}
-        fakeNote="시뮬레이션 기록(실측 아님)"
-      />,
-    );
+    render(<TopBar onKeys={onKeys} fakeNote="시뮬레이션 기록(실측 아님)" />);
     expect(screen.getByText('시뮬레이션 기록(실측 아님)')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /단축키/ }));
     expect(onKeys).toHaveBeenCalled();

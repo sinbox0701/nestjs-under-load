@@ -107,13 +107,8 @@ export function Shell() {
   const mock = useMock();
   const api = useMemo(() => createApi({ mock }), [mock]);
 
-  // 테마 버튼은 여기 하나다. 무대의 T 단축키가 html 속성을 바꾸면 버튼 표시도 따라가게 지켜본다.
+  // 테마 상태의 단일 출처. 버튼과 무대의 T 단축키가 모두 이 상태를 바꾼다.
   useEffect(() => applyTheme(theme), [theme]);
-  useEffect(() => {
-    const mo = new MutationObserver(() => setTheme(readTheme()));
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => mo.disconnect();
-  }, []);
 
   useEffect(() => {
     const on = () => {
@@ -139,7 +134,7 @@ export function Shell() {
         <button
           type="button"
           className="btn shellnav__tools"
-          onClick={() => setTheme(NEXT_THEME[readTheme()])}
+          onClick={() => setTheme((t) => NEXT_THEME[t])}
         >
           테마: {THEME_LABEL[theme]}
         </button>
@@ -147,7 +142,16 @@ export function Shell() {
       {view === 'stage' && (
         <>
           <SourceBadge kind="sim" />
-          <App />
+          <App
+            onToggleTheme={() =>
+              setTheme((t) =>
+                t === 'dark' ||
+                (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+                  ? 'light'
+                  : 'dark',
+              )
+            }
+          />
         </>
       )}
       {view === 'run' && (

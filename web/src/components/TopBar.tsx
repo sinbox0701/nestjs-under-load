@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
-import type { ThemeChoice } from '../theme/theme';
 import {
   SCENARIO_IDS,
   SCENARIO_UI,
@@ -15,9 +14,6 @@ import { Icon } from './lib/icons';
 import { Seg } from './lib/Seg';
 
 export interface TopBarProps {
-  /** 테마 버튼은 셸(Shell)이 갖는다. 무대의 T 단축키 상태 호환을 위해 받기만 한다. */
-  theme?: ThemeChoice;
-  onThemeChange?: (t: ThemeChoice) => void;
   onKeys: () => void;
   /** 가짜 데이터 고지(시안·fixture 재생 중). */
   fakeNote: string | null;
