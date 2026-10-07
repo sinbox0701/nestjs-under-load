@@ -1,4 +1,4 @@
-import type { Opt } from '@mikro-orm/core';
+import { BigIntType, type Opt } from '@mikro-orm/core';
 import { Entity, PrimaryKey, Property } from '@mikro-orm/decorators/legacy';
 
 /** 필드 a~d 각각이 마지막으로 바뀐 문서 버전. field-merge가 "같은 필드 충돌"을 판정하는 근거다. */
@@ -52,7 +52,7 @@ export class Document {
   @Property({ type: 'timestamptz', fieldName: 'lease_until', nullable: true })
   leaseUntil?: Date | null;
 
-  /** acquire마다 +1. 만료된 보유자의 늦은 save를 막는 fencing 토큰. bigint는 문자열로 읽힌다. */
-  @Property({ type: 'bigint', default: 0 })
+  /** acquire마다 +1. 만료된 보유자의 늦은 save를 막는 fencing 토큰. BigIntType 기본 모드는 JS bigint 라 JSON 직렬화가 깨지므로 'string' 모드를 명시한다. */
+  @Property({ type: new BigIntType('string'), default: 0 })
   fence!: string & Opt;
 }

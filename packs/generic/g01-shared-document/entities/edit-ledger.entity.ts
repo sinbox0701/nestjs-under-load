@@ -1,4 +1,4 @@
-import type { Opt } from '@mikro-orm/core';
+import { BigIntType, type Opt } from '@mikro-orm/core';
 import { Entity, PrimaryKey, Property } from '@mikro-orm/decorators/legacy';
 
 export type EditResult = 'success';
@@ -12,7 +12,7 @@ export type EditResult = 'success';
  */
 @Entity({ tableName: 'g01_edit_ledger' })
 export class EditLedger {
-  @PrimaryKey({ type: 'bigint' })
+  @PrimaryKey({ type: new BigIntType('string') })
   id!: string;
 
   @Property({ type: 'uuid', fieldName: 'request_id', unique: true })
@@ -30,7 +30,7 @@ export class EditLedger {
   @Property({ type: 'text' })
   instance!: string;
 
-  @Property({ type: 'bigint', defaultRaw: 'pg_current_xact_id()::text::bigint' })
+  @Property({ type: new BigIntType('string'), defaultRaw: 'pg_current_xact_id()::text::bigint' })
   txid!: string & Opt;
 
   @Property({ type: 'timestamptz', fieldName: 'created_at', defaultRaw: 'clock_timestamp()' })

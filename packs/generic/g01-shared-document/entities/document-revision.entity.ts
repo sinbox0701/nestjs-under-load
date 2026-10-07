@@ -1,4 +1,4 @@
-import type { Opt } from '@mikro-orm/core';
+import { BigIntType, type Opt } from '@mikro-orm/core';
 import { Entity, PrimaryKey, Property } from '@mikro-orm/decorators/legacy';
 
 /**
@@ -9,7 +9,7 @@ import { Entity, PrimaryKey, Property } from '@mikro-orm/decorators/legacy';
  */
 @Entity({ tableName: 'g01_document_revision' })
 export class DocumentRevision {
-  @PrimaryKey({ type: 'bigint' })
+  @PrimaryKey({ type: new BigIntType('string') })
   id!: string;
 
   @Property({ type: 'integer', fieldName: 'document_id' })
@@ -30,7 +30,7 @@ export class DocumentRevision {
   @Property({ type: 'integer' })
   version!: number;
 
-  @Property({ type: 'bigint', defaultRaw: 'pg_current_xact_id()::text::bigint' })
+  @Property({ type: new BigIntType('string'), defaultRaw: 'pg_current_xact_id()::text::bigint' })
   txid!: string & Opt;
 
   @Property({ type: 'timestamptz', fieldName: 'created_at', defaultRaw: 'clock_timestamp()' })
