@@ -383,7 +383,8 @@ exports[`AC-4 상수 > 스냅샷: 상수 표 전체 1`] = `
     "chaos",
     "coldStart",
     "k6Script.hash",
-    "stack.profiles"
+    "stack.profiles",
+    "strategy.params"
   ],
   "AXIS_PATHS": [
     "topology.appInstances",

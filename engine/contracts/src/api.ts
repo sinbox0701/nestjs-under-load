@@ -36,7 +36,8 @@ export const ALLOWED_HOSTS = ['127.0.0.1:4000', 'localhost:4000', 'orchestrator:
 // ─────────────────────────────── 비교 조건(§7.3 + D1) ───────────────────────────────
 
 /**
- * blocking 비교 조건 경로(DESIGN §7.3 순서 + D1 `stack.profiles`). `strategy` 는 넣지 않는다.
+ * blocking 비교 조건 경로(DESIGN §7.3 순서 + D1 `stack.profiles`). `strategy.id` 는 넣지 않는다(배치마다 달라도 되는 축).
+ * `strategy.params` 는 STRATEGY_SCOPED_PATHS 라서 같은 strategy id 그룹 안에서만 비교한다.
  * §7.3 의 `proxy` 는 메타데이터에서 `topology.proxy` 이고 `topology` 가 이미 덮으므로 따로 두지 않는다.
  * 경로 아래 값이 다르면 그 잎 경로(예: `load.vus`)를 diff 로 보고한다.
  */
@@ -59,12 +60,14 @@ export const COMPARABLE_PATHS = [
   'coldStart',
   'k6Script.hash',
   'stack.profiles',
+  'strategy.params',
 ] as const;
 export type ComparablePath = (typeof COMPARABLE_PATHS)[number];
 
 /**
- * strategy 에 딸린 비교 경로. 두 배치의 strategy id 가 다르면 이 경로(와 그 아래)의 차이는 비교 조건에서 제외한다
- * (예: row-lock 의 `timeouts.lockMs=1000` 과 no-lock 의 null). 같은 strategy 끼리는 그대로 blocking.
+ * strategy 에 딸린 비교 경로. N(2~3)배치 중 strategy id 가 같은 배치끼리만 이 경로(와 그 아래)를 비교하고,
+ * id 가 다른 배치와의 차이는 비교 조건에서 제외한다(예: row-lock 의 `timeouts.lockMs=1000` 과 no-lock 의 null).
+ * 같은 id 그룹 안에서 값이 다르면 blocking(예: redis-lock ttlMs 3000 vs 5000).
  */
 export const STRATEGY_SCOPED_PATHS = ['strategy.params', 'timeouts.lockMs'] as const;
 

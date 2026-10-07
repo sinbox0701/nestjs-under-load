@@ -225,6 +225,8 @@ describe('AC-4 상수', () => {
     assert.equal(c.COMMON_PHASES.length, 23);
     assert.deepEqual([...c.AXIS_PATHS], ['topology.appInstances', 'instrumentation', 'pgProbe.enabled', 'interventions']);
     assert.equal(c.COMPARABLE_PATHS.includes('strategy'), false);
+    assert.equal(c.COMPARABLE_PATHS.includes('strategy.id'), false);
+    assert.equal(c.COMPARABLE_PATHS.includes('strategy.params'), true);
     assert.deepEqual([...c.STRATEGY_SCOPED_PATHS], ['strategy.params', 'timeouts.lockMs']);
     assert.equal(c.LAB_EVENT_SINK, 'LAB_EVENT_SINK');
     assert.equal(c.NOOP_EVENT_SINK.enabled, false);
