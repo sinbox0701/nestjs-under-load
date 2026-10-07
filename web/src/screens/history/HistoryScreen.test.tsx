@@ -76,7 +76,11 @@ describe('HistoryScreen unstable 배지 문구', () => {
     const api = createApi({ mock: true });
     render(
       <HistoryScreen
-        api={{ ...api, getBatch: async () => ({ ...fixtures.batch, reps: 5, badges: ['unstable'] }) as BatchSummary }}
+        api={{
+          ...api,
+          getBatch: async () =>
+            ({ ...fixtures.batch, reps: 5, badges: ['unstable'] }) as BatchSummary,
+        }}
       />,
     );
     expect(await screen.findByText('5회 편차 큼')).toBeInTheDocument();

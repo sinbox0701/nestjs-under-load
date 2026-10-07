@@ -191,7 +191,10 @@ function Throughput({ batches, comparable }: { batches: BatchSummary[]; comparab
   return (
     <section className="panel cx__sec" data-section="throughput" aria-labelledby="cx-tp">
       <h2 className="panel__h" id="cx-tp">
-        3. 처리량·지연 <span className="meta">숫자 옆은 {Math.max(...batches.map((b) => b.reps))}회 범위(최소–최대)</span>
+        3. 처리량·지연{' '}
+        <span className="meta">
+          숫자 옆은 {Math.max(...batches.map((b) => b.reps))}회 범위(최소–최대)
+        </span>
       </h2>
       {!comparable && (
         <p className="dim" data-testid="no-rank">
