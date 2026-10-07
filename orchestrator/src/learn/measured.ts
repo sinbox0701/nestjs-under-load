@@ -69,12 +69,15 @@ export function batchKey(md: Md) {
   const zipf = /^zipf\(([\d.]+)\)$/.exec(dist);
   return {
     strategy: md.strategy.id as string,
+    params: (md.strategy.params ?? {}) as Record<string, unknown>,
     appInstances: md.topology.appInstances as number,
     model: md.load.model as string,
     rate: (md.load.rate ?? null) as number | null,
     vus: (md.load.vus ?? null) as number | null,
-    products: md.data?.rows?.products ?? md.data?.seedOptions?.products,
-    stockPerProduct: md.data?.stockPerProduct ?? md.data?.seedOptions?.stockPerProduct,
+    products: (md.data?.rows?.products ?? md.data?.seedOptions?.products) as number | undefined,
+    stockPerProduct: (md.data?.stockPerProduct ?? md.data?.seedOptions?.stockPerProduct) as number | undefined,
+    documents: (md.data?.rows?.documents ?? md.data?.seedOptions?.documents) as number | undefined,
+    editMs: md.data?.scenarioParams?.editMs as number | undefined,
     distribution: zipf ? 'zipf' : dist,
     zipfS: zipf ? Number(zipf[1]) : null,
     chaos: interventions.every(isContentionWindow) && (md.chaos ?? []).length === 0 ? 'none' : 'some',
@@ -82,23 +85,37 @@ export function batchKey(md: Md) {
   };
 }
 
-/** learn.yaml situations 중 batch 조건과 맞는 것. 0개나 2개 이상이면 null(쓰지 않음). */
-export function matchSituation(situations: Situation[], key: ReturnType<typeof batchKey>): Situation | null {
+const sortedJson = (v: unknown) =>
+  JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
+
+/** strategy 별 manifest 기본 파라미터. 대응 비교는 기본값을 덧씌운 실효 파라미터로 한다. */
+export type StrategyDefaults = Record<string, Record<string, unknown>>;
+
+/**
+ * learn.yaml situations 중 batch 조건과 맞는 것. 0개나 2개 이상이면 null(쓰지 않음). 값이 없는 키는 null 로 보고 null 끼리만 같다.
+ * strategy 파라미터: situation.params[strategy] 가 있으면 그 값이, 없으면(params 없음 또는 다른 strategy 용) manifest 기본값이 기준이다.
+ * scripts/measured.mjs 와 같은 규칙이다(둘을 같이 고친다).
+ */
+export function matchSituation(situations: Situation[], key: ReturnType<typeof batchKey>, defaults: StrategyDefaults = {}): Situation | null {
   const hits = situations.filter((s) => {
     const kind = s.data?.distribution?.kind ?? 'uniform';
     const sameLoad =
       s.load?.model === key.model && (key.model === 'open' ? s.load?.rate === key.rate : (s.load?.vus ?? null) === key.vus);
+    const base = defaults[key.strategy] ?? {};
+    const wantParams = { ...base, ...(s.params?.[key.strategy] ?? {}) };
     return (
       s.instances === key.appInstances &&
       sameLoad &&
-      s.data?.products === key.products &&
-      s.data?.stockPerProduct === key.stockPerProduct &&
+      (s.data?.products ?? null) === (key.products ?? null) &&
+      (s.data?.stockPerProduct ?? null) === (key.stockPerProduct ?? null) &&
+      (s.data?.documents ?? null) === (key.documents ?? null) &&
+      (s.scenarioParams?.editMs ?? null) === (key.editMs ?? null) &&
       kind === key.distribution &&
       (kind !== 'zipf' || s.data.distribution.s === key.zipfS) &&
       (s.chaos ?? 'none') === 'none' &&
       key.chaos === 'none' &&
       (s.injected?.contentionWindowMs ?? 0) === key.contentionWindowMs &&
-      !s.params
+      sortedJson({ ...base, ...key.params }) === sortedJson(wantParams)
     );
   });
   return hits.length === 1 ? hits[0]! : null;
@@ -117,8 +134,11 @@ function conditionsText(md: Md, situation: Situation, reps: number): string {
     `로컬 맥(${h.cpu ?? '?'}, Docker ${h.dockerNcpu ?? '?'} vCPU / ${memGiB} GiB, profile ${md.profile}, cpuset ${md.limits?.app?.cpuset ?? 'none'})`,
     `app ${md.topology.appInstances}대(각 cpus ${md.limits?.app?.cpus ?? '?'}) · postgres cpus ${md.limits?.postgres?.cpus ?? '?'} · nginx round-robin`,
     loadText,
-    `상품 ${key.products}개 × 재고 ${key.stockPerProduct}, ${key.distribution === 'zipf' ? `zipf(${key.zipfS}) 분포` : '균등 분포'}, 요청당 ${md.data?.qtyPerOrder ?? md.data?.scenarioParams?.qty ?? '?'}개`,
+    key.documents != null
+      ? `문서 ${key.documents}개, ${key.distribution === 'zipf' ? `zipf(${key.zipfS}) 분포` : '균등 분포'}, 편집 ${key.editMs ?? '?'}ms`
+      : `상품 ${key.products}개 × 재고 ${key.stockPerProduct}, ${key.distribution === 'zipf' ? `zipf(${key.zipfS}) 분포` : '균등 분포'}, 요청당 ${md.data?.qtyPerOrder ?? md.data?.scenarioParams?.qty ?? '?'}개`,
     ...(key.contentionWindowMs > 0 ? [`경합 창 지연 ${key.contentionWindowMs}ms 주입됨(${CONTENTION_POINT}: 모든 strategy의 읽기 후 쓰기 전 같은 지점, 트랜잭션 안)`] : []),
+    ...(Object.keys(key.params).length > 0 ? [`strategy 파라미터 ${JSON.stringify(key.params)}`] : []),
     '절대 수치가 아니라 같은 조건의 strategy 간 상대 비교용',
   ].join(' · ');
 }
@@ -136,13 +156,13 @@ export function buildMeasured(mds: Md[], situation: Situation): Record<string, u
   const withViolation = valid.filter((f) => f.violationTotal > 0).length;
   const invIds = Object.keys(valid[0]!.violations);
   const violatedIds = invIds.filter((id) => valid.some((f) => (f.violations[id] ?? 0) > 0));
-  const totalStock = key.products * key.stockPerProduct;
+  const totalStock = key.products != null && key.stockPerProduct != null ? key.products * key.stockPerProduct : null;
   const fmtRange = (s: ReturnType<typeof spread>, unit: string) => (s ? `${s.median}${unit}(${s.min}~${s.max})` : '?');
   const violationText =
     withViolation === 0
       ? `위반 0 (${valid.length}/${valid.length}회)`
-      : `위반 ${withViolation}/${valid.length}회 발생(${violatedIds.map((id) => `${id} 상품 ${valid.map((f) => f.violations[id] ?? 0).join('·')}개`).join(', ')})`;
-  const ledgerText = `원장 성공 ${valid.map((f) => f.ledgerSuccess ?? '?').join('·')}건 / 총재고 ${totalStock}`;
+      : `위반 ${withViolation}/${valid.length}회 발생(${violatedIds.map((id) => `${id} ${key.documents != null ? '' : '상품 '}${valid.map((f) => f.violations[id] ?? 0).join('·')}${key.documents != null ? '건' : '개'}`).join(', ')})`;
+  const ledgerText = `원장 성공 ${valid.map((f) => f.ledgerSuccess ?? '?').join('·')}건${totalStock != null ? ` / 총재고 ${totalStock}` : ''}`;
   const excluded = facts.length - valid.length;
   return {
     run: md.batchId,
@@ -173,12 +193,12 @@ export function buildMeasured(mds: Md[], situation: Situation): Record<string, u
  * 같은 (strategy, situation) 에 batch 가 여럿 대응하면 **유효 반복 수가 가장 많은 batch**, 동률이면 최신을 쓴다
  * (1회짜리 임시 batch 가 3회 batch 를 덮지 않게 한다).
  */
-export function computeMeasuredCells(situations: Situation[], batchesNewestFirst: Md[][]): MeasuredCell[] {
+export function computeMeasuredCells(situations: Situation[], batchesNewestFirst: Md[][], defaults: StrategyDefaults = {}): MeasuredCell[] {
   const cells = new Map<string, MeasuredCell & { validReps: number }>();
   for (const mds of batchesNewestFirst) {
     if (mds.length === 0) continue;
     const key = batchKey(mds[0]!);
-    const situation = matchSituation(situations, key);
+    const situation = matchSituation(situations, key, defaults);
     if (!situation) continue;
     const measured = buildMeasured(mds, situation);
     if (!measured) continue;

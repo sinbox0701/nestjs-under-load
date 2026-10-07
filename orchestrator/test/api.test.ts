@@ -13,7 +13,7 @@ import { ScenarioInfoSchema, type BatchSummary, type RunConfigV1, type RunRow } 
 
 import { loadPackCatalog, registerApiRoutes, createRunConfigBoard } from '../dist/api/index.js';
 import { createRouters, startHttpServers } from '../dist/http/index.js';
-import { computeMeasuredCells, runFacts } from '../dist/learn/index.js';
+import { batchKey, buildMeasured, computeMeasuredCells, matchSituation, runFacts } from '../dist/learn/index.js';
 import type { K6Runner, MetadataStore, RunEngine, StartResult } from '../dist/ports.js';
 
 const repoDir = path.resolve(import.meta.dirname, '../..');
@@ -371,6 +371,52 @@ describe('C2 API', () => {
 
   it('공개 리스너에는 /internal 라우트가 없다', async () => {
     assert.equal((await call(pub, 'GET', '/internal/run-config?instance=a')).status, 404);
+  });
+});
+
+describe('learn measured 계산 (G01·closed·params)', () => {
+  const g01 = loadPackCatalog(repoDir).learnSituations('g01-shared-document')!;
+  const mkG01 = (o: { strategy?: string; params?: Record<string, unknown>; instances?: number; vus?: number; documents?: number | null; editMs?: number | null; dist?: string }) => {
+    const m = clone(md1);
+    Object.assign(m, { runId: 'g_r1', batchId: 'g', repetition: 1, strategy: { id: o.strategy ?? 'naive-overwrite', params: o.params ?? {} } });
+    m.topology.appInstances = o.instances ?? 2;
+    m.load = { ...m.load, model: 'closed', vus: o.vus ?? 20, rate: null, duration: '30s' };
+    m.interventions = [];
+    m.data.rows = {};
+    m.data.seedOptions = o.documents === null ? {} : { documents: o.documents ?? 1 };
+    m.data.distribution = o.dist ?? 'uniform';
+    m.data.scenarioParams = o.editMs === null ? {} : { editMs: o.editMs ?? 50 };
+    return m;
+  };
+  const idOf = (o: Parameters<typeof mkG01>[0], defaults?: Record<string, Record<string, unknown>>) => matchSituation(g01, batchKey(mkG01(o)), defaults)?.id ?? null;
+
+  it('vus·documents·editMs 로 situation 에 대응하고, 기록이 없으면 채우지 않는다', () => {
+    assert.equal(idOf({ instances: 1, vus: 2 }), 'two-people-one-doc');
+    assert.equal(idOf({}), 'twenty-people-one-doc');
+    assert.equal(idOf({ documents: 100, dist: 'zipf(1.1)' }), 'zipf-100-docs');
+    assert.equal(idOf({ editMs: 80 }), null);
+    assert.equal(idOf({ documents: null, editMs: null }), null);
+  });
+
+  it('lease-short-ttl: edit-lease 는 ttlMs=100 일 때만, 다른 strategy 는 기본 파라미터로 같은 부하에 대응', () => {
+    const base = { instances: 1, vus: 5, editMs: 150 };
+    assert.equal(idOf({ ...base, strategy: 'edit-lease', params: { ttlMs: 100 } }), 'lease-short-ttl');
+    assert.equal(idOf({ ...base, strategy: 'edit-lease' }), null);
+    assert.equal(idOf({ ...base, strategy: 'optimistic-version' }), 'lease-short-ttl');
+    // manifest 기본값을 넘기면 기본값을 덧씌워 비교한다
+    assert.equal(idOf({ ...base, strategy: 'edit-lease', params: { ttlMs: 100, retryAfterMs: 1000 } }, { 'edit-lease': { ttlMs: 30000, retryAfterMs: 1000 } }), 'lease-short-ttl');
+  });
+
+  it('buildMeasured: 총재고 없이 원장 성공·문서 조건을 적는다', () => {
+    const s = g01.find((x: any) => x.id === 'twenty-people-one-doc')!;
+    const m = clone(mkG01({}));
+    m.k6 = { requests: 3000, throughputRps: 100, httpFailures: 0, dropped: 0, latencyMs: { success: { p95: 3 } } };
+    m.invariants = [{ id: 'no-lost-update', severity: 'critical', violations: 3 }, { id: 'ledger-matches-k6', severity: 'info', violations: null, value: { success: 700, total: 757 } }];
+    const cell = buildMeasured([m], s)!;
+    assert.match(String(cell.summary), /no-lost-update 3건/);
+    assert.match(String(cell.summary), /원장 성공 700건 · /);
+    assert.doesNotMatch(String(cell.summary), /총재고|NaN/);
+    assert.match(String(cell.conditions), /문서 1개, 균등 분포, 편집 50ms/);
   });
 });
 
