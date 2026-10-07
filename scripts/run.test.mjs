@@ -99,12 +99,24 @@ describe('parseCliArgs', () => {
 });
 
 describe('buildPlan', () => {
-  it('기본: 4 strategy × 앱 2대 × 3회 + app-memory-lock 앱 1대 × 3회', () => {
+  it('기본: requires 없는 strategy × 앱 2대 × 3회 + app-memory-lock 앱 1대 × 3회', () => {
     const plan = buildPlan(parseCliArgs([]), G02);
-    assert.equal(plan.length, 15);
+    const plain = G02.strategies.filter((s) => !s.requires?.length).map((s) => s.id);
+    assert.equal(plan.length, plain.length * 3 + 3);
+    assert.deepEqual(new Set(plan.map((p) => p.strategy)), new Set(plain));
+    assert.ok(!plan.some((p) => p.strategy === 'redis-lock'));
     const memSingle = plan.filter((p) => p.strategy === 'app-memory-lock' && p.appInstances === 1);
     assert.deepEqual(memSingle.map((p) => p.repetition), [1, 2, 3]);
-    assert.deepEqual(new Set(plan.map((p) => p.strategy)), new Set(['no-lock', 'app-memory-lock', 'row-lock', 'conditional-update']));
+    assert.deepEqual(new Set(plan.map((p) => p.strategy)), new Set(['no-lock', 'app-memory-lock', 'row-lock', 'conditional-update', 'advisory-xact-lock']));
+  });
+
+  it('--strategies redis-lock 명시 시 plan 에 들어가고 RunConfig 에 redis 설정이 실린다', () => {
+    const opts = parseCliArgs(['--strategies', 'redis-lock', '--reps', '1']);
+    const plan = buildPlan(opts, G02);
+    assert.deepEqual(plan, [{ strategy: 'redis-lock', appInstances: 2, repetition: 1 }]);
+    const requires = G02.strategies.find((s) => s.id === 'redis-lock').requires;
+    const rc = buildRunConfig({ runId: 'r', batchId: 'b', repetition: 1, scenario: 'g02-stock-decrement', strategy: 'redis-lock', strategyParams: defaultStrategyParams(G02, 'redis-lock'), opts, requires });
+    assert.deepEqual(rc.redis, { host: 'redis', port: 6379 });
   });
 
   it('같은 케이스의 반복은 연속으로 배치된다', () => {
@@ -121,7 +133,7 @@ describe('buildPlan', () => {
   });
 
   it('manifest에 없는 strategy는 거부', () => {
-    assert.throws(() => buildPlan(parseCliArgs(['--strategies', 'redis-lock']), G02), /manifest에 없는 strategy/);
+    assert.throws(() => buildPlan(parseCliArgs(['--strategies', 'no-such-strategy']), G02), /manifest에 없는 strategy/);
   });
 });
 

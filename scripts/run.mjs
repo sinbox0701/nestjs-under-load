@@ -42,7 +42,7 @@ export const SCENARIOS = {
 
 export const DEFAULTS = Object.freeze({
   scenario: 'g02-stock-decrement',
-  strategies: null, // null = manifest의 전체 strategy
+  strategies: null, // null = manifest에서 requires 가 없는 strategy
   instances: [2],
   memoryLockSingle: true,
   reps: 3,
@@ -65,7 +65,7 @@ export const DEFAULTS = Object.freeze({
 const USAGE = `사용법: node scripts/run.mjs [옵션]
 
   --scenario <id>             기본 ${DEFAULTS.scenario}
-  --strategies <a,b,...>      기본: manifest의 전체 strategy
+  --strategies <a,b,...>      기본: manifest에서 requires 가 없는 strategy(redis-lock 등은 명시해야 실행)
   --instances <n[,m]>         앱 인스턴스 수 목록, 기본 2 (1~3)
   --no-memory-lock-single     app-memory-lock 앱 1대 대조 실행을 빼기(기본: 추가)
   --reps <n>                  반복 횟수, 기본 3
@@ -207,7 +207,8 @@ export function defaultStrategyParams(manifest, strategyId) {
  */
 export function buildPlan(opts, manifest) {
   const known = manifest.strategies.map((s) => s.id);
-  const strategies = opts.strategies ?? known;
+  // 기본 plan 은 외부 의존(requires, 예: redis)이 없는 strategy 만. requires 가 있는 것은 --strategies 로 명시했을 때만 돈다.
+  const strategies = opts.strategies ?? manifest.strategies.filter((s) => !s.requires?.length).map((s) => s.id);
   const unknown = strategies.filter((s) => !known.includes(s));
   if (unknown.length) throw new Error(`manifest에 없는 strategy: ${unknown.join(', ')} (가능: ${known.join(', ')})`);
 
@@ -267,7 +268,14 @@ export function templateDbName(scenario, seedHash) {
   return `tpl_${SCENARIO_SHORT(scenario)}_${seedHash.slice('sha256:'.length, 'sha256:'.length + 12)}`;
 }
 
-export function buildRunConfig({ runId, batchId, repetition, scenario, strategy, strategyParams, opts }) {
+// compose 의 redis 서비스(lab-net). C1 RunConfig.redis 형태.
+export const REDIS_CONFIG = Object.freeze({ host: 'redis', port: 6379 });
+
+/**
+ * requires 에 'redis' 가 있으면 RunConfig.redis 를 싣는다. 없으면 키 자체를 넣지 않는다(0단계 경로 보존).
+ * 주의: 앱 쪽 G02Module.register 에 redis 를 넘기는 배선은 T-137 몫이라, 그 전에는 redis-lock 앱 부팅이 실패할 수 있다.
+ */
+export function buildRunConfig({ runId, batchId, repetition, scenario, strategy, strategyParams, opts, requires = [] }) {
   return {
     runId,
     batchId,
@@ -278,6 +286,7 @@ export function buildRunConfig({ runId, batchId, repetition, scenario, strategy,
     instrumentation: opts.instrumentation,
     injectDelay: opts.injectDelay,
     pool: { min: 2, max: 10 },
+    ...(requires.includes('redis') ? { redis: { ...REDIS_CONFIG } } : {}),
   };
 }
 
@@ -745,7 +754,7 @@ export async function runSession(opts, { log = console.log } = {}) {
 
     // 4) RunConfig 게시 → app restart
     step('RunConfig 기록');
-    const runConfig = buildRunConfig({ runId, batchId, repetition: p.repetition, scenario: opts.scenario, strategy: p.strategy, strategyParams, opts });
+    const runConfig = buildRunConfig({ runId, batchId, repetition: p.repetition, scenario: opts.scenario, strategy: p.strategy, strategyParams, opts, requires: manifest.strategies.find((x) => x.id === p.strategy)?.requires ?? [] });
     log(`    ${JSON.stringify(runConfig)}`);
     if (!opts.dryRun) {
       writeJsonAtomic(path.join(ACTIVE_DIR, 'run-config.json'), runConfig);
