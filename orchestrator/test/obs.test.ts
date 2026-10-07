@@ -194,11 +194,13 @@ describe('ObsClient', () => {
   });
 });
 
-// ── 실제 Prometheus 통합: 컨테이너를 pause 해 스크레이프 공백을 만든다. 도커·이미지가 없으면 skip ──
+// ── 실제 Prometheus 통합: 컨테이너를 pause 해 스크레이프 공백을 만든다(약 30초). NUL_TEST_PROM=1 일 때만 돌고, 도커·이미지가 없어도 skip ──
 const PROM_IMAGE = 'prom/prometheus:v3.5.0';
-const PROM_NAME = 'nul-t114-prom';
+/** 병행 worktree 게이트끼리 겹치지 않게 실행마다 고유한 이름 */
+const PROM_NAME = `nul-t114-prom-${process.pid}-${Date.now()}`;
 const docker = (...args: string[]) => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const dockerReady = (() => {
+  if (process.env.NUL_TEST_PROM !== '1') return false;
   try {
     docker('image', 'inspect', PROM_IMAGE);
     return true;
@@ -222,7 +224,7 @@ async function retry<T>(fn: () => Promise<T>, tries = 100, ms = 300): Promise<T>
   throw last;
 }
 
-describe('ObsClient × 실제 Prometheus', { skip: dockerReady ? false : '도커 또는 이미지 없음', timeout: 120_000 }, () => {
+describe('ObsClient × 실제 Prometheus', { skip: dockerReady ? false : 'NUL_TEST_PROM=1 이고 도커·이미지가 있을 때만 실행', timeout: 120_000 }, () => {
   let promUrl = '';
 
   before(async () => {
