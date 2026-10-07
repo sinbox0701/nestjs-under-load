@@ -18,10 +18,14 @@ function trend(m: Metric | undefined, fallbackN: number): K6Summary['latencyMs']
   };
 }
 
-export function parseSummary(summary: unknown): K6Summary {
+/**
+ * mainDurationSec: 요청한 본 실행 길이(초). 주면 throughputRps = http_reqs.count / 이 값(0단계 measured.mjs 정의).
+ * k6 의 http_reqs.rate 는 gracefulStop 포함 전체 구간 기준이라 포화 시 낮게 나오므로, 없을 때만 대신 쓴다.
+ */
+export function parseSummary(summary: unknown, mainDurationSec?: number): K6Summary {
   const m = ((summary as { metrics?: Record<string, Metric> } | null)?.metrics ?? {}) as Record<string, Metric>;
   const requests = field(m.http_reqs, 'count') ?? 0;
-  const rate = field(m.http_reqs, 'rate') ?? 0;
+  const rate = mainDurationSec && mainDurationSec > 0 ? requests / mainDurationSec : (field(m.http_reqs, 'rate') ?? 0);
   const failedTrend = m['http_req_duration{expected_response:false}'];
   // http_req_failed 는 Rate: passes = 실패(true) 횟수
   const httpFailures = field(m.http_req_failed, 'passes') ?? field(failedTrend, 'count') ?? Math.round((field(m.http_req_failed, 'rate') ?? 0) * requests);

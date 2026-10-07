@@ -228,6 +228,15 @@ describe('k6 실행기 클라이언트', () => {
     });
   });
 
+  it('throughputRps: 본 실행 길이를 주면 http_reqs.count / 길이, 안 주면 k6 rate', async () => {
+    const file = join(dir, 'summary3.json');
+    // 포화로 gracefulStop 까지 늘어나 rate(2100/43.2s≈48.6)가 낮게 잡힌 경우
+    await writeFile(file, JSON.stringify({ metrics: { http_reqs: { values: { count: 2100, rate: 48.6 } } } }));
+    const { runner } = make();
+    assert.equal((await runner.readSummary(file, 30)).throughputRps, 70);
+    assert.equal((await runner.readSummary(file)).throughputRps, 48.6);
+  });
+
   it('summary: 실패 서브메트릭이 없고 count 도 없는 신버전 평탄 모양', async () => {
     const file = join(dir, 'summary2.json');
     await writeFile(
