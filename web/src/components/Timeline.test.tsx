@@ -41,6 +41,28 @@ describe('Timeline', () => {
     expect(legend.querySelector('.bd-ac')).not.toBeNull();
   });
 
+  it('라이브 기록(g02 이벤트만, 띠 없음)의 범례에는 g01 전용 띠가 없다', () => {
+    const g02 = buildRecording({ scenario: 'g02-stock-decrement', strategy: 'row-lock' });
+    const { txBands: _b, txMarks: _m, ...bare } = g02;
+    const lp = prepare(bare);
+    render(
+      <Timeline
+        {...props({
+          prepared: lp,
+          scenario: 'g02-stock-decrement',
+          strategyId: 'row-lock',
+          rows: buildRows(lp.events, { view: 'key', off: new Set() }, { info: lp.info }),
+          P: lp.total,
+        })}
+      />,
+    );
+    const legend = screen.getByLabelText('레인 범례');
+    expect(within(legend).queryByText(/편집 = 사람 시간/)).toBeNull();
+    expect(within(legend).queryByText(/acquire·release/)).toBeNull();
+    expect(within(legend).queryByText('편집 잠금 보유')).toBeNull();
+    expect(legend.querySelector('.bd-ed, .bd-ac, .bd-ls')).toBeNull();
+  });
+
   it('반복은 ×N으로 묶고, 행마다 라운드 기준 실제 ms', () => {
     render(<Timeline {...props({ view: 'all' })} />);
     const rows = screen.getAllByRole('listitem');

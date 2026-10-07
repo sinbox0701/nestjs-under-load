@@ -107,7 +107,7 @@ export function Shell() {
   const mock = useMock();
   const api = useMemo(() => createApi({ mock }), [mock]);
 
-  // 무대 화면(App)은 자기 테마 버튼을 갖는다. 다른 화면에서 바로 열어도 저장된 테마가 적용되게 여기서도 맞춘다.
+  // 테마 상태의 단일 출처. 버튼과 무대의 T 단축키가 모두 이 상태를 바꾼다.
   useEffect(() => applyTheme(theme), [theme]);
 
   useEffect(() => {
@@ -134,7 +134,7 @@ export function Shell() {
         <button
           type="button"
           className="btn shellnav__tools"
-          onClick={() => setTheme(NEXT_THEME[readTheme()])}
+          onClick={() => setTheme((t) => NEXT_THEME[t])}
         >
           테마: {THEME_LABEL[theme]}
         </button>
@@ -142,7 +142,16 @@ export function Shell() {
       {view === 'stage' && (
         <>
           <SourceBadge kind="sim" />
-          <App />
+          <App
+            onToggleTheme={() =>
+              setTheme((t) =>
+                t === 'dark' ||
+                (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+                  ? 'light'
+                  : 'dark',
+              )
+            }
+          />
         </>
       )}
       {view === 'run' && (
@@ -150,6 +159,7 @@ export function Shell() {
           key={query}
           api={api}
           search={query}
+          // session 은 읽지 않는다: 서버 속 화면(LiveScreen)이 현재 세션을 구독하므로 링크 형태만 유지한다.
           sessionHref={(id) => `#live?session=${encodeURIComponent(id)}`}
         />
       )}

@@ -235,12 +235,25 @@ export function legendOf(
   rec: Recording | null,
   scenario: ScenarioId,
   strategyId: string,
+  info?: (p: Phase) => PhaseInfo,
 ): LegendItem[] {
   const text = LEGEND_TEXT[scenario];
   const lease = strategyId === 'edit-lease';
-  const kinds: TxBandKind[] = rec?.txBands
-    ? [...new Set(rec.txBands.map((b) => (b.kind === 'tx-rollback' ? 'tx' : b.kind)))]
-    : scenario === 'g01-shared-document'
+  // 띠가 없는 기록(라이브 이벤트만)은 시나리오 기본 목록 대신 실제 이벤트에서 나온 표시만 보인다.
+  const live = !!rec && !rec.txBands && !rec.txMarks && !!info;
+  const seen = new Set<'ok' | 'bad' | 'wait'>();
+  if (live)
+    for (const e of rec.events) {
+      const i = info(e.phase);
+      if (i.tone === 'ok' && i.group === 'commit') seen.add('ok');
+      else if (i.tone === 'bad') seen.add('bad');
+      else if (i.tone === 'wait' && i.group === 'lock') seen.add('wait');
+    }
+  const kinds: TxBandKind[] = live
+    ? []
+    : rec?.txBands
+      ? [...new Set(rec.txBands.map((b) => (b.kind === 'tx-rollback' ? 'tx' : b.kind)))]
+      : scenario === 'g01-shared-document'
       ? [
           'read',
           'edit',
@@ -261,6 +274,16 @@ export function legendOf(
   const items: LegendItem[] = order
     .filter((k) => kinds.includes(k))
     .map((k) => ({ cls: BAND_CLS[k], text: text[k] ?? k }));
+  if (live) {
+    if (seen.has('ok')) items.push({ cls: 'mark ok', text: '커밋' });
+    if (seen.has('bad'))
+      items.push({
+        cls: 'mark bad',
+        text: scenario === 'g01-shared-document' ? '409·위반' : '롤백·위반',
+      });
+    if (seen.has('wait')) items.push({ cls: 'mark wait', text: lease ? '423' : '락 대기' });
+    return items;
+  }
   items.push(
     { cls: 'mark ok', text: '커밋' },
     { cls: 'mark bad', text: scenario === 'g01-shared-document' ? '409·위반' : '롤백·위반' },

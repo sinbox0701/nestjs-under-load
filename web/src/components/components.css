@@ -189,26 +189,6 @@
   width: 16px;
   height: 16px;
 }
-.nav {
-  display: flex;
-  gap: 2px;
-  flex-wrap: wrap;
-}
-.nav a {
-  padding: 4px 8px;
-  text-decoration: none;
-  color: var(--dim);
-  font: 12px/16px var(--f-ui);
-  clip-path: var(--notch);
-}
-.nav a:hover {
-  color: var(--fg);
-  background: var(--sunk);
-}
-.nav a[aria-current='page'] {
-  color: var(--sel-fg);
-  background: var(--sel-bg);
-}
 .appbar .tools {
   margin-left: auto;
   display: flex;

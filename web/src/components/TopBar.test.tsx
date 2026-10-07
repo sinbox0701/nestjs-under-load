@@ -4,22 +4,15 @@ import { defaultConfig } from './lib/config';
 import { KeysOverlay, RunControls, TopBar } from './TopBar';
 
 describe('TopBar', () => {
-  it('가짜 데이터 고지 칩, 단축키·테마', () => {
+  it('가짜 데이터 고지 칩, 단축키 — 화면 탭·테마 버튼은 셸 몫이라 없다', () => {
     const onKeys = vi.fn();
-    const onTheme = vi.fn();
-    render(
-      <TopBar
-        theme="system"
-        onThemeChange={onTheme}
-        onKeys={onKeys}
-        fakeNote="시뮬레이션 기록(실측 아님)"
-      />,
-    );
+    render(<TopBar onKeys={onKeys} fakeNote="시뮬레이션 기록(실측 아님)" />);
     expect(screen.getByText('시뮬레이션 기록(실측 아님)')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /단축키/ }));
-    fireEvent.click(screen.getByRole('button', { name: /테마/ }));
     expect(onKeys).toHaveBeenCalled();
-    expect(onTheme).toHaveBeenCalledWith('light');
+    expect(screen.queryByRole('navigation')).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.queryByRole('button', { name: /테마/ })).toBeNull();
   });
 });
 
