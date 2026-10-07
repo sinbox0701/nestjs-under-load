@@ -1,5 +1,6 @@
 // DbAdmin·InvariantRunner. SQL 기록 가짜로 순서를 확인하고, PG 통합은 대상이 없으면 skip 한다.
-// 통합 대상: NUL_TEST_PG_PORT(기본 55432) 의 127.0.0.1 PG(superuser postgres / postgres_local, shared_preload_libraries=pg_stat_statements).
+// 통합 대상: env NUL_TEST_PG_PORT 로 명시한 **일회용** 127.0.0.1 PG(superuser postgres / postgres_local,
+// shared_preload_libraries=pg_stat_statements). env 가 없으면 skip — 실행 중인 스택(55432)에는 절대 쓰지 않는다.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -72,6 +73,29 @@ describe('DbAdmin (SQL 기록)', () => {
   });
 });
 
+describe('ensureRoles 비밀번호', () => {
+  const existing = (log: string[]): PgConnect => async () => ({
+    query: async (sql) => {
+      log.push(sql);
+      return { rows: sql.startsWith('SELECT 1 FROM pg_roles') ? [{ '?column?': 1 }] : [] };
+    },
+    end: async () => {},
+  });
+
+  it('이미 있는 역할은 기본으로 비밀번호를 건드리지 않는다', async () => {
+    const log: string[] = [];
+    await createDbAdmin({ ...base, connect: existing(log) }).ensureRoles();
+    assert.ok(log.some((s) => s.startsWith('ALTER ROLE "lab_observer"')));
+    assert.ok(!log.some((s) => s.includes('PASSWORD')));
+  });
+
+  it('syncPasswords 면 덮어쓴다', async () => {
+    const log: string[] = [];
+    await createDbAdmin({ ...base, connect: existing(log), syncPasswords: true }).ensureRoles();
+    assert.equal(log.filter((s) => s.startsWith('ALTER ROLE') && s.includes('PASSWORD')).length, 2);
+  });
+});
+
 describe('InvariantRunner', () => {
   it('AC-4: G02 invariants.sql 파싱 결과가 run.mjs 와 같고 manifest 구간이 모두 있다', async () => {
     const text = readFileSync(path.join(REPO_ROOT, G02_REL, 'invariants.sql'), 'utf8');
@@ -137,15 +161,15 @@ describe('InvariantRunner', () => {
 
 // ───────────────────────── PG 통합(대상 없으면 skip) ─────────────────────────
 
-const PG_PORT = Number(process.env.NUL_TEST_PG_PORT ?? 55432);
+const PG_PORT = Number(process.env.NUL_TEST_PG_PORT ?? 0);
 const cfg = { host: '127.0.0.1', port: PG_PORT, adminUser: 'postgres', adminPassword: 'postgres_local', appUser: 'lab_app', observerUser: 'lab_observer', observerPassword: 'x', runDb: 'lab_run_t108' };
 
 describe('PG 통합', async () => {
   const connect = createPgConnect(cfg);
-  const reachable = await connect('postgres').then(
+  const reachable = PG_PORT > 0 && (await connect('postgres').then(
     (s) => s.end().then(() => true),
     () => false,
-  );
+  ));
 
   before(async () => {
     if (!reachable) return;

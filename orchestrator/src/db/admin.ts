@@ -18,6 +18,8 @@ export type DbAdminOptions = {
   exporterUser?: string;
   /** 기본 exporter_local(compose 의 EXPORTER_PASSWORD 와 같게 배선이 넘긴다) */
   exporterPassword?: string;
+  /** true 면 이미 있는 역할의 비밀번호도 덮어쓴다. 기본 false(없을 때만 비밀번호를 넣어 실행 중인 스택을 건드리지 않는다) */
+  syncPasswords?: boolean;
 };
 
 /** pg_stat_reset_shared 인자 7종(PG17). */
@@ -44,7 +46,8 @@ export function createDbAdmin(opts: DbAdminOptions): DbAdmin {
   async function ensureRole(user: string, password: string, connLimit: number): Promise<void> {
     await withSession(connect, 'postgres', async (s) => {
       const exists = (await s.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [user])).rows.length > 0;
-      const attrs = `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE CONNECTION LIMIT ${connLimit} PASSWORD ${quoteLiteral(password)}`;
+      const base = `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE CONNECTION LIMIT ${connLimit}`;
+      const attrs = !exists || opts.syncPasswords ? `${base} PASSWORD ${quoteLiteral(password)}` : base;
       await s.query(`${exists ? 'ALTER' : 'CREATE'} ROLE ${quoteIdent(user)} ${attrs}`);
       await s.query(`GRANT pg_monitor TO ${quoteIdent(user)}`);
     });
