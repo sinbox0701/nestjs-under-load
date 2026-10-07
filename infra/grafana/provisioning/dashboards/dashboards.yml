@@ -1,0 +1,13 @@
+# 대시보드 프로비저닝 provider. JSON 은 infra/grafana/dashboards/ 에 있고 컨테이너의 /var/lib/grafana/dashboards 로 마운트된다
+# (docker-compose.yml grafana 서비스: ../grafana/dashboards:/var/lib/grafana/dashboards:ro).
+apiVersion: 1
+providers:
+  - name: nul
+    type: file
+    orgId: 1
+    folder: nestjs-under-load
+    allowUiUpdates: false
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
