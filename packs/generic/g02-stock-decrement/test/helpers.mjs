@@ -22,17 +22,19 @@ const { G02_STRATEGIES, resolveStrategy } = require('../dist/strategy-registry.j
 const { LedgerWriter } = require('../dist/support/ledger.writer.js');
 const { createContentionWindow } = require('../dist/support/contention-window.js');
 const { seedG02 } = require('../dist/seed/index.js');
+const { NOOP_EVENT_SINK } = require('@under-load/contracts');
 
 export { G02_STRATEGIES, resolveStrategy };
 
 /** 요청 하나의 StrategyContext. 실제 컨트롤러처럼 요청마다 em을 fork 한다. */
-export function makeCtx(em, { params = {}, instance = 'app-1', delays = [] } = {}) {
+export function makeCtx(em, { params = {}, instance = 'app-1', delays = [], events = NOOP_EVENT_SINK } = {}) {
   return {
     em: em.fork(),
     params,
     instance,
     contentionWindow: createContentionWindow(delays),
     ledger: new LedgerWriter(instance),
+    events,
   };
 }
 
