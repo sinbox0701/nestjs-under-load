@@ -13,7 +13,7 @@ build/
 !.env.example
 
 # experiment run artifacts and local metadata
-runs/
+/runs/
 *.sqlite
 *.sqlite3
 *.db
