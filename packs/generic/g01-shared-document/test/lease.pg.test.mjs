@@ -140,6 +140,17 @@ describe('G01 edit-lease × 실제 PostgreSQL', { skip }, () => {
     assert.equal((await t.ledger()).length, 0);
   });
 
+  it('fence 는 숫자로 비교한다: "01" 로 와도 UPDATE 와 재조회 분류가 같은 판단(lease_expired)', async () => {
+    await t.reset();
+    const l = lease();
+    const a = await l.acquire('A');
+    assert.equal(a.fence, '1');
+    const seen = await t.read();
+    assert.equal((await l.save(withLease(saveCmd(seen), 'A', '01'))).ok, true, 'WHERE fence = \'01\' 은 bigint 비교라 통과');
+    await expire();
+    assert.deepEqual(await l.save(withLease(saveCmd(await t.read()), 'A', '01')), { ok: false, reason: 'lease_expired' });
+  });
+
   it('실제 TTL 경과(DB 시계)로 잠금이 풀린다 — release 없이 떠난 보유자', async () => {
     await t.reset();
     const l = lease({ ttlMs: 80 });

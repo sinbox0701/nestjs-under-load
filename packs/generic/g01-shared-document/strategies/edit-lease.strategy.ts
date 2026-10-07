@@ -65,6 +65,7 @@ export class EditLeaseStrategy implements G01Strategy<EditLeaseParams> {
     // @learn db-clock — 시각은 전부 DB 시계 clock_timestamp()로 잰다. 앱 서버 시계는 인스턴스마다 어긋나므로 쓰지 않는다.
     //   PostgreSQL 의 now 계열(transaction_timestamp)은 "트랜잭션 시작 시각"이라 한 트랜잭션 안에서 멈춰 있다.
     //   트랜잭션이 오래 열려 있었다면 그만큼 과거 시각으로 만료를 계산·비교하게 된다. clock_timestamp()는 호출한 순간의 실제 시각이다
+    //   statement_timestamp()는 문장 시작 시각이라 그 문제는 없지만 한 문장 안에서는 역시 멈춰 있다. 경과 시간을 재야 하면 clock_timestamp()
     const rows = await ctx.em // @learn acquire-autocommit — 트랜잭션 없이 UPDATE 한 문장(자동 커밋). 확인과 기록이 한 문장이라 '읽고 비었으면 쓰기' 경합이 없다
       .createQueryBuilder(Document)
       .update({
@@ -130,7 +131,8 @@ export class EditLeaseStrategy implements G01Strategy<EditLeaseParams> {
             [cmd.documentId],
           );
           if (!cur) throw NotFoundError.findOneFailed('Document', { id: cmd.documentId });
-          const lost = cur.locked_by !== lease.holder || cur.fence !== lease.fence;
+          // fence 는 bigint. 문자열로 비교하면 '01'과 '1'이 달라진다(UPDATE 의 WHERE 는 숫자로 비교해 통과하는데 분류만 틀어진다)
+          const lost = cur.locked_by !== lease.holder || BigInt(cur.fence) !== BigInt(lease.fence);
           throw new LeaseSaveRejected(
             { ok: false, reason: lost ? 'lease_lost' : 'lease_expired' },
             { lockedBy: cur.locked_by, fence: cur.fence, sentFence: lease.fence, currentVersion: cur.version },
