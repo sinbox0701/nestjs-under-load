@@ -1,0 +1,56 @@
+// Alloy v1.10: docker 컨테이너 로그 → Loki. trace 프로필(compose 서비스 alloy).
+// docker.sock(읽기) 로 컨테이너를 찾고, compose 라벨을 서비스 라벨로 옮긴다.
+
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // 라벨은 service·container 둘뿐이다(카디널리티). trace_id 는 아래에서 structured metadata 로 보낸다.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  // compose 서비스가 아닌 컨테이너는 수집하지 않는다.
+  rule {
+    source_labels = ["service"]
+    regex         = ""
+    action        = "drop"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.process.logs.receiver]
+}
+
+loki.process "logs" {
+  // app 은 pino JSON. trace_id 는 라벨이 아니라 structured metadata 로 붙인다.
+  stage.match {
+    selector = "{service=\"app\"}"
+
+    stage.json {
+      expressions = { trace_id = "trace_id" }
+    }
+    stage.structured_metadata {
+      values = { trace_id = "" }
+    }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

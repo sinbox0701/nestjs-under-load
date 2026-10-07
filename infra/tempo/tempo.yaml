@@ -1,0 +1,29 @@
+# Tempo 2.8 단일 바이너리. trace 프로필(compose 서비스 tempo).
+# app 이 OTLP/HTTP(4318)로 보내고 Grafana 가 3200 으로 조회한다. 저장은 로컬 디스크(named volume tempodata).
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  max_block_duration: 1m   # 실험 중 바로 조회되도록 블록을 짧게 자른다
+
+compactor:
+  compaction:
+    block_retention: 24h   # 로컬 실험용 보존 기간
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
