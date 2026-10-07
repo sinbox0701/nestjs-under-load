@@ -1,4 +1,5 @@
-# 0단계: 파일만 준비(--profile obs). app /metrics·exporter 스크레이프는 1단계에서 추가.
+# 1단계: --profile obs 에서 뜬다. app(dns_sd)·exporter·orchestrator 를 스크레이프한다.
+# k6는 experimental-prometheus-rw로 remote-write(--web.enable-remote-write-receiver)
 global:
   scrape_interval: 5s
   evaluation_interval: 5s
@@ -7,4 +8,35 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
-# k6는 experimental-prometheus-rw로 remote-write(--web.enable-remote-write-receiver)
+
+  # app 은 `--scale` 된 여러 컨테이너라 Docker DNS 의 A 레코드(app → 컨테이너 IP 여러 개)로 찾는다.
+  # 활성 수가 stop/start 로 바뀌면 refresh_interval 안에 목록이 따라간다(정지된 컨테이너는 DNS 에서 빠진다).
+  - job_name: app
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: [app]
+        type: A
+        port: 3000
+        refresh_interval: 2s
+
+  - job_name: postgres_exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: redis_exporter
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  - job_name: nginx-exporter
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  # 오케스트레이터 자체 지표는 내부 포트(4001, 호스트 미공개)에서 읽는다.
+  - job_name: orchestrator
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["orchestrator:4001"]
