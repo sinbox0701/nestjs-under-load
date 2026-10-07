@@ -8,6 +8,8 @@ datasources:
     isDefault: true
     editable: false
     jsonData:
+      # 스크레이프 간격(5s)과 맞춘다. 비우면 $__rate_interval 이 15s 기준으로 과대해진다.
+      timeInterval: 5s
       # 앱이 exemplar 라벨을 trace_id 로 낸다(T-122). Prometheus 는 exemplar-storage 로 기동한다.
       exemplarTraceIdDestinations:
         - name: trace_id

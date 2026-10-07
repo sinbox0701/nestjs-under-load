@@ -255,6 +255,7 @@ services:
       GF_SECURITY_ALLOW_EMBEDDING: "true"
     volumes:
       - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "127.0.0.1:3001:3000"
     networks: [obs-net, ctl-net]
@@ -269,6 +270,16 @@ services:
     environment:
       # pg_monitor 만 가진 전용 역할(initdb 가 만든다)
       DATA_SOURCE_NAME: postgresql://exporter:${EXPORTER_PASSWORD:-exporter_local}@postgres:5432/postgres?sslmode=disable
+    command:
+      - --extend.query-path=/etc/postgres_exporter/queries.yaml
+      - --collector.stat_checkpointer
+      # 새 수집기의 stat_user_tables 는 접속 DB(postgres)만 본다. lab_run 은 queries.yaml 의 같은 이름 쿼리가 DB 마다 돈다.
+      - --no-collector.stat_user_tables
+      # 실행 DB(lab_run)의 테이블 지표(dead tuple 등). exporter 역할 연결 상한 3 안에서 postgres + lab_run 두 개만 쓴다.
+      - --auto-discover-databases
+      - --include-databases=lab_run
+    volumes:
+      - ../postgres/exporter/queries.yaml:/etc/postgres_exporter/queries.yaml:ro
     networks: [lab-net, obs-net]
     depends_on:
       postgres:
@@ -355,6 +366,9 @@ services:
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - /etc/alloy/config.alloy
+    environment:
+      # 이 프로젝트 로그만 수집(config.alloy 의 keep 규칙). -p 로 프로젝트명을 바꿔 띄우면 같은 값을 export 한다.
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-nestjs-under-load}
     volumes:
       - ../alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro

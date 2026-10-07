@@ -1,0 +1,59 @@
+# postgres_exporter 커스텀 쿼리(--extend.query-path). 기본 수집기에는 wait_event 가 없다(DESIGN §14 #8).
+# 대시보드(use-pg)가 pg_wait_event_count{wait_event_type,wait_event,datname} 로 읽는다.
+# 대기 중이 아닌 활성 세션은 wait_event 가 NULL 이라 'CPU' 로 묶는다. exporter 역할의 세션(연결이 여러 개)은 뺀다.
+# --auto-discover-databases 를 켜면 쿼리가 DB 마다 한 번씩 돌아 같은 시리즈가 중복 수집(500)되므로,
+# 접속한 DB 의 세션만 센다(current_database()). DB 별로 한 번씩 합쳐져 클러스터 전체를 덮는다.
+pg_wait_event:
+  query: |
+    SELECT
+      COALESCE(datname, '') AS datname,
+      COALESCE(wait_event_type, 'CPU') AS wait_event_type,
+      COALESCE(wait_event, 'CPU') AS wait_event,
+      count(*) AS count
+    FROM pg_stat_activity
+    WHERE state = 'active'
+      AND datname = current_database()
+      AND backend_type = 'client backend'
+      AND usename IS DISTINCT FROM current_user
+    GROUP BY 1, 2, 3
+  metrics:
+    - datname:
+        usage: "LABEL"
+        description: "데이터베이스 이름"
+    - wait_event_type:
+        usage: "LABEL"
+        description: "대기 이벤트 종류(CPU 는 대기 아님)"
+    - wait_event:
+        usage: "LABEL"
+        description: "대기 이벤트 이름"
+    - count:
+        usage: "GAUGE"
+        description: "해당 대기 상태의 활성 세션 수"
+
+# lab_run 의 dead tuple. 새 수집기(stat_user_tables)는 접속 DB 만 보므로 같은 지표 이름을 쿼리로 낸다
+# (--no-collector.stat_user_tables 로 끈다). 대시보드는 pg_stat_user_tables_n_dead_tup 를 읽는다.
+pg_stat_user_tables:
+  query: |
+    SELECT
+      current_database() AS datname,
+      schemaname,
+      relname,
+      n_dead_tup,
+      n_live_tup
+    FROM pg_stat_user_tables
+  metrics:
+    - datname:
+        usage: "LABEL"
+        description: "데이터베이스 이름"
+    - schemaname:
+        usage: "LABEL"
+        description: "스키마 이름"
+    - relname:
+        usage: "LABEL"
+        description: "테이블 이름"
+    - n_dead_tup:
+        usage: "GAUGE"
+        description: "추정 dead tuple 수"
+    - n_live_tup:
+        usage: "GAUGE"
+        description: "추정 live tuple 수"
