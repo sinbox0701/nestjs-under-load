@@ -1,4 +1,8 @@
+import { z } from 'zod';
+
 import { BlindRetryStrategy } from './strategies/blind-retry.strategy';
+import { EditLeaseStrategy } from './strategies/edit-lease.strategy';
+import { FieldMergeStrategy } from './strategies/field-merge.strategy';
 import { NaiveOverwriteStrategy } from './strategies/naive-overwrite.strategy';
 import { OptimisticVersionStrategy } from './strategies/optimistic-version.strategy';
 import type { G01Strategy } from './support/strategy.types';
@@ -18,15 +22,38 @@ function noParams(id: string) {
   };
 }
 
+/** zod 스키마로 검증한다. 없으면(undefined·null) 기본값만 채운다. */
+function zodParams(id: string, schema: z.ZodType<Record<string, unknown>>) {
+  return (raw: unknown): Record<string, unknown> => {
+    const parsed = schema.safeParse(raw ?? {});
+    if (!parsed.success) throw new Error(`g01: strategy '${id}' 파라미터 검증 실패: ${parsed.error.message}`);
+    return parsed.data;
+  };
+}
+
 /**
  * strategy id → 구현 클래스·파라미터 검증. id는 manifest.yaml의 `strategies[].id`와 같아야 한다.
- * field-merge·edit-lease는 후속 티켓에서 추가한다.
  */
 export const G01_STRATEGIES = {
   'naive-overwrite': { cls: NaiveOverwriteStrategy, params: noParams('naive-overwrite') },
   'optimistic-version': { cls: OptimisticVersionStrategy, params: noParams('optimistic-version') },
   // 서버는 optimistic-version과 같다. 클라이언트(k6) 재시도 방식만 다르다(C10).
   'blind-retry': { cls: BlindRetryStrategy, params: noParams('blind-retry') },
+  // PATCH(바뀐 필드 하나) 전용 경로가 있다. PUT은 문서 version 전체로 검사한다.
+  'field-merge': { cls: FieldMergeStrategy, params: noParams('field-merge') },
+  // ttlMs: 잠금 유지 시간(DB 시계로 계산). retryAfterMs: 423의 Retry-After 상한.
+  'edit-lease': {
+    cls: EditLeaseStrategy,
+    params: zodParams(
+      'edit-lease',
+      z
+        .object({
+          ttlMs: z.number().int().positive().default(30_000),
+          retryAfterMs: z.number().int().positive().default(1_000),
+        })
+        .strict(),
+    ),
+  },
 } satisfies Record<string, StrategyEntry>;
 
 export type G01StrategyId = keyof typeof G01_STRATEGIES;

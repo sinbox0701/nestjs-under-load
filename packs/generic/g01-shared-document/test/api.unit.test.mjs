@@ -8,6 +8,7 @@ const require = createRequire(import.meta.url);
 const { G01Controller } = require('../dist/api/g01.controller.js');
 const { G01Module } = require('../dist/module.js');
 const { scenarioPack } = require('../dist/index.js');
+const { G01_STRATEGIES } = require('../dist/strategy-registry.js');
 const { NOOP_EVENT_SINK } = require('@under-load/contracts');
 
 const TOKEN = 'abcdefghijkl';
@@ -226,7 +227,7 @@ describe('모듈·팩', () => {
     assert.equal(scenarioPack.id, 'g01-shared-document');
     assert.equal(scenarioPack.entities.length, 3);
     assert.equal(scenarioPack.migrations[0].name, 'Migration20261007000100_g01_init');
-    assert.deepEqual(scenarioPack.strategyIds, ['naive-overwrite', 'optimistic-version', 'blind-retry']);
+    assert.deepEqual(scenarioPack.strategyIds, Object.keys(G01_STRATEGIES), '레지스트리와 같은 목록·순서');
     assert.equal(scenarioPack.createModule({ strategy: 'naive-overwrite', instance: 'a' }).module, G01Module);
   });
 });
