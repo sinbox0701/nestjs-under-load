@@ -161,6 +161,34 @@ describe('orderBatchSummary', () => {
     assert.deepEqual(r.diffs, [{ path: 'timeouts.lockMs', values: [1000, 3000], kind: 'blocking' }]);
   });
 
+  it('T-153: 3배치 혼합(row-lock 1000 + row-lock 3000 + no-lock)은 같은 strategy 끼리 달라서 blocking', () => {
+    const mk = (id: string, lock: number | null) => {
+      const m = clone(md1);
+      m.strategy = { id, params: lock === null ? {} : { lockTimeoutMs: lock } };
+      m.timeouts.lockMs = lock;
+      return m;
+    };
+    const three = [batch, { ...batch, batchId: 'b' }, { ...batch, batchId: 'c' }];
+    const r = compareBatches(three, [mk('row-lock', 1000), mk('row-lock', 3000), mk('no-lock', null)], null);
+    assert.equal(r.comparable, false);
+    assert.deepEqual(r.diffs, [{ path: 'timeouts.lockMs', values: [1000, 3000, null], kind: 'blocking' }]);
+  });
+
+  it('T-153: 2·3배치 모두 strategy 가 다르면 lockMs 차이는 제외', () => {
+    const mk = (id: string, lock: number | null) => {
+      const m = clone(md1);
+      m.strategy = { id, params: {} };
+      m.timeouts.lockMs = lock;
+      return m;
+    };
+    const r2 = compareBatches(two, [mk('row-lock', 1000), mk('no-lock', null)], null);
+    assert.equal(r2.comparable, true);
+    const three = [batch, { ...batch, batchId: 'b' }, { ...batch, batchId: 'c' }];
+    const r3 = compareBatches(three, [mk('row-lock', 1000), mk('no-lock', null), mk('conditional-update', 5)], null);
+    assert.equal(r3.comparable, true);
+    assert.deepEqual(r3.diffs, []);
+  });
+
   it('closed 배치의 total 은 그대로 둔다', () => {
     const closed: BatchSummary = { ...clone(batch), failures: { http: [1, 1, 1], dropped: [0, 0, 0], droppedCountedAsFailure: [true, true, true], total: [1, 1, 1] } };
     assert.deepEqual(orderBatchSummary(closed).failures.total, [1, 1, 1]);

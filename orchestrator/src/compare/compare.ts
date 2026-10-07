@@ -1,7 +1,7 @@
 // 배치 비교 판정(C2 CompareResult, DESIGN §7.3). 계약의 COMPARABLE_PATHS·AXIS_PATHS·WARNING_PATHS 를 그대로 쓴다.
 // - 비교 조건 경로 아래에서 값이 다른 잎(예: `load.vus`)마다 diff 하나. 배열은 잎으로 본다.
 // - 그 잎이 `axis`(와 그 하위)에 있으면 kind=axis, 아니면 blocking. blocking 이 없을 때만 comparable.
-// - strategy id 가 배치마다 다르면 STRATEGY_SCOPED_PATHS(strategy.params·timeouts.lockMs) 아래 차이는 diff 로 보지 않는다.
+// - STRATEGY_SCOPED_PATHS(strategy.params·timeouts.lockMs) 아래는 strategy id 가 같은 배치끼리만 비교한다(그룹 안에서 다르면 blocking).
 // - WARNING_PATHS(git.sha)가 다르면 warning 이고 codeVersionDiffers=true.
 import { AXIS_PATHS, COMPARABLE_PATHS, STRATEGY_SCOPED_PATHS, WARNING_PATHS, type AxisPath, type BatchSummary, type CompareResult } from '@under-load/contracts';
 import { isDeepStrictEqual } from 'node:util';
@@ -43,13 +43,17 @@ function leafDiffs(path: string, values: readonly unknown[], out: { path: string
 
 const under = (path: string, base: string) => path === base || path.startsWith(`${base}.`);
 
+/** 같은 strategy id 를 가진 배치들 사이에서 값이 다른 그룹이 있는가. */
+const differsWithinStrategy = (ids: readonly unknown[], values: readonly unknown[]) =>
+  ids.some((id, i) => ids.some((other, j) => j > i && other === id && !isDeepStrictEqual(values[i], values[j])));
+
 const underAxis = (path: string, axis: AxisPath | null) => axis !== null && (path === axis || path.startsWith(`${axis}.`));
 
 /** `axis` 는 AXIS_PATHS 중 하나(검증은 호출자). metadata[i] 는 batches[i] 의 대표 실행 메타데이터. */
 export function compareBatches(batches: BatchSummary[], metadata: readonly unknown[], axis: AxisPath | null): CompareResult {
   if (axis !== null && !(AXIS_PATHS as readonly string[]).includes(axis)) throw new Error(`axis 로 쓸 수 없는 경로: ${axis}`);
   const diffs: Diff[] = [];
-  const strategyDiffers = !allEqual(metadata.map((m) => getPath(m, 'strategy.id')));
+  const strategyIds = metadata.map((m) => getPath(m, 'strategy.id'));
 
   for (const base of COMPARABLE_PATHS) {
     const leaves: { path: string; values: unknown[] }[] = [];
@@ -59,7 +63,7 @@ export function compareBatches(batches: BatchSummary[], metadata: readonly unkno
       leaves,
     );
     for (const l of leaves) {
-      if (strategyDiffers && STRATEGY_SCOPED_PATHS.some((p) => under(l.path, p))) continue;
+      if (STRATEGY_SCOPED_PATHS.some((p) => under(l.path, p)) && !differsWithinStrategy(strategyIds, l.values)) continue;
       diffs.push({ path: l.path, values: l.values, kind: underAxis(l.path, axis) ? 'axis' : 'blocking' });
     }
   }
